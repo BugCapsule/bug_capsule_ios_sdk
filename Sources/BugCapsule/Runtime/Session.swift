@@ -15,7 +15,7 @@ public struct CaptureResult: Sendable {
 }
 
 let sdkName = "bugcapsule-ios"
-let sdkVersion = "0.3.0"
+let sdkVersion = "0.4.0"
 
 /// The running SDK: recording, capsule writing, uploads, remote config and
 /// replay setup. Integrations receive it in `setUp`. Thread-safe; UI work
@@ -73,6 +73,8 @@ public final class BugCapsuleSession: @unchecked Sendable {
     private var warned = Set<String>()
     private var observers: [NSObjectProtocol] = []
     private var anchorWaiters: [@MainActor () -> Void] = []
+    private var _monitoring: Monitoring?
+    private var lastFailureEventId: String?
 
     init(config: BugCapsuleConfig, integrations: [BugCapsuleIntegration], overrides: BugCapsuleTestOverrides?) {
         self.config = config
@@ -95,6 +97,14 @@ public final class BugCapsuleSession: @unchecked Sendable {
     public var captureNetworkBodies: Bool { lock.locked { captureBodies } }
     public var maxBodyBytes: Int { config.maxBodyBytes }
     public var random: BugCapsuleRandom { lock.locked { _random } }
+    var monitoring: Monitoring? { lock.locked { _monitoring } }
+
+    /// True while events are wanted: recording a capsule window, or feeding
+    /// monitoring breadcrumbs (never in replay). Integrations check this
+    /// before building event data.
+    public var isObserving: Bool {
+        lock.locked { _engine == nil && (recording || (_monitoring?.wantsBreadcrumbs ?? false)) }
+    }
 
     /// Milliseconds on the session clock (same clock as recorder event `t`).
     public func now() -> Int { Int(((uptime() - startUptime) * 1000).rounded(.down)) }
@@ -111,14 +121,19 @@ public final class BugCapsuleSession: @unchecked Sendable {
         lock.locked { if !frameworks.contains(name) { frameworks.append(name) } }
     }
 
-    /// Records an event (no-op when not recording). Data passes through the
-    /// redactor and the app's `beforeRecord` hook first.
+    /// Records an event (no-op when not observing). Data passes through the
+    /// redactor and the app's `beforeRecord` hook first; it goes to the
+    /// flight recorder and becomes a monitoring breadcrumb.
     public func record(_ type: String, _ data: JSONObject = JSONObject()) {
         let t = now()
-        let (active, redactor, bodies) = lock.locked { (recording && recorder != nil, _redactor, captureBodies) }
-        guard active else { return }
-        guard let clean = sanitize(type, data, redactor: redactor, captureBodies: bodies) else { return }
-        lock.locked { if recording { recorder?.add(t: t, type: type, data: clean) } }
+        let (active, redactor, bodies, monitoring) = lock.locked {
+            (recording && recorder != nil, _redactor, captureBodies, _engine == nil ? _monitoring : nil)
+        }
+        let observe = type != EventTypes.pointer && (monitoring?.wantsBreadcrumbs ?? false)
+        guard active || observe else { return }
+        guard let clean = sanitize(type, data, redactor: redactor, captureBodies: bodies && active) else { return }
+        if active { lock.locked { if recording { recorder?.add(t: t, type: type, data: clean) } } }
+        if observe { monitoring?.recorded(type, clean) }
     }
 
     /// Defense in depth: whatever an integration records goes through the
@@ -155,17 +170,22 @@ public final class BugCapsuleSession: @unchecked Sendable {
         return d
     }
 
-    public func reportError(_ error: Error) {
-        if config.ignoreError?(error) == true { return }
+    @discardableResult
+    public func reportError(_ error: Error) -> String? { reportError(error, options: nil) }
+
+    @discardableResult
+    func reportError(_ error: Error, options: CaptureOptions?) -> String? {
+        if config.ignoreError?(error) == true { return nil }
         let f = FailureRecord.exception(
             type: String(describing: type(of: error)), message: String(describing: error),
             stack: Thread.callStackSymbols.joined(separator: "\n"), t: now(), scrub: redactor.scrubText)
-        handleFailure(f)
+        return handleFailure(f, error: error, options: options)
     }
 
-    func reportException(_ exception: NSException) {
+    @discardableResult
+    func reportException(_ exception: NSException, options: CaptureOptions? = nil) -> String? {
         let f = Self.failure(for: exception, t: now(), redactor: redactor)
-        handleFailure(f)
+        return handleFailure(f, exception: exception, options: options)
     }
 
     static func failure(for exception: NSException, t: Int, redactor: Redactor) -> FailureRecord {
@@ -262,6 +282,12 @@ public final class BugCapsuleSession: @unchecked Sendable {
             maxCapsuleBytes = cached?.maxCapsuleBytes ?? maxCapsuleBytes
             recording = decideRecording(cached)
         }
+        if config.monitoring.enabled {
+            let m = Monitoring(
+                session: self, options: config.monitoring, root: store.root, remote: cached, random: samplingRandom)
+            lock.locked { _monitoring = m }
+            m.start(outboxDirectory: transport == nil ? nil : store.root.appendingPathComponent("envelopes", isDirectory: true))
+        }
         for integration in integrations { integration.setUp(self) }
         if isRecording {
             let launch = Checkpoint(kind: .launch, t: now(), wallClockMs: epochMs(), afterSeq: 0, data: snapshot(.launch))
@@ -278,6 +304,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
         Task { [weak self] in
             await remote.refresh()
             _ = await self?.flushOutbox()
+            await self?.monitoring?.flushPending()
         }
     }
 
@@ -384,11 +411,13 @@ public final class BugCapsuleSession: @unchecked Sendable {
         // Synthetic lifecycle posted by the replay engine must not be recorded or re-dispatched.
         if isReplaying { return }
         record(EventTypes.lifecycle, ["state": .string(state)])
+        monitoring?.onLifecycle(state)
         guard let remote = lock.locked({ remote }) else { return }
         if state == "resumed" {
             Task { [weak self] in
                 await remote.onResumed()
                 _ = await self?.flushOutbox()
+                await self?.monitoring?.flushPending()
             }
         } else if state == "paused" {
             Task { await remote.onPaused() }
@@ -397,10 +426,16 @@ public final class BugCapsuleSession: @unchecked Sendable {
 
     // MARK: failures and capsules
 
-    func handleFailure(_ failure: FailureRecord) {
+    /// A failure: recorded, sent as an error event (monitoring) and, when
+    /// recording, captured as a capsule linked to that event. Returns the
+    /// event id.
+    @discardableResult
+    func handleFailure(
+        _ failure: FailureRecord, error: Error? = nil, exception: NSException? = nil, options: CaptureOptions? = nil
+    ) -> String? {
         if let engine {
             engine.onFailure(failure)
-            return
+            return nil
         }
         var dropStack = failure.json.objectValue!
         dropStack["stack"] = nil
@@ -415,18 +450,42 @@ public final class BugCapsuleSession: @unchecked Sendable {
             else { return false }
             return capturedSignatures.insert(failure.signature).inserted
         }
-        guard shouldCapture else { return }
+        // The capsule id is fixed now so the event can point at it.
+        let capsuleId = shouldCapture ? uuidV4() : nil
+        var link: CapsuleMonitoringLink?
+        var eventId: String?
+        if let m = monitoring {
+            let draft =
+                exception.map { m.exceptionDraft($0, handled: true, level: .error, options: options) }
+                ?? m.failureDraft(failure, error: error, options: options)
+            eventId = m.capture(draft, capsuleId: capsuleId)
+            if let eventId {
+                link = CapsuleMonitoringLink(
+                    eventId: eventId, traceId: m.tracer.activeSpan?.traceId, release: m.release,
+                    environment: m.environment)
+                lock.locked { if lastFailure == failure { lastFailureEventId = eventId } }
+            }
+        }
+        guard shouldCapture else { return eventId }
+        let monitoringLink = link
         // Let the failure settle (follow-up events) before writing.
         let delay = overrides?.captureSettleDelay ?? 0.3
         queue.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
             Task {
-                if let r = await self.writeCapsule(failure: failure) {
+                if let r = await self.writeCapsule(failure: failure, capsuleId: capsuleId, monitoring: monitoringLink) {
                     BugCapsuleLog.info(
                         "captured \(r.capsuleId) (\(r.eligibility.status.rawValue)) → \(r.file.path) upload: \(r.upload?.status.rawValue ?? "none")")
                 }
             }
         }
+        return eventId
+    }
+
+    /// `manifest.monitoring` for a manual capture: the last failure's event.
+    var lastFailureLink: CapsuleMonitoringLink? {
+        guard let m = monitoring, let id = lock.locked({ lastFailureEventId }) else { return nil }
+        return CapsuleMonitoringLink(eventId: id, traceId: m.tracer.activeSpan?.traceId, release: m.release, environment: m.environment)
     }
 
     struct BuiltCapsule {
@@ -438,7 +497,10 @@ public final class BugCapsuleSession: @unchecked Sendable {
 
     /// Builds, validates, encodes and saves a capsule synchronously. Used by
     /// `writeCapsule` and by the uncaught-exception handler.
-    func buildCapsule(failure: FailureRecord?, labels: [String: String], crash: Bool = false) -> BuiltCapsule? {
+    func buildCapsule(
+        failure: FailureRecord?, labels: [String: String], crash: Bool = false, capsuleId: String? = nil,
+        monitoring link: CapsuleMonitoringLink? = nil
+    ) -> BuiltCapsule? {
         let snapshot: (RecordedWindow, Int, Int, Redactor, PlatformInfo, [String], Int, CapsuleStore)? = lock.locked {
             guard recording, let recorder, let store else { return nil }
             capsulesWritten += 1
@@ -510,7 +572,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
         }
         let capsule = Capsule(
             manifest: CapsuleManifest(
-                capsuleId: uuidV4(), createdAt: Date(), mode: mode,
+                capsuleId: capsuleId ?? uuidV4(), createdAt: Date(), mode: mode,
                 app: AppInfo(
                     id: config.appId?.dartPrefix(200), name: config.appName?.dartPrefix(200),
                     version: config.appVersion.dartPrefix(200), build: config.appBuild.dartPrefix(200),
@@ -525,7 +587,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
                 droppedEvents: window.droppedEvents, checkpointKind: window.checkpoint.kind, labels: labelPairs,
                 redactionKeys: redactor.extraKeys, redactionHeaders: redactor.extraHeaders,
                 runtime: RuntimeInfo(name: "ios", version: platform.osVersion, language: "swift", frameworks: frameworks),
-                capabilities: capabilities),
+                capabilities: capabilities, monitoring: link),
             checkpoint: window.checkpoint.shifted(anchor),
             events: events)
         let problem = validateCapsuleDocument(CapsuleCodec.toJSON(capsule))
@@ -546,9 +608,15 @@ public final class BugCapsuleSession: @unchecked Sendable {
     }
 
     /// Writes a capsule now and queues it for upload.
-    func writeCapsule(failure: FailureRecord?, labels: [String: String] = [:]) async -> CaptureResult? {
+    func writeCapsule(
+        failure: FailureRecord?, labels: [String: String] = [:], capsuleId: String? = nil,
+        monitoring link: CapsuleMonitoringLink? = nil
+    ) async -> CaptureResult? {
         let built: BuiltCapsule? = await withCheckedContinuation { cont in
-            queue.async { cont.resume(returning: self.buildCapsule(failure: failure, labels: labels)) }
+            queue.async {
+                cont.resume(
+                    returning: self.buildCapsule(failure: failure, labels: labels, capsuleId: capsuleId, monitoring: link))
+            }
         }
         guard let built else { return nil }
         let id = built.capsule.manifest.capsuleId
@@ -594,7 +662,16 @@ public final class BugCapsuleSession: @unchecked Sendable {
             capturedSignatures.insert(failure.signature)
             return true
         }
-        guard ok, let built = buildCapsule(failure: failure, labels: [:], crash: true), built.problem == nil else { return }
+        let capsuleId = ok ? uuidV4() : nil
+        var link: CapsuleMonitoringLink?
+        if let m = monitoring, let eventId = m.captureUncaughtException(exception, capsuleId: capsuleId) {
+            link = CapsuleMonitoringLink(
+                eventId: eventId, traceId: m.tracer.activeSpan?.traceId, release: m.release, environment: m.environment)
+        }
+        guard ok,
+            let built = buildCapsule(failure: failure, labels: [:], crash: true, capsuleId: capsuleId, monitoring: link),
+            built.problem == nil
+        else { return }
         let (outbox, maxBytes) = lock.locked { (outbox, maxCapsuleBytes) }
         if let outbox, built.bytes.count <= maxBytes, built.bytes.count <= config.outboxLimits.maxBytes {
             UploadOutbox.writeSynchronously(directory: outbox.directory, capsuleId: built.capsule.manifest.capsuleId, bytes: built.bytes)
@@ -629,11 +706,38 @@ public final class BugCapsuleSession: @unchecked Sendable {
             onlyId: onlyId)
     }
 
+    /// Sends queued monitoring envelopes (same rules as capsule uploads:
+    /// a fresh, enabled remote config; `monitoringEnabled` must be true).
+    func flushEnvelopes() async {
+        let (m, transport, remote, disposed) = lock.locked { (_monitoring, self.transport, self.remote, self.disposed) }
+        guard let m, let outbox = m.outbox, let transport, let remote, !disposed else { return }
+        await remote.ensureFresh()
+        guard await envelopesAllowed else { return }
+        _ = await outbox.flush(
+            upload: { stored in
+                guard let (body, gzipped) = Monitoring.prepareForSending(stored) else {
+                    return UploadResult(.rejected, message: "unreadable envelope")
+                }
+                let result = await transport.sendEnvelope(body, gzipped: gzipped)
+                if result.message == "capture_disabled" { Task { await remote.refresh() } }
+                return result
+            },
+            allowed: { [weak self] in await self?.envelopesAllowed ?? false })
+    }
+
+    var envelopesAllowed: Bool {
+        get async {
+            guard let m = monitoring, m.isActive else { return false }
+            return await uploadsAllowed
+        }
+    }
+
     // MARK: remote config
 
     /// Applies a freshly fetched config (kill switch, sampling, bodies,
-    /// redaction, capsule size) to the running session.
+    /// redaction, capsule size, monitoring fields) to the running session.
     func applyRemote(_ previous: RemoteCaptureConfig?, _ next: RemoteCaptureConfig) {
+        monitoring?.applyRemote(next)
         lock.lock()
         defer { lock.unlock() }
         maxCapsuleBytes = next.maxCapsuleBytes
@@ -795,15 +899,17 @@ public final class BugCapsuleSession: @unchecked Sendable {
     // MARK: teardown (tests)
 
     func dispose() async {
-        let (remote, outbox) = lock.locked { () -> (RemoteConfigController?, UploadOutbox?) in
+        let (remote, outbox, monitoring) = lock.locked { () -> (RemoteConfigController?, UploadOutbox?, Monitoring?) in
             disposed = true
             stopRecordingLocked()
             for o in observers { NotificationCenter.default.removeObserver(o) }
             observers = []
-            return (self.remote, self.outbox)
+            return (self.remote, self.outbox, _monitoring)
         }
+        monitoring?.stop()
         await remote?.dispose()
         await outbox?.close()
+        await monitoring?.outbox?.close()
         if BugCapsuleSession.current === self { BugCapsuleSession.current = nil }
     }
 

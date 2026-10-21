@@ -61,7 +61,9 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
         if URLProtocol.property(forKey: handledKey, in: request) != nil { return false }
         guard let scheme = request.url?.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return false }
         guard BugCapsuleURLSession.active != nil, let s = BugCapsuleSession.current else { return false }
-        return s.isReplaying || s.isRecording
+        // Monitoring alone (session not recording) still wants spans,
+        // trace headers and http breadcrumbs.
+        return s.isReplaying || s.isRecording || (s.monitoring?.isActive ?? false)
     }
 
     public override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -87,6 +89,11 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
     private var waitTimer: DispatchSourceTimer?
     private var contentType: String?
     private var endWork: (@Sendable () -> Void)?
+
+    // monitoring state
+    private var httpSpan: BugCapsuleSpan?
+    private var monitorOnly = false
+    private var statusCode: Int?
 
     // MARK: thread hop
 
@@ -124,9 +131,59 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
         }
         if let replay = session.replay {
             startReplay(session: session, net: net, replay: replay)
-        } else {
+        } else if session.isRecording {
             startCapture(session: session, net: net)
+        } else if let monitoring = session.monitoring {
+            startMonitoring(session: session, monitoring: monitoring)
+        } else {
+            forwardDownstream(request, body: nil, record: false)
         }
+    }
+
+    /// `http.client` span and propagation headers. The headers go on the
+    /// forwarded copy only: recorded request headers and request keys are
+    /// computed from the app's request.
+    private func startTracing(_ session: BugCapsuleSession, redactor: Redactor) -> URLRequest {
+        guard let tracer = session.monitoring?.tracer else { return request }
+        let http = tracer.startHTTP(request, redactor: redactor)
+        lock.locked { httpSpan = http.span }
+        var out = request
+        for (k, v) in http.headers { out.setValue(v, forHTTPHeaderField: k) }
+        return out
+    }
+
+    /// Not recording: forward with tracing, leave an http breadcrumb.
+    private func startMonitoring(session: BugCapsuleSession, monitoring: Monitoring) {
+        let redactor = session.redactor
+        let (body, oneShot) = requestBody()
+        lock.locked {
+            started = uptime()
+            monitorOnly = true
+            base = [
+                "method": .string((request.httpMethod ?? "GET").uppercased()),
+                "url": .string(redactor.redactURL(request.url?.absoluteString ?? "")),
+            ]
+        }
+        forwardDownstream(startTracing(session, redactor: redactor), body: oneShot ? nil : body, record: false)
+    }
+
+    private func finishMonitoring(error: Error?) {
+        let (span, only, status, data) = lock.locked { () -> (BugCapsuleSpan?, Bool, Int?, JSONObject) in
+            let s = httpSpan
+            httpSpan = nil
+            let only = monitorOnly
+            monitorOnly = false
+            return (s, only, statusCode, base)
+        }
+        Tracer.finishHTTP(span, status: status, error: error)
+        guard only, let session = BugCapsuleSession.current else { return }
+        var d = data
+        d["status"] = .int(status ?? 0)
+        d["durationMs"] = .int(elapsedMs)
+        if let error {
+            d["error"] = .object(Self.errorJSON(error, afterResponse: status != nil, redactor: session.redactor))
+        }
+        session.record(EventTypes.http, d)
     }
 
     public override func stopLoading() {
@@ -138,6 +195,9 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
         }
         timer?.cancel()
         end?()
+        if lock.locked({ !finishedDownstream }) {
+            finishMonitoring(error: URLError(.cancelled))
+        }
         if wasCapturing {
             // The app cancelled while the exchange was in flight.
             if lock.locked({ responseHead != nil }) {
@@ -216,7 +276,7 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
             self.captureBodies = captureBodies
         }
         net.began(self)
-        forwardDownstream(request, body: oneShot ? nil : body, record: true)
+        forwardDownstream(startTracing(session, redactor: redactor), body: oneShot ? nil : body, record: true)
     }
 
     private var elapsedMs: Int { Int(((uptime() - lock.locked { started }) * 1000).rounded(.down)) }
@@ -284,6 +344,7 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
 
     func downstreamResponse(_ response: URLResponse) {
         if isStopped { return }
+        if let http = response as? HTTPURLResponse { lock.locked { statusCode = http.statusCode } }
         let capturing = lock.locked { self.capturing }
         if capturing, let http = response as? HTTPURLResponse {
             let session = BugCapsuleSession.current
@@ -349,11 +410,13 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     func downstreamComplete(_ error: Error?) {
-        let (capturing, hadResponse) = lock.locked { () -> (Bool, Bool) in
+        let (capturing, hadResponse, stopped) = lock.locked { () -> (Bool, Bool, Bool) in
+            let s = self.stopped
             finishedDownstream = true
-            return (self.capturing, responseHead != nil)
+            return (self.capturing, responseHead != nil, s)
         }
-        if isStopped { return }
+        if !stopped { finishMonitoring(error: error) }
+        if stopped { return }
         if capturing {
             let redactor = BugCapsuleSession.current?.redactor
             if let error {

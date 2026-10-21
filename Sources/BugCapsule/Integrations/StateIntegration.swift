@@ -77,7 +77,7 @@ public final class BugCapsuleStateIntegration: BugCapsuleIntegration, @unchecked
 
     /// Records a diagnostic `state` event (not replayed).
     func changed(_ key: String, value: JSONValue?) {
-        guard let s = lock.locked({ session }), s.isRecording else { return }
+        guard let s = lock.locked({ session }), s.isObserving else { return }
         var data: JSONObject = ["key": .string(key)]
         if let value { data["value"] = value }
         s.record(EventTypes.state, data)
