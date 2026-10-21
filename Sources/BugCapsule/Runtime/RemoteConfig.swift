@@ -1,7 +1,9 @@
 import Foundation
 
 /// Capture config the backend can change at runtime (kill switch,
-/// sampling, bodies, redaction).
+/// sampling, bodies, redaction) and the monitoring fields of
+/// monitoring-v1 §10 (nil: the backend did not send the field, the app's
+/// option applies).
 public struct RemoteCaptureConfig: Sendable, Equatable {
     public var enabled: Bool
     public var sampleRate: Double
@@ -11,10 +13,20 @@ public struct RemoteCaptureConfig: Sendable, Equatable {
     public var configTtlSeconds: Int
     /// Wall clock (epoch ms) of the successful fetch this config came from.
     public var fetchedAtMs: Int
+    /// false: no envelopes are sent (capsules are unaffected).
+    public var monitoringEnabled: Bool
+    public var errorSampleRate: Double?
+    public var tracesSampleRate: Double?
+    public var sessionTracking: Bool
+    public var maxBreadcrumbs: Int?
+    /// When set, replaces the app's list.
+    public var tracePropagationTargets: [String]?
 
     public init(
         enabled: Bool = true, sampleRate: Double = 1, maxCapsuleBytes: Int = 5 * 1024 * 1024,
-        captureNetworkBodies: Bool = true, redactKeys: [String] = [], configTtlSeconds: Int = 300, fetchedAtMs: Int = 0
+        captureNetworkBodies: Bool = true, redactKeys: [String] = [], configTtlSeconds: Int = 300, fetchedAtMs: Int = 0,
+        monitoringEnabled: Bool = true, errorSampleRate: Double? = nil, tracesSampleRate: Double? = nil,
+        sessionTracking: Bool = true, maxBreadcrumbs: Int? = nil, tracePropagationTargets: [String]? = nil
     ) {
         self.enabled = enabled
         self.sampleRate = sampleRate
@@ -23,6 +35,12 @@ public struct RemoteCaptureConfig: Sendable, Equatable {
         self.redactKeys = redactKeys
         self.configTtlSeconds = configTtlSeconds
         self.fetchedAtMs = fetchedAtMs
+        self.monitoringEnabled = monitoringEnabled
+        self.errorSampleRate = errorSampleRate
+        self.tracesSampleRate = tracesSampleRate
+        self.sessionTracking = sessionTracking
+        self.maxBreadcrumbs = maxBreadcrumbs
+        self.tracePropagationTargets = tracePropagationTargets
     }
 
     public struct FormatError: Error, Sendable { public let message: String }
@@ -40,6 +58,16 @@ public struct RemoteCaptureConfig: Sendable, Equatable {
         try check("captureNetworkBodies") { $0.boolValue != nil }
         try check("redactKeys") { $0.arrayValue != nil }
         try check("fetchedAtMs") { $0.intValue != nil }
+        try check("monitoringEnabled") { $0.boolValue != nil }
+        try check("errorSampleRate") { $0.isNumber }
+        try check("tracesSampleRate") { $0.isNumber }
+        try check("sessionTracking") { $0.boolValue != nil }
+        try check("maxBreadcrumbs") { $0.intValue != nil }
+        try check("tracePropagationTargets") { $0.arrayValue != nil }
+        func unit(_ key: String) -> Double? {
+            guard let d = j[key]?.doubleValue else { return nil }
+            return d.isNaN ? 0 : min(max(d, 0), 1)
+        }
         let rate = j["sampleRate"]?.doubleValue ?? 1
         enabled = j["enabled"]?.boolValue ?? true
         sampleRate = rate.isNaN ? 0 : min(max(rate, 0), 1)
@@ -48,14 +76,26 @@ public struct RemoteCaptureConfig: Sendable, Equatable {
         redactKeys = (j["redactKeys"]?.arrayValue ?? []).map { $0.stringValue ?? JSON.encode($0) }
         configTtlSeconds = min(max(j["configTtlSeconds"]?.intValue ?? 300, 0), 86400)
         self.fetchedAtMs = fetchedAtMs ?? j["fetchedAtMs"]?.intValue ?? 0
+        monitoringEnabled = j["monitoringEnabled"]?.boolValue ?? true
+        errorSampleRate = unit("errorSampleRate")
+        tracesSampleRate = unit("tracesSampleRate")
+        sessionTracking = j["sessionTracking"]?.boolValue ?? true
+        maxBreadcrumbs = j["maxBreadcrumbs"]?.intValue.map { min(max($0, 0), 1000) }
+        tracePropagationTargets = j["tracePropagationTargets"]?.arrayValue?.compactMap(\.stringValue)
     }
 
     public var json: JSONValue {
-        [
+        var o: JSONObject = [
             "enabled": .bool(enabled), "sampleRate": .double(sampleRate), "maxCapsuleBytes": .int(maxCapsuleBytes),
             "captureNetworkBodies": .bool(captureNetworkBodies), "redactKeys": .array(redactKeys.map { .string($0) }),
             "configTtlSeconds": .int(configTtlSeconds), "fetchedAtMs": .int(fetchedAtMs),
+            "monitoringEnabled": .bool(monitoringEnabled), "sessionTracking": .bool(sessionTracking),
         ]
+        if let errorSampleRate { o["errorSampleRate"] = .double(errorSampleRate) }
+        if let tracesSampleRate { o["tracesSampleRate"] = .double(tracesSampleRate) }
+        if let maxBreadcrumbs { o["maxBreadcrumbs"] = .int(maxBreadcrumbs) }
+        if let tracePropagationTargets { o["tracePropagationTargets"] = .array(tracePropagationTargets.map { .string($0) }) }
+        return .object(o)
     }
 }
 
@@ -206,7 +246,7 @@ public actor RemoteConfigController {
         RemoteCaptureConfig(
             enabled: false, sampleRate: c?.sampleRate ?? 0, maxCapsuleBytes: c?.maxCapsuleBytes ?? 0,
             captureNetworkBodies: false, redactKeys: c?.redactKeys ?? [], configTtlSeconds: c?.configTtlSeconds ?? 0,
-            fetchedAtMs: c?.fetchedAtMs ?? 0)
+            fetchedAtMs: c?.fetchedAtMs ?? 0, monitoringEnabled: false)
     }
 
     private func schedule(_ delay: TimeInterval) {

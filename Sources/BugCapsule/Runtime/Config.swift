@@ -76,6 +76,9 @@ public struct BugCapsuleConfig: @unchecked Sendable {
     public var labels: [String: String]
     /// Replay source for tests (DEBUG builds only). Apps get it from the UI test.
     public var replayURL: String?
+    /// Error events, release health, tracing and feedback (monitoring-v1).
+    /// `.disabled` turns all of it off; capsules are unaffected.
+    public var monitoring: BugCapsuleMonitoringOptions
 
     public init(
         appVersion: String? = nil, appBuild: String? = nil, appId: String? = nil, appName: String? = nil,
@@ -88,7 +91,8 @@ public struct BugCapsuleConfig: @unchecked Sendable {
         beforeRecord: (@Sendable (String, JSONObject) throws -> JSONObject?)? = nil,
         beforeCheckpoint: (@Sendable (String, JSONValue) throws -> JSONValue?)? = nil,
         outboxLimits: OutboxLimits = OutboxLimits(), maxStaleConfig: TimeInterval = 7 * 24 * 3600,
-        ignoreError: (@Sendable (Error) -> Bool)? = nil, labels: [String: String] = [:], replayURL: String? = nil
+        ignoreError: (@Sendable (Error) -> Bool)? = nil, labels: [String: String] = [:], replayURL: String? = nil,
+        monitoring: BugCapsuleMonitoringOptions = BugCapsuleMonitoringOptions()
     ) {
         let info = Bundle.main.infoDictionary ?? [:]
         self.appVersion = appVersion ?? (info["CFBundleShortVersionString"] as? String) ?? "0"
@@ -120,6 +124,7 @@ public struct BugCapsuleConfig: @unchecked Sendable {
         self.ignoreError = ignoreError
         self.labels = labels
         self.replayURL = replayURL
+        self.monitoring = monitoring
     }
 
     /// The effective capture mode.

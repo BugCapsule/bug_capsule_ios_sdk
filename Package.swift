@@ -2,7 +2,7 @@
 //
 // BugCapsule for iOS. Consumed by git URL through Swift Package Manager:
 //
-//   .package(url: "https://github.com/<org>/bug_capsule_ios_sdk.git", from: "0.3.0")
+//   .package(url: "https://github.com/<org>/bug_capsule_ios_sdk.git", from: "0.4.0")
 //
 // Products:
 //   BugCapsule        the SDK linked into the app target
@@ -17,8 +17,15 @@ let package = Package(
         .library(name: "BugCapsuleXCTest", targets: ["BugCapsuleXCTest"]),
     ],
     targets: [
+        // Async-signal-safe native crash writer (signals, Mach exceptions).
+        .target(
+            name: "BugCapsuleCrash",
+            path: "Sources/BugCapsuleCrash",
+            publicHeadersPath: "include"
+        ),
         .target(
             name: "BugCapsule",
+            dependencies: ["BugCapsuleCrash"],
             path: "Sources/BugCapsule",
             swiftSettings: [.swiftLanguageMode(.v6)],
             linkerSettings: [.linkedLibrary("z")]

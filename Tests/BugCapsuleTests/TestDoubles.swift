@@ -157,6 +157,7 @@ final class FakeServerProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var routes: [String: Route] = [:]
     nonisolated(unsafe) static var hits: [String] = []
     nonisolated(unsafe) static var bodies: [Data?] = []
+    nonisolated(unsafe) static var headers: [[String: String]] = []
     static let lock = NSLock()
 
     static func reset() {
@@ -164,6 +165,7 @@ final class FakeServerProtocol: URLProtocol, @unchecked Sendable {
             routes = [:]
             hits = []
             bodies = []
+            headers = []
         }
     }
 
@@ -190,6 +192,7 @@ final class FakeServerProtocol: URLProtocol, @unchecked Sendable {
         let route = Self.lock.locked { () -> Route in
             Self.hits.append(path)
             Self.bodies.append(body)
+            Self.headers.append(request.allHTTPHeaderFields ?? [:])
             return Self.routes[path] ?? Route(status: 404, chunks: [Data("{}".utf8)])
         }
         let client = self.client

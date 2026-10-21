@@ -216,6 +216,38 @@ public struct PlatformInfo: Sendable, Equatable {
 }
 
 /// The capturing runtime (runtimes-v1 §2).
+/// `manifest.monitoring` (monitoring-v1 §4.3): the error event sent for
+/// the capsule's failure, so the backend links the capsule to its issue.
+public struct CapsuleMonitoringLink: Sendable, Equatable {
+    public var eventId: String
+    public var traceId: String?
+    public var release: String
+    public var environment: String
+
+    public init(eventId: String, traceId: String? = nil, release: String, environment: String) {
+        self.eventId = eventId
+        self.traceId = traceId
+        self.release = release
+        self.environment = environment
+    }
+
+    init?(json: JSONObject) {
+        guard let eventId = json["eventId"]?.stringValue else { return nil }
+        self.eventId = eventId
+        traceId = json["traceId"]?.stringValue
+        release = json["release"]?.stringValue ?? ""
+        environment = json["environment"]?.stringValue ?? ""
+    }
+
+    public var json: JSONValue {
+        var o: JSONObject = ["eventId": .string(eventId)]
+        if let traceId { o["traceId"] = .string(traceId) }
+        o["release"] = .string(release)
+        o["environment"] = .string(environment)
+        return .object(o)
+    }
+}
+
 public struct RuntimeInfo: Sendable, Equatable {
     public var name: String
     public var version: String?
@@ -309,6 +341,7 @@ public struct CapsuleManifest: Sendable, Equatable {
     public var redactionHeaders: [String]
     public var runtime: RuntimeInfo?
     public var capabilities: [(String, String)]
+    public var monitoring: CapsuleMonitoringLink?
 
     public init(
         capsuleId: String, createdAt: Date, mode: CaptureMode, app: AppInfo, gitSha: String?, dirty: Bool?,
@@ -316,7 +349,7 @@ public struct CapsuleManifest: Sendable, Equatable {
         failure: FailureRecord?, eligibility: Eligibility, integrations: [String], eventCount: Int,
         droppedEvents: Int, checkpointKind: CheckpointKind, labels: [(String, String)] = [],
         redactionKeys: [String] = [], redactionHeaders: [String] = [], runtime: RuntimeInfo? = nil,
-        capabilities: [(String, String)] = []
+        capabilities: [(String, String)] = [], monitoring: CapsuleMonitoringLink? = nil
     ) {
         self.capsuleId = capsuleId
         self.createdAt = createdAt
@@ -340,6 +373,7 @@ public struct CapsuleManifest: Sendable, Equatable {
         self.redactionHeaders = redactionHeaders
         self.runtime = runtime
         self.capabilities = capabilities
+        self.monitoring = monitoring
     }
 
     init(json j: JSONObject) {
@@ -375,6 +409,7 @@ public struct CapsuleManifest: Sendable, Equatable {
         capabilities = (j["capabilities"]?.objectValue ?? JSONObject()).compactMap { k, v in
             v.stringValue.map { (k, $0) }
         }
+        monitoring = j["monitoring"]?.objectValue.flatMap(CapsuleMonitoringLink.init(json:))
     }
 
     public var runtimeName: String { runtime?.name ?? RuntimeInfo.infer(sdkName: sdkName) }
@@ -415,6 +450,7 @@ public struct CapsuleManifest: Sendable, Equatable {
             for (k, v) in capabilities { c[k] = .string(v) }
             o["capabilities"] = .object(c)
         }
+        if let monitoring { o["monitoring"] = monitoring.json }
         return .object(o)
     }
 

@@ -27,10 +27,14 @@
 
     extension View {
         /// Records a `route` event (`source: explicit`) when the view appears
-        /// and makes it the current route of `BugCapsuleNavigation`.
+        /// and makes it the current route of `BugCapsuleNavigation`. With
+        /// monitoring, the screen gets a `ui.load` transaction (TTID at the
+        /// next frame; TTFD from `BugCapsule.reportFullyDisplayed()` when
+        /// enabled).
         public func bugCapsuleRoute(_ location: String) -> some View {
             onAppear {
                 BugCapsuleSession.current?.noteFramework("swiftui")
+                BugCapsuleSession.current?.monitoring?.screenWillAppear(location)
                 BugCapsuleNavigation.shared.setRoute(location, action: "push", source: "explicit")
             }
         }

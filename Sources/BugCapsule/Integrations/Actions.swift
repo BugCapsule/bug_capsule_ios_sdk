@@ -111,7 +111,7 @@ extension BugCapsule {
 
     /// Records that the user performed action [id] (capture only).
     public static func recordAction(_ id: String, payload: JSONObject? = nil) {
-        guard let s = BugCapsuleSession.current, s.isRecording else { return }
+        guard let s = BugCapsuleSession.current, s.isObserving else { return }
         var data: JSONObject = ["id": .string(id.dartPrefix(200))]
         if let payload { data["payload"] = .object(payload) }
         s.record(EventTypes.action, data)
@@ -128,7 +128,7 @@ extension BugCapsule {
 
     /// Records the new value of tracked text [id].
     public static func textChanged(_ id: String, value: String, sensitive: Bool = false) {
-        guard let s = BugCapsuleSession.current, s.isRecording else { return }
+        guard let s = BugCapsuleSession.current, s.isObserving else { return }
         let v = s.redactor.redactText(fieldId: id, value: value, sensitive: sensitive)
         s.record(EventTypes.text, ["id": .string(id.dartPrefix(200)), "value": .string(v.dartPrefix(100_000))])
     }

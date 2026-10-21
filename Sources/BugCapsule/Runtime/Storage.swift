@@ -132,6 +132,8 @@ public struct OutboxEntry: Sendable {
 }
 
 /// Capsules waiting for upload, as `<enqueuedAtMs>_<capsuleId>.bugcapsule`.
+/// Monitoring envelopes use a second instance (`.envelope` files, smaller
+/// limits) with the same rules.
 ///
 /// * Bounds: `OutboxLimits`; a capsule larger than `maxBytes` is never
 ///   queued, otherwise the oldest capsules are evicted first.
@@ -143,6 +145,8 @@ public struct OutboxEntry: Sendable {
 public actor UploadOutbox {
     public nonisolated let directory: URL
     public nonisolated let limits: OutboxLimits
+    /// File extension of queued items (`bugcapsule`, `envelope`).
+    public nonisolated let fileExtension: String
     private let now: @Sendable () -> Date
     private let random: @Sendable () -> Double
     private var flushing: Task<UploadResult?, Never>?
@@ -152,11 +156,13 @@ public actor UploadOutbox {
     private var attempts: [String: Int] = [:]
 
     public init(
-        directory: URL, limits: OutboxLimits = OutboxLimits(), now: @escaping @Sendable () -> Date = { Date() },
+        directory: URL, limits: OutboxLimits = OutboxLimits(), fileExtension: String = "bugcapsule",
+        now: @escaping @Sendable () -> Date = { Date() },
         random: @escaping @Sendable () -> Double = { Double.random(in: 0..<1) }
     ) {
         self.directory = directory
         self.limits = limits
+        self.fileExtension = fileExtension
         self.now = now
         self.random = random
         try? FileIO.ensureDirectory(directory)
@@ -166,15 +172,16 @@ public actor UploadOutbox {
     /// Applies the limits (call once after opening).
     public func open() { enforceLimits() }
 
-    public func entries() -> [OutboxEntry] { Self.entries(in: directory) }
+    public func entries() -> [OutboxEntry] { Self.entries(in: directory, fileExtension: fileExtension) }
 
-    static func entries(in directory: URL) -> [OutboxEntry] {
+    static func entries(in directory: URL, fileExtension: String = "bugcapsule") -> [OutboxEntry] {
+        let suffix = ".\(fileExtension)"
         let items = (try? FileIO.fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])) ?? []
         var out: [OutboxEntry] = []
         for url in items {
             let name = url.lastPathComponent
-            guard name.hasSuffix(".bugcapsule") else { continue }
-            let stem = String(name.dropLast(".bugcapsule".count))
+            guard name.hasSuffix(suffix) else { continue }
+            let stem = String(name.dropLast(suffix.count))
             var at: Date
             var id = stem
             if let us = stem.firstIndex(of: "_"), let ms = Int64(stem[..<us]) {
@@ -193,10 +200,12 @@ public actor UploadOutbox {
     /// Synchronous write used by the crash handler (no actor hop: the
     /// process is about to die). Limits are enforced on the next open.
     @discardableResult
-    nonisolated static func writeSynchronously(directory: URL, capsuleId: String, bytes: Data, now: Date = Date()) -> Bool {
+    nonisolated static func writeSynchronously(
+        directory: URL, capsuleId: String, bytes: Data, now: Date = Date(), fileExtension: String = "bugcapsule"
+    ) -> Bool {
         do {
             try FileIO.ensureDirectory(directory)
-            let url = directory.appendingPathComponent("\(Int64(now.timeIntervalSince1970 * 1000))_\(capsuleId).bugcapsule")
+            let url = directory.appendingPathComponent("\(Int64(now.timeIntervalSince1970 * 1000))_\(capsuleId).\(fileExtension)")
             try FileIO.writeAtomically(bytes, to: url)
             return true
         } catch {
@@ -207,7 +216,7 @@ public actor UploadOutbox {
     /// Queues a capsule. False when not queued (closed, too large, I/O error).
     public func enqueue(capsuleId: String, bytes: Data) -> Bool {
         if closed || bytes.count > limits.maxBytes { return false }
-        let url = directory.appendingPathComponent("\(Int64(now().timeIntervalSince1970 * 1000))_\(capsuleId).bugcapsule")
+        let url = directory.appendingPathComponent("\(Int64(now().timeIntervalSince1970 * 1000))_\(capsuleId).\(fileExtension)")
         do {
             try FileIO.writeAtomically(bytes, to: url)
         } catch {
@@ -246,11 +255,16 @@ public actor UploadOutbox {
         upload: @escaping @Sendable (Data) async -> UploadResult, allowed: @escaping @Sendable () async -> Bool,
         onlyId: String? = nil
     ) async -> UploadResult? {
-        while let running = flushing { _ = await running.value }
+        while let running = flushing {
+            _ = await running.value
+            // Its caller may not have resumed yet to clear it: a finished
+            // task must not keep this loop spinning.
+            if flushing == running { flushing = nil }
+        }
         let task = Task { await self.flushOnce(upload: upload, allowed: allowed, onlyId: onlyId) }
         flushing = task
         let result = await task.value
-        flushing = nil
+        if flushing == task { flushing = nil }
         return result
     }
 
@@ -272,7 +286,7 @@ public actor UploadOutbox {
             if !(await allowed()) { break }
             guard let bytes = try? Data(contentsOf: entry.file) else { continue }
             if !Gzip.isGzip(bytes) {
-                BugCapsuleLog.warn("dropping corrupt queued capsule \(entry.capsuleId)")
+                BugCapsuleLog.warn("dropping corrupt queued \(fileExtension) \(entry.capsuleId)")
                 FileIO.deleteQuietly(entry.file)
                 continue
             }
