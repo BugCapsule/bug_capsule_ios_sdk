@@ -1,0 +1,364 @@
+{
+  "format": "bugcapsule.conformance",
+  "version": 1,
+  "generatedBy": "packages/bug_capsule/tool/generate_conformance.dart",
+  "description": "Request keys (spec capsule-v1 \"Network matching\"). Inputs: method, url, body (a JSON value, or a string that is parsed as JSON when it is valid JSON and hashed as text otherwise; null = no body), rules, globalIgnoreQuery (default: _, ts, timestamp, nonce, cachebust), globalIgnoreBodyFields. With \"redact\": true the URL and body go through the default redactor (plus redactKeys) first, as capture and replay do.",
+  "cases": [
+    {
+      "name": "get without query",
+      "method": "GET",
+      "url": "https://api.example.com/api/cart",
+      "body": null,
+      "expectedKey": "GET api.example.com/api/cart"
+    },
+    {
+      "name": "method is upper-cased",
+      "method": "get",
+      "url": "https://api.example.com/api/cart",
+      "body": null,
+      "expectedKey": "GET api.example.com/api/cart"
+    },
+    {
+      "name": "empty path becomes /",
+      "method": "GET",
+      "url": "https://api.example.com",
+      "body": null,
+      "expectedKey": "GET api.example.com/"
+    },
+    {
+      "name": "host only, no scheme or port",
+      "method": "GET",
+      "url": "http://API.example.com:8080/x",
+      "body": null,
+      "expectedKey": "GET api.example.com/x"
+    },
+    {
+      "name": "query sorted by name, values keep order",
+      "method": "GET",
+      "url": "https://api.example.com/search?z=1&a=2&m=3&a=1",
+      "body": null,
+      "expectedKey": "GET api.example.com/search?a=2&a=1&m=3&z=1"
+    },
+    {
+      "name": "default ignored query parameters",
+      "method": "GET",
+      "url": "https://api.example.com/feed?_=123&ts=9&timestamp=1&nonce=x&cachebust=7&page=2",
+      "body": null,
+      "expectedKey": "GET api.example.com/feed?page=2"
+    },
+    {
+      "name": "query values are decoded",
+      "method": "GET",
+      "url": "https://api.example.com/search?q=red%20shoes&tag=a+b&e=%C3%A9",
+      "body": null,
+      "expectedKey": "GET api.example.com/search?e=é&q=red shoes&tag=a b"
+    },
+    {
+      "name": "parameter without value",
+      "method": "GET",
+      "url": "https://api.example.com/x?flag&b=1",
+      "body": null,
+      "expectedKey": "GET api.example.com/x?b=1&flag="
+    },
+    {
+      "name": "json body hashed canonically",
+      "method": "POST",
+      "url": "https://api.example.com/api/checkout",
+      "body": {
+        "b": 2,
+        "a": 1,
+        "items": [
+          {
+            "sku": "A1",
+            "qty": 2
+          },
+          {
+            "qty": 1,
+            "sku": "B2"
+          }
+        ],
+        "note": "hi \"there\""
+      },
+      "expectedKey": "POST api.example.com/api/checkout#5b8038392aeadf4b"
+    },
+    {
+      "name": "same body, different key order, same key",
+      "method": "POST",
+      "url": "https://api.example.com/api/checkout",
+      "body": {
+        "note": "hi \"there\"",
+        "items": [
+          {
+            "qty": 2,
+            "sku": "A1"
+          },
+          {
+            "sku": "B2",
+            "qty": 1
+          }
+        ],
+        "a": 1,
+        "b": 2
+      },
+      "expectedKey": "POST api.example.com/api/checkout#5b8038392aeadf4b"
+    },
+    {
+      "name": "json body given as text",
+      "method": "POST",
+      "url": "https://api.example.com/api/login",
+      "body": "{\"user\":\"qa\",\"remember\":true,\"n\":null}",
+      "expectedKey": "POST api.example.com/api/login#90522d2c102645b6"
+    },
+    {
+      "name": "text body that is not json",
+      "method": "POST",
+      "url": "https://api.example.com/log",
+      "body": "plain text line",
+      "expectedKey": "POST api.example.com/log#7311ea6e4b63d604"
+    },
+    {
+      "name": "empty text body is no body",
+      "method": "POST",
+      "url": "https://api.example.com/ping",
+      "body": "",
+      "expectedKey": "POST api.example.com/ping"
+    },
+    {
+      "name": "scalars, decimals, unicode and escapes",
+      "method": "PUT",
+      "url": "https://api.example.com/v1/profile",
+      "body": {
+        "n": -12,
+        "f": 1.5,
+        "ok": false,
+        "none": null,
+        "s": "tab\there\nline",
+        "u": "café 中"
+      },
+      "expectedKey": "PUT api.example.com/v1/profile#f7230c35df840323"
+    },
+    {
+      "name": "endpoint rule ignores body fields at any depth",
+      "method": "POST",
+      "url": "https://api.example.com/api/checkout",
+      "rules": [
+        {
+          "method": "POST",
+          "path": "/api/checkout",
+          "ignoreBodyFields": [
+            "timestamp",
+            "nonce"
+          ]
+        }
+      ],
+      "body": {
+        "cartId": "c1",
+        "timestamp": 1760000000000,
+        "meta": {
+          "nonce": "abc",
+          "v": 1
+        }
+      },
+      "expectedKey": "POST api.example.com/api/checkout#8f406b76120184cc"
+    },
+    {
+      "name": "dotted ignore removes only that path",
+      "method": "POST",
+      "url": "https://api.example.com/api/events",
+      "rules": [
+        {
+          "method": "*",
+          "path": "/api/events",
+          "ignoreBodyFields": [
+            "meta.ts"
+          ]
+        }
+      ],
+      "body": {
+        "ts": 1,
+        "meta": {
+          "ts": 2,
+          "kind": "x"
+        }
+      },
+      "expectedKey": "POST api.example.com/api/events#0acfb9e868699de2"
+    },
+    {
+      "name": "matchBodyFields keeps only listed top-level fields",
+      "method": "POST",
+      "url": "https://api.example.com/payments",
+      "rules": [
+        {
+          "method": "POST",
+          "path": "/payments",
+          "matchBodyFields": [
+            "cart_id",
+            "amount"
+          ]
+        }
+      ],
+      "body": {
+        "cart_id": "k",
+        "amount": 10,
+        "request_id": "r-1",
+        "currency": "EUR"
+      },
+      "expectedKey": "POST api.example.com/payments#61f308d56e86228f"
+    },
+    {
+      "name": "rule with :param and ignored query",
+      "method": "GET",
+      "url": "https://api.example.com/users/42/orders?page=1&session_ts=5",
+      "rules": [
+        {
+          "method": "GET",
+          "path": "/users/:id/orders",
+          "ignoreQuery": [
+            "session_ts"
+          ]
+        }
+      ],
+      "body": null,
+      "expectedKey": "GET api.example.com/users/42/orders?page=1"
+    },
+    {
+      "name": "rule with trailing wildcard",
+      "method": "GET",
+      "url": "https://cdn.example.com/assets/img/a.png?v=3",
+      "rules": [
+        {
+          "method": "GET",
+          "path": "/assets/*",
+          "ignoreQuery": [
+            "v"
+          ]
+        }
+      ],
+      "body": null,
+      "expectedKey": "GET cdn.example.com/assets/img/a.png"
+    },
+    {
+      "name": "first matching rule wins",
+      "method": "GET",
+      "url": "https://api.example.com/a/b?x=1&y=2",
+      "rules": [
+        {
+          "method": "GET",
+          "path": "/a/*",
+          "ignoreQuery": [
+            "x"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/a/b",
+          "ignoreQuery": [
+            "y"
+          ]
+        }
+      ],
+      "body": null,
+      "expectedKey": "GET api.example.com/a/b?y=2"
+    },
+    {
+      "name": "rule method mismatch does not apply",
+      "method": "POST",
+      "url": "https://api.example.com/a/b?x=1",
+      "rules": [
+        {
+          "method": "GET",
+          "path": "/a/b",
+          "ignoreQuery": [
+            "x"
+          ]
+        }
+      ],
+      "body": null,
+      "expectedKey": "POST api.example.com/a/b?x=1"
+    },
+    {
+      "name": "trailing slash matches rule",
+      "method": "GET",
+      "url": "https://api.example.com/items/?x=1",
+      "rules": [
+        {
+          "method": "GET",
+          "path": "/items",
+          "ignoreQuery": [
+            "x"
+          ]
+        }
+      ],
+      "body": null,
+      "expectedKey": "GET api.example.com/items/"
+    },
+    {
+      "name": "custom global ignores",
+      "method": "POST",
+      "url": "https://api.example.com/q?_=1&t=2",
+      "globalIgnoreQuery": [
+        "t"
+      ],
+      "globalIgnoreBodyFields": [
+        "requestId"
+      ],
+      "body": {
+        "requestId": "x",
+        "q": "shoes"
+      },
+      "expectedKey": "POST api.example.com/q?_=1#330e3124f1954216"
+    },
+    {
+      "name": "array body",
+      "method": "POST",
+      "url": "https://api.example.com/batch",
+      "body": [
+        3,
+        1,
+        {
+          "z": true,
+          "a": [
+            1,
+            2
+          ]
+        }
+      ],
+      "expectedKey": "POST api.example.com/batch#9bd36e0d2a58db63"
+    },
+    {
+      "name": "redacted url and body (capture pipeline)",
+      "method": "POST",
+      "url": "https://user:pw@api.example.com/oauth/token?code=abc123&state=ok&signature=zz",
+      "redact": true,
+      "body": {
+        "grant_type": "authorization_code",
+        "client_secret": "s3cr3t",
+        "device": {
+          "pushToken": "abc"
+        }
+      },
+      "expectedKey": "POST api.example.com/oauth/token?code=[REDACTED]&signature=[REDACTED]&state=ok#82c3545c83e1ae5e"
+    },
+    {
+      "name": "redaction with app keys",
+      "method": "POST",
+      "url": "https://api.example.com/loyalty?loyaltyId=L-77",
+      "redact": true,
+      "redactKeys": [
+        "loyaltyId"
+      ],
+      "body": {
+        "loyaltyId": "L-77",
+        "points": 5
+      },
+      "expectedKey": "POST api.example.com/loyalty?loyaltyId=[REDACTED]#2446b9b84930cb46"
+    },
+    {
+      "name": "very long url is shortened deterministically",
+      "method": "GET",
+      "url": "https://api.example.com/long?q=abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij",
+      "body": null,
+      "expectedKey": "GET api.example.com/long?q=abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabc~2aeb8272e2908298"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "runtime": "ios",
+  "ios": {
+    "project": "BugCapsuleDemo.xcodeproj",
+    "scheme": "BugCapsuleDemo",
+    "configuration": "Debug",
+    "bundleId": "com.bugcapsule.demo",
+    "replayTest": "BugCapsuleDemoUITests/BugCapsuleReplayTests/testReplay",
+    "simulator": "iPhone 18 Pro",
+    "startupSeconds": 120
+  },
+  "timeouts": {"buildSeconds": 1200}
+}

@@ -1,0 +1,86 @@
+# XcodeGen spec for the demo (`xcodegen generate` in this directory).
+# The generated BugCapsuleDemo.xcodeproj is checked in, so XcodeGen is only
+# needed after editing this file.
+name: BugCapsuleDemo
+options:
+  bundleIdPrefix: com.bugcapsule
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+packages:
+  BugCapsule:
+    path: ../..
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    # Embedded by `bugcapsule run|verify` (xcodebuild build settings) and read
+    # by the SDK from Info.plist.
+    BUGCAPSULE_GIT_SHA: ""
+    BUGCAPSULE_GIT_DIRTY: ""
+    # Backend for capture builds; pass on the xcodebuild command line, never commit.
+    BUGCAPSULE_BACKEND_URL: ""
+    BUGCAPSULE_INGEST_KEY: ""
+    # Temporary fix toggles (e.g. DEMO_FIXES=FIX_NEGATIVE_TOTAL), off by default.
+    DEMO_FIXES: ""
+targets:
+  BugCapsuleDemo:
+    type: application
+    platform: iOS
+    sources: [BugCapsuleDemo]
+    dependencies:
+      - package: BugCapsule
+        product: BugCapsule
+    info:
+      path: BugCapsuleDemo/Info.plist
+      properties:
+        CFBundleDisplayName: BugCapsule Shop
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        BugCapsuleGitSHA: $(BUGCAPSULE_GIT_SHA)
+        BugCapsuleGitDirty: $(BUGCAPSULE_GIT_DIRTY)
+        BugCapsuleBackendURL: $(BUGCAPSULE_BACKEND_URL)
+        BugCapsuleIngestKey: $(BUGCAPSULE_INGEST_KEY)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bugcapsule.demo
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGNING_ALLOWED: NO
+        TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG $(DEMO_FIXES)"
+        Release:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(DEMO_FIXES)"
+  BugCapsuleDemoUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [BugCapsuleDemoUITests]
+    dependencies:
+      - target: BugCapsuleDemo
+      - package: BugCapsule
+        product: BugCapsuleXCTest
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bugcapsule.demo.uitests
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+        TEST_TARGET_NAME: BugCapsuleDemo
+schemes:
+  BugCapsuleDemo:
+    build:
+      targets:
+        BugCapsuleDemo: all
+        BugCapsuleDemoUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - name: BugCapsuleDemoUITests
+          parallelizable: false

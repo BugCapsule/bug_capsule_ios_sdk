@@ -1,0 +1,80 @@
+{
+  "format": "bugcapsule.conformance",
+  "version": 1,
+  "generatedBy": "packages/bug_capsule/tool/generate_conformance.dart",
+  "description": "Failure signatures: <kind>:<type>:<normalized first line of the message>.",
+  "cases": [
+    {
+      "kind": "exception",
+      "type": "StateError",
+      "message": "Bad state: Cart total is negative (-3)",
+      "expected": "exception:StateError:Bad state: Cart total is negative (-#)"
+    },
+    {
+      "kind": "exception",
+      "type": "IllegalStateException",
+      "message": "Cart total is negative: -300 cents",
+      "expected": "exception:IllegalStateException:Cart total is negative: -# cents"
+    },
+    {
+      "kind": "exception",
+      "type": "TypeError",
+      "message": "Cannot read properties of null (reading 'price')",
+      "expected": "exception:TypeError:Cannot read properties of null (reading 'price')"
+    },
+    {
+      "kind": "exception",
+      "type": "NullPointerException",
+      "message": "",
+      "expected": "exception:NullPointerException:"
+    },
+    {
+      "kind": "exception",
+      "type": "Err",
+      "message": "object 0x7f3a9c00d1e8 freed twice; id deadbeefcafe12 ok",
+      "expected": "exception:Err:object # freed twice; id # ok"
+    },
+    {
+      "kind": "exception",
+      "type": "E",
+      "message": "first line 12\nsecond line 34",
+      "expected": "exception:E:first line #"
+    },
+    {
+      "kind": "exception",
+      "type": "E",
+      "message": "  lots   of\t white   space  ",
+      "expected": "exception:E:lots of white space"
+    },
+    {
+      "kind": "exception",
+      "type": "E",
+      "message": "order 2026-10-19 at 10:42:07.123 failed",
+      "expected": "exception:E:order #-#-# at #:#:#.# failed"
+    },
+    {
+      "kind": "exception",
+      "type": "E",
+      "message": "short hex abc1234 stays, longer abcdef12 goes",
+      "expected": "exception:E:short hex abc# stays, longer # goes"
+    },
+    {
+      "kind": "exception",
+      "type": "E",
+      "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "expected": "exception:E:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "kind": "assertion",
+      "type": "cart_total_non_negative",
+      "message": "",
+      "expected": "assertion:cart_total_non_negative:"
+    },
+    {
+      "kind": "manual",
+      "type": "manual",
+      "message": "QA capture 3",
+      "expected": "manual:manual:QA capture #"
+    }
+  ]
+}

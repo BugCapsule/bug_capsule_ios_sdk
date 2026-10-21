@@ -1,0 +1,207 @@
+{
+ "description": "Captured by the native iOS SDK: runtime, capabilities (pointer replay unsupported), URLSession exchange, explicit navigation, action with payload.",
+ "expect": "valid",
+ "document": {
+  "format": "bugcapsule.capsule",
+  "specVersion": 1,
+  "manifest": {
+   "capsuleId": "a0d0c0de-0000-4000-8000-0000000000b2",
+   "createdAt": "2026-10-21T12:00:05.120Z",
+   "mode": "qa",
+   "app": {
+    "id": "com.bugcapsule.shop",
+    "name": "BugCapsule Shop",
+    "version": "1.0.0",
+    "build": "7",
+    "flavor": null
+   },
+   "source": {
+    "gitSha": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+    "dirty": false
+   },
+   "sdk": {
+    "name": "bugcapsule-ios",
+    "version": "0.3.0"
+   },
+   "stateSchemaVersion": 1,
+   "platform": {
+    "os": "ios",
+    "osVersion": "27.0",
+    "locale": "en-US",
+    "screen": {
+     "width": 402.0,
+     "height": 874.0,
+     "pixelRatio": 3.0
+    }
+   },
+   "session": {
+    "id": "a1b2c3d4-0000-4000-8000-00000000000a",
+    "startedAt": "2026-10-21T11:59:50.000Z",
+    "wallClockAtAnchorMs": 1792584000000,
+    "seed": 3141592653,
+    "durationMs": 5120
+   },
+   "failure": {
+    "kind": "assertion",
+    "signature": "assertion:cart_total_non_negative:",
+    "type": "cart_total_non_negative",
+    "message": "total -3.00",
+    "stack": null,
+    "assertionId": "cart_total_non_negative",
+    "t": 4980
+   },
+   "eligibility": {
+    "status": "eligible",
+    "missing": []
+   },
+   "integrations": [
+    "urlsession",
+    "user_defaults",
+    "navigation"
+   ],
+   "stats": {
+    "eventCount": 7,
+    "droppedEvents": 0,
+    "checkpointKind": "launch"
+   },
+   "labels": {
+    "note": "coupon flow"
+   },
+   "runtime": {
+    "name": "ios",
+    "version": "27.0",
+    "language": "swift",
+    "frameworks": [
+     "uikit",
+     "swiftui"
+    ]
+   },
+   "capabilities": {
+    "input.pointer.capture": "supported",
+    "input.pointer.replay": "unsupported",
+    "input.semantic.replay": "supported",
+    "text.replay": "supported",
+    "lifecycle.replay": "partial",
+    "network.urlsession": "supported",
+    "storage.user_defaults": "supported",
+    "clock.virtual": "explicit",
+    "crash.uncaught": "partial"
+   }
+  },
+  "checkpoint": {
+   "kind": "launch",
+   "t": -180,
+   "wallClockMs": 1792583999820,
+   "afterSeq": 0,
+   "data": {
+    "user_defaults": {
+     "legacy_cart": {
+      "type": "string",
+      "value": "v1"
+     },
+     "launches": {
+      "type": "int",
+      "value": 3
+     }
+    }
+   }
+  },
+  "events": [
+   {
+    "seq": 1,
+    "t": 0,
+    "type": "lifecycle",
+    "data": {
+     "state": "resumed"
+    }
+   },
+   {
+    "seq": 2,
+    "t": 340,
+    "type": "http",
+    "data": {
+     "id": 2,
+     "key": "GET shop.bugcapsule.com/api/orders",
+     "occurrence": 0,
+     "method": "GET",
+     "url": "https://shop.bugcapsule.com/api/orders",
+     "requestHeaders": {
+      "accept": "application/json",
+      "authorization": "[REDACTED]"
+     },
+     "requestBody": null,
+     "requestEncoding": "json",
+     "status": 202,
+     "statusMessage": "OK",
+     "responseHeaders": {
+      "content-type": "application/json"
+     },
+     "responseBody": {
+      "status": "pending"
+     },
+     "bodyEncoding": "json",
+     "durationMs": 320,
+     "error": null
+    }
+   },
+   {
+    "seq": 3,
+    "t": 900,
+    "type": "route",
+    "data": {
+     "location": "orders",
+     "source": "explicit",
+     "action": "push"
+    }
+   },
+   {
+    "seq": 4,
+    "t": 1200,
+    "type": "pointer",
+    "data": {
+     "phase": "down",
+     "pointer": 1,
+     "x": 120.0,
+     "y": 300.5,
+     "kind": "touch"
+    }
+   },
+   {
+    "seq": 5,
+    "t": 1260,
+    "type": "pointer",
+    "data": {
+     "phase": "up",
+     "pointer": 1,
+     "x": 120.0,
+     "y": 300.5,
+     "kind": "touch"
+    }
+   },
+   {
+    "seq": 6,
+    "t": 1300,
+    "type": "action",
+    "data": {
+     "id": "orders.refresh",
+     "payload": {
+      "source": "button"
+     }
+    }
+   },
+   {
+    "seq": 7,
+    "t": 4980,
+    "type": "failure",
+    "data": {
+     "kind": "assertion",
+     "signature": "assertion:cart_total_non_negative:",
+     "type": "cart_total_non_negative",
+     "message": "",
+     "assertionId": "cart_total_non_negative",
+     "t": 4980
+    }
+   }
+  ]
+ }
+}

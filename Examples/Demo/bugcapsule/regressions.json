@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "tests": [
+    {
+      "capsuleId": "80fe5057-410a-4103-93b6-272b9ed2f740",
+      "name": "negative total with SAVE100",
+      "file": "bugcapsule/regressions/80fe5057-410a-4103-93b6-272b9ed2f740.bugcapsule",
+      "signature": "assertion:cart_total_non_negative:",
+      "status": "active",
+      "addedAt": "2026-10-21T12:50:22.449720Z",
+      "runtime": "ios",
+      "lineage": {
+        "serverId": "503cec75-599a-41e3-b3de-43d3de33ce1f",
+        "capturedGitSha": null
+      },
+      "lastRun": {
+        "at": "2026-10-21T13:35:14.553963Z",
+        "result": "pass",
+        "attempts": 2,
+        "validAttempts": 2,
+        "reproductions": 0,
+        "gitSha": null
+      }
+    }
+  ]
+}

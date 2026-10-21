@@ -1,0 +1,589 @@
+{
+  "format": "bugcapsule.conformance",
+  "version": 1,
+  "generatedBy": "packages/bug_capsule/tool/generate_conformance.dart",
+  "description": "Redaction with the default rules plus extraKeys [\"loyaltyId\"] and extraHeaders [\"x-tenant\"]. redactUrl: \"params\" lists the decoded query parameters of the output in order; implementations must match them (and should match \"output\" exactly).",
+  "extraKeys": [
+    "loyaltyId"
+  ],
+  "extraHeaders": [
+    "x-tenant"
+  ],
+  "placeholder": "[REDACTED]",
+  "keys": [
+    {
+      "key": "password",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "user_password",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "Pass-Word",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "passwd",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "fcmToken",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "access.token",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "clientSecret",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "x-api-key",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "apiKey",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "API_KEY",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "authorization",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "Cookie",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "cardNumber",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "credit_card",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "privateKey",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "session_id",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "sessionId",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "pin",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "PIN",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "shipping",
+      "sensitive": false,
+      "sensitiveQuery": false
+    },
+    {
+      "key": "pan",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "span",
+      "sensitive": false,
+      "sensitiveQuery": false
+    },
+    {
+      "key": "otp",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "ssn",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "cvv",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "cvc",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "passcode",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "iban",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "code",
+      "sensitive": false,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "sig",
+      "sensitive": false,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "key",
+      "sensitive": false,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "auth",
+      "sensitive": false,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "sid",
+      "sensitive": false,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "session",
+      "sensitive": false,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "x-amz-signature",
+      "sensitive": false,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "Credential",
+      "sensitive": false,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "loyaltyId",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "loyalty_id",
+      "sensitive": true,
+      "sensitiveQuery": true
+    },
+    {
+      "key": "email",
+      "sensitive": false,
+      "sensitiveQuery": false
+    },
+    {
+      "key": "name",
+      "sensitive": false,
+      "sensitiveQuery": false
+    },
+    {
+      "key": "total",
+      "sensitive": false,
+      "sensitiveQuery": false
+    }
+  ],
+  "headers": [
+    {
+      "name": "Authorization",
+      "sensitive": true
+    },
+    {
+      "name": "cookie",
+      "sensitive": true
+    },
+    {
+      "name": "Set-Cookie",
+      "sensitive": true
+    },
+    {
+      "name": "proxy-authorization",
+      "sensitive": true
+    },
+    {
+      "name": "X-API-Key",
+      "sensitive": true
+    },
+    {
+      "name": "x-auth-token",
+      "sensitive": true
+    },
+    {
+      "name": "x-tenant",
+      "sensitive": true
+    },
+    {
+      "name": "X-Csrf-Token",
+      "sensitive": true
+    },
+    {
+      "name": "content-type",
+      "sensitive": false
+    },
+    {
+      "name": "accept",
+      "sensitive": false
+    },
+    {
+      "name": "location",
+      "sensitive": false
+    }
+  ],
+  "scrubText": [
+    {
+      "input": "nothing to see here",
+      "output": "nothing to see here"
+    },
+    {
+      "input": "abc",
+      "output": "abc"
+    },
+    {
+      "input": "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.sig_part-1",
+      "output": "Authorization: [REDACTED] [REDACTED]"
+    },
+    {
+      "input": "retry with token abcdef123456 later",
+      "output": "retry with token [REDACTED] later"
+    },
+    {
+      "input": "Basic dXNlcjpwYXNzd29yZA==",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.abc in text",
+      "output": "jwt [REDACTED] in text"
+    },
+    {
+      "input": "keys sk_live_abcdefgh12345678 AKIAABCDEFGHIJKLMNOP ghp_abcdefghijklmnopqrstuvwxyz bci_abcdefghijklmnopqrstuv",
+      "output": "keys [REDACTED] [REDACTED] [REDACTED] [REDACTED]"
+    },
+    {
+      "input": "GET /login?password=hunter2&user=qa&loyaltyId=L1",
+      "output": "GET /login?password=[REDACTED]&user=qa&loyaltyId=[REDACTED]"
+    },
+    {
+      "input": "{\"password\": \"hunter2\", \"user\": \"qa\"}",
+      "output": "{\"password\": \"[REDACTED]\", \"user\": \"qa\"}"
+    },
+    {
+      "input": "{'apiKey': 'abc', 'ok': 'yes'}",
+      "output": "{'apiKey': '[REDACTED]', 'ok': 'yes'}"
+    },
+    {
+      "input": "password: hunter2, user: qa",
+      "output": "password: [REDACTED], user: qa"
+    },
+    {
+      "input": "redirect to https://example.com/cb?code=xyz",
+      "output": "redirect to https://example.com/cb?code=[REDACTED]"
+    },
+    {
+      "input": "card 4111 1111 1111 1111 expires",
+      "output": "card [REDACTED] expires"
+    },
+    {
+      "input": "not a card 1234 5678 9012 3456",
+      "output": "not a card 1234 5678 9012 3456"
+    },
+    {
+      "input": "card 4111-1111-1111-1111",
+      "output": "card [REDACTED]"
+    },
+    {
+      "input": "otp=123456 and pin=1234",
+      "output": "otp=[REDACTED] and pin=[REDACTED]"
+    },
+    {
+      "input": "session_id=abc; Path=/",
+      "output": "session_id=[REDACTED]; Path=/"
+    },
+    {
+      "input": "value [REDACTED] already",
+      "output": "value [REDACTED] already"
+    }
+  ],
+  "redactUrl": [
+    {
+      "input": "https://api.example.com/cart?lang=en",
+      "output": "https://api.example.com/cart?lang=en",
+      "params": [
+        [
+          "lang",
+          "en"
+        ]
+      ]
+    },
+    {
+      "input": "https://user:secret@api.example.com/x",
+      "output": "https://REDACTED@api.example.com/x",
+      "params": []
+    },
+    {
+      "input": "https://api.example.com/cb?code=abc&state=xyz",
+      "output": "https://api.example.com/cb?code=%5BREDACTED%5D&state=xyz",
+      "params": [
+        [
+          "code",
+          "[REDACTED]"
+        ],
+        [
+          "state",
+          "xyz"
+        ]
+      ]
+    },
+    {
+      "input": "https://bucket.s3.amazonaws.com/f?X-Amz-Signature=abc&X-Amz-Credential=k&X-Amz-Date=1",
+      "output": "https://bucket.s3.amazonaws.com/f?X-Amz-Signature=%5BREDACTED%5D&X-Amz-Credential=%5BREDACTED%5D&X-Amz-Date=1",
+      "params": [
+        [
+          "X-Amz-Signature",
+          "[REDACTED]"
+        ],
+        [
+          "X-Amz-Credential",
+          "[REDACTED]"
+        ],
+        [
+          "X-Amz-Date",
+          "1"
+        ]
+      ]
+    },
+    {
+      "input": "https://api.example.com/x?token=t1&page=2&loyaltyId=L1",
+      "output": "https://api.example.com/x?token=%5BREDACTED%5D&page=2&loyaltyId=%5BREDACTED%5D",
+      "params": [
+        [
+          "token",
+          "[REDACTED]"
+        ],
+        [
+          "page",
+          "2"
+        ],
+        [
+          "loyaltyId",
+          "[REDACTED]"
+        ]
+      ]
+    },
+    {
+      "input": "https://example.com/cb#access_token=abc&token_type=bearer",
+      "output": "https://example.com/cb#access_token=%5BREDACTED%5D&token_type=%5BREDACTED%5D",
+      "params": []
+    },
+    {
+      "input": "https://api.example.com/x?note=Bearer%20abcdefghijkl",
+      "output": "https://api.example.com/x?note=Bearer+%5BREDACTED%5D",
+      "params": [
+        [
+          "note",
+          "Bearer [REDACTED]"
+        ]
+      ]
+    },
+    {
+      "input": "https://api.example.com/plain/path/only",
+      "output": "https://api.example.com/plain/path/only",
+      "params": []
+    }
+  ],
+  "redactHeaders": [
+    {
+      "input": {
+        "Authorization": "Bearer abc",
+        "Content-Type": "application/json",
+        "X-Tenant": "acme"
+      },
+      "output": {
+        "authorization": "[REDACTED]",
+        "content-type": "application/json",
+        "x-tenant": "[REDACTED]"
+      }
+    },
+    {
+      "input": {
+        "cookie": "a=b",
+        "Set-Cookie": "sid=1",
+        "accept": "text/html",
+        "x-request-token": "zzz"
+      },
+      "output": {
+        "cookie": "[REDACTED]",
+        "set-cookie": "[REDACTED]",
+        "accept": "text/html",
+        "x-request-token": "[REDACTED]"
+      }
+    },
+    {
+      "input": {
+        "Location": "https://example.com/cb?code=abc",
+        "X-Trace": "password=hunter2",
+        "Accept-Language": [
+          "en",
+          "fr"
+        ]
+      },
+      "output": {
+        "location": "https://example.com/cb?code=[REDACTED]",
+        "x-trace": "password=[REDACTED]",
+        "accept-language": "en, fr"
+      }
+    }
+  ],
+  "redactJson": [
+    {
+      "input": {
+        "user": "qa",
+        "password": "hunter2",
+        "nested": {
+          "apiKey": "k",
+          "list": [
+            {
+              "token": "t"
+            },
+            "Bearer abcdefghij"
+          ]
+        }
+      },
+      "output": {
+        "user": "qa",
+        "password": "[REDACTED]",
+        "nested": {
+          "apiKey": "[REDACTED]",
+          "list": [
+            {
+              "token": "[REDACTED]"
+            },
+            "Bearer [REDACTED]"
+          ]
+        }
+      }
+    },
+    {
+      "input": {
+        "loyaltyId": "L-1",
+        "points": 3,
+        "pin": 1234,
+        "shipping": "fast"
+      },
+      "output": {
+        "loyaltyId": "[REDACTED]",
+        "points": 3,
+        "pin": "[REDACTED]",
+        "shipping": "fast"
+      }
+    },
+    {
+      "input": {
+        "profile": "{\"refreshToken\":\"abc\",\"name\":\"x\"}",
+        "raw": "[1, {\"secret\": 2}]"
+      },
+      "output": {
+        "profile": "{\"refreshToken\":\"[REDACTED]\",\"name\":\"x\"}",
+        "raw": "[1,{\"secret\":\"[REDACTED]\"}]"
+      }
+    },
+    {
+      "input": {
+        "password": null,
+        "cvv": "",
+        "ok": true
+      },
+      "output": {
+        "password": null,
+        "cvv": "[REDACTED]",
+        "ok": true
+      }
+    },
+    {
+      "input": [
+        "sk_test_abcdefgh12345678",
+        42,
+        null
+      ],
+      "output": [
+        "[REDACTED]",
+        42,
+        null
+      ]
+    },
+    {
+      "input": "just a string with otp=999999",
+      "output": "just a string with otp=[REDACTED]"
+    },
+    {
+      "input": 12,
+      "output": 12
+    }
+  ],
+  "redactText": [
+    {
+      "id": "login.email",
+      "value": "qa@example.com",
+      "output": "qa@example.com"
+    },
+    {
+      "id": "login.password",
+      "value": "hunter2",
+      "output": "[REDACTED]"
+    },
+    {
+      "id": "coupon",
+      "value": "SAVE100",
+      "output": "SAVE100"
+    },
+    {
+      "id": "notes",
+      "value": "call me, token abcdefghijk1 ok",
+      "output": "call me, token [REDACTED] ok"
+    },
+    {
+      "id": "card.holder",
+      "value": "Jane",
+      "sensitive": true,
+      "output": "[REDACTED]"
+    },
+    {
+      "id": "otp",
+      "value": "123456",
+      "output": "[REDACTED]"
+    }
+  ]
+}

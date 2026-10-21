@@ -1,0 +1,234 @@
+{
+ "description": "Captured by the native Android SDK: runtime and capabilities, OkHttp exchange, navigation route, pointer, tracked text, semantic action, state event.",
+ "expect": "valid",
+ "document": {
+  "format": "bugcapsule.capsule",
+  "specVersion": 1,
+  "manifest": {
+   "capsuleId": "a0d0c0de-0000-4000-8000-0000000000a1",
+   "createdAt": "2026-10-21T12:00:05.120Z",
+   "mode": "qa",
+   "app": {
+    "id": "com.bugcapsule.shop",
+    "name": "BugCapsule Shop",
+    "version": "1.0.0",
+    "build": "7",
+    "flavor": null
+   },
+   "source": {
+    "gitSha": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+    "dirty": false
+   },
+   "sdk": {
+    "name": "bugcapsule-android",
+    "version": "0.3.0"
+   },
+   "stateSchemaVersion": 1,
+   "platform": {
+    "os": "android",
+    "osVersion": "35",
+    "locale": "en-US",
+    "screen": {
+     "width": 411.43,
+     "height": 914.29,
+     "pixelRatio": 2.625
+    }
+   },
+   "session": {
+    "id": "a1b2c3d4-0000-4000-8000-00000000000a",
+    "startedAt": "2026-10-21T11:59:50.000Z",
+    "wallClockAtAnchorMs": 1792584000000,
+    "seed": 3141592653,
+    "durationMs": 5120
+   },
+   "failure": {
+    "kind": "assertion",
+    "signature": "assertion:cart_total_non_negative:",
+    "type": "cart_total_non_negative",
+    "message": "total -3.00",
+    "stack": null,
+    "assertionId": "cart_total_non_negative",
+    "t": 4980
+   },
+   "eligibility": {
+    "status": "eligible",
+    "missing": []
+   },
+   "integrations": [
+    "okhttp",
+    "navigation",
+    "shared_preferences",
+    "state"
+   ],
+   "stats": {
+    "eventCount": 9,
+    "droppedEvents": 0,
+    "checkpointKind": "launch"
+   },
+   "labels": {
+    "note": "coupon flow"
+   },
+   "runtime": {
+    "name": "android",
+    "version": "35",
+    "language": "kotlin",
+    "frameworks": [
+     "views",
+     "compose"
+    ]
+   },
+   "capabilities": {
+    "input.pointer.capture": "supported",
+    "input.pointer.replay": "supported",
+    "input.semantic.replay": "supported",
+    "text.replay": "supported",
+    "lifecycle.replay": "partial",
+    "network.okhttp": "supported",
+    "storage.shared_preferences": "supported",
+    "clock.virtual": "explicit",
+    "crash.uncaught": "partial"
+   }
+  },
+  "checkpoint": {
+   "kind": "launch",
+   "t": -180,
+   "wallClockMs": 1792583999820,
+   "afterSeq": 0,
+   "data": {
+    "shared_preferences": {
+     "shop": {
+      "legacy_cart": {
+       "type": "string",
+       "value": "{\"v\":1}"
+      },
+      "onboarded": {
+       "type": "bool",
+       "value": true
+      }
+     }
+    },
+    "state": {
+     "cart": {
+      "items": 2
+     }
+    }
+   }
+  },
+  "events": [
+   {
+    "seq": 1,
+    "t": -120,
+    "type": "lifecycle",
+    "data": {
+     "state": "resumed"
+    }
+   },
+   {
+    "seq": 2,
+    "t": 220,
+    "type": "http",
+    "data": {
+     "id": 2,
+     "key": "GET shop.bugcapsule.com/api/cart",
+     "occurrence": 0,
+     "method": "GET",
+     "url": "https://shop.bugcapsule.com/api/cart",
+     "requestHeaders": {
+      "accept": "application/json",
+      "authorization": "[REDACTED]"
+     },
+     "requestBody": null,
+     "requestEncoding": "json",
+     "status": 200,
+     "statusMessage": "OK",
+     "responseHeaders": {
+      "content-type": "application/json"
+     },
+     "responseBody": {
+      "items": [
+       {
+        "sku": "A1",
+        "price": 4999
+       }
+      ],
+      "subtotal": 4999
+     },
+     "bodyEncoding": "json",
+     "durationMs": 180,
+     "error": null
+    }
+   },
+   {
+    "seq": 3,
+    "t": 300,
+    "type": "route",
+    "data": {
+     "location": "cart",
+     "source": "navigation"
+    }
+   },
+   {
+    "seq": 4,
+    "t": 1400,
+    "type": "pointer",
+    "data": {
+     "phase": "down",
+     "pointer": 0,
+     "x": 205.5,
+     "y": 610.25,
+     "kind": "touch"
+    }
+   },
+   {
+    "seq": 5,
+    "t": 1480,
+    "type": "pointer",
+    "data": {
+     "phase": "up",
+     "pointer": 0,
+     "x": 205.5,
+     "y": 610.25,
+     "kind": "touch"
+    }
+   },
+   {
+    "seq": 6,
+    "t": 2600,
+    "type": "text",
+    "data": {
+     "id": "cart.coupon",
+     "value": "SAVE100"
+    }
+   },
+   {
+    "seq": 7,
+    "t": 3100,
+    "type": "action",
+    "data": {
+     "id": "cart.applyCoupon"
+    }
+   },
+   {
+    "seq": 8,
+    "t": 3200,
+    "type": "state",
+    "data": {
+     "key": "cart"
+    }
+   },
+   {
+    "seq": 9,
+    "t": 4980,
+    "type": "failure",
+    "data": {
+     "kind": "assertion",
+     "signature": "assertion:cart_total_non_negative:",
+     "type": "cart_total_non_negative",
+     "message": "total -3.00",
+     "assertionId": "cart_total_non_negative",
+     "t": 4980
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,41 @@
+{
+ "description": "A capability value is a boolean.",
+ "expect": "invalid",
+ "errorPath": "$.manifest.capabilities.network.okhttp",
+ "document": {
+  "format": "bugcapsule.capsule",
+  "specVersion": 1,
+  "manifest": {
+   "capsuleId": "c0ffee00-0000-4000-8000-000000000002",
+   "createdAt": "2026-10-19T10:00:00+02:00",
+   "mode": "production",
+   "app": {
+    "version": "1.0.0",
+    "build": "1"
+   },
+   "platform": {
+    "os": "android"
+   },
+   "session": {
+    "id": "s",
+    "startedAt": "2026-10-19T07:59:00Z",
+    "wallClockAtAnchorMs": 1760860000000,
+    "seed": 1,
+    "durationMs": 0
+   },
+   "failure": null,
+   "eligibility": {
+    "status": "ineligible"
+   },
+   "capabilities": {
+    "network.okhttp": true
+   }
+  },
+  "checkpoint": {
+   "kind": "launch",
+   "t": 0,
+   "wallClockMs": 1760860000000
+  },
+  "events": []
+ }
+}
