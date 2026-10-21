@@ -50,7 +50,7 @@ public final class BugCapsuleNavigation: BugCapsuleIntegration, @unchecked Senda
             if let backStack { self.backStack = backStack }
             return session
         }
-        guard let s, s.isRecording else { return }
+        guard let s, s.isObserving else { return }
         let redacted = s.redactor.redactURL(location)
         s.record(EventTypes.route, ["location": .string(redacted), "source": .string(source), "action": .string(action)])
     }
@@ -90,7 +90,11 @@ public final class BugCapsuleNavigation: BugCapsuleIntegration, @unchecked Senda
             let proxy = NavigationDelegateProxy(original: nav.delegate, owner: self, depth: nav.viewControllers.count)
             proxies[key] = proxy
             nav.delegate = proxy
-            if let top = nav.topViewController { record(nav, shown: top, action: "reset") }
+            if let top = nav.topViewController {
+                let name = (top as? BugCapsuleRouteNaming)?.bugCapsuleRoute ?? String(describing: type(of: top))
+                BugCapsuleSession.current?.monitoring?.screenWillAppear(name)
+                record(nav, shown: top, action: "reset")
+            }
         }
 
         @MainActor
@@ -129,6 +133,12 @@ public final class BugCapsuleNavigation: BugCapsuleIntegration, @unchecked Senda
         }
 
         func navigationController(_ nav: UINavigationController, willShow vc: UIViewController, animated: Bool) {
+            if vc !== lastShown {
+                MainActor.assumeIsolated {
+                    let name = (vc as? BugCapsuleRouteNaming)?.bugCapsuleRoute ?? String(describing: type(of: vc))
+                    BugCapsuleSession.current?.monitoring?.screenWillAppear(name)
+                }
+            }
             original?.navigationController?(nav, willShow: vc, animated: animated)
         }
 
