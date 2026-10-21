@@ -1,0 +1,102 @@
+{
+ "description": "No events array.",
+ "expect": "invalid",
+ "errorPath": "$.events",
+ "document": {
+  "format": "bugcapsule.capsule",
+  "specVersion": 1,
+  "manifest": {
+   "capsuleId": "6f9b1c2e-4a5d-4e8f-9a0b-1c2d3e4f5a6b",
+   "createdAt": "2026-10-19T10:00:00.000Z",
+   "mode": "qa",
+   "app": {
+    "id": "com.example.shop",
+    "name": "Shop",
+    "version": "1.4.0",
+    "build": "42",
+    "flavor": "staging"
+   },
+   "source": {
+    "gitSha": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+    "dirty": false
+   },
+   "sdk": {
+    "name": "bug_capsule_flutter",
+    "version": "0.2.0"
+   },
+   "stateSchemaVersion": 1,
+   "platform": {
+    "os": "ios",
+    "osVersion": "27.0 (24A434)",
+    "locale": "en_US",
+    "screen": {
+     "width": 390.0,
+     "height": 844.0,
+     "pixelRatio": 3.0
+    },
+    "dartVersion": "3.9.0"
+   },
+   "session": {
+    "id": "8c1d2e3f-0000-4000-8000-000000000001",
+    "startedAt": "2026-10-19T09:59:40.000Z",
+    "wallClockAtAnchorMs": 1760867980000,
+    "seed": 2527813754,
+    "durationMs": 20000
+   },
+   "failure": {
+    "kind": "exception",
+    "signature": "exception:StateError:Bad state: Cart total is negative (#)",
+    "type": "StateError",
+    "message": "Bad state: Cart total is negative (-3)",
+    "stack": "#0 main (package:shop/main.dart:10:3)",
+    "assertionId": null,
+    "t": 18234
+   },
+   "eligibility": {
+    "status": "partial",
+    "missing": [
+     {
+      "dependency": "network.bodies",
+      "reason": "1 recorded responses have no body"
+     }
+    ]
+   },
+   "integrations": [
+    "bloc",
+    "dio",
+    "go_router",
+    "shared_preferences"
+   ],
+   "stats": {
+    "eventCount": 9,
+    "droppedEvents": 0,
+    "checkpointKind": "launch"
+   },
+   "labels": {
+    "ticket": "QA-1"
+   },
+   "redaction": {
+    "extraKeys": [
+     "loyaltyId"
+    ],
+    "extraHeaders": [
+     "x-tenant"
+    ]
+   }
+  },
+  "checkpoint": {
+   "kind": "launch",
+   "t": -412,
+   "wallClockMs": 1760867979588,
+   "afterSeq": 0,
+   "data": {
+    "shared_preferences": {
+     "onboarding_done": {
+      "type": "bool",
+      "value": true
+     }
+    }
+   }
+  }
+ }
+}

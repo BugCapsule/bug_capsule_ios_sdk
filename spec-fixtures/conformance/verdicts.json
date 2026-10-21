@@ -1,0 +1,557 @@
+{
+  "format": "bugcapsule.conformance",
+  "version": 1,
+  "generatedBy": "packages/bug_capsule/tool/generate_conformance.dart",
+  "description": "Attempt classification and batch verdicts (lib/src/core/verdict.dart evaluateRun). Divergence types not listed in \"expectedDivergences\" are material.",
+  "expectedDivergences": [
+    "build.gitSha",
+    "network.unused",
+    "screen.size"
+  ],
+  "cases": [
+    {
+      "name": "replay reproduced every time",
+      "kind": "replay",
+      "requested": 3,
+      "reports": [
+        {
+          "outcome": "reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)"
+        },
+        {
+          "outcome": "reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)"
+        },
+        {
+          "outcome": "reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)"
+        }
+      ],
+      "verdict": "reproduced",
+      "wire": "reproduced",
+      "exitCode": 0,
+      "validAttempts": 3,
+      "attemptStatuses": [
+        "reproduced",
+        "reproduced",
+        "reproduced"
+      ]
+    },
+    {
+      "name": "replay never reproduced, all clean",
+      "kind": "replay",
+      "requested": 2,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": []
+        },
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": []
+        }
+      ],
+      "verdict": "notReproduced",
+      "wire": "not_reproduced",
+      "exitCode": 1,
+      "validAttempts": 2,
+      "attemptStatuses": [
+        "clean",
+        "clean"
+      ]
+    },
+    {
+      "name": "replay flaky",
+      "kind": "replay",
+      "requested": 3,
+      "reports": [
+        {
+          "outcome": "reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)"
+        },
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": []
+        },
+        {
+          "outcome": "reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)"
+        }
+      ],
+      "verdict": "flaky",
+      "wire": "flaky",
+      "exitCode": 2,
+      "validAttempts": 3,
+      "attemptStatuses": [
+        "reproduced",
+        "clean",
+        "reproduced"
+      ]
+    },
+    {
+      "name": "replay with an error is inconclusive",
+      "kind": "replay",
+      "requested": 2,
+      "reports": [
+        {
+          "outcome": "reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)"
+        },
+        {
+          "outcome": "error",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "message": "timeout"
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 1,
+      "attemptStatuses": [
+        "reproduced",
+        "invalid"
+      ]
+    },
+    {
+      "name": "replay missing attempt",
+      "kind": "replay",
+      "requested": 3,
+      "reports": [
+        {
+          "outcome": "reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)"
+        },
+        {
+          "outcome": "reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)"
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 2,
+      "attemptStatuses": [
+        "reproduced",
+        "reproduced"
+      ]
+    },
+    {
+      "name": "verify fixed",
+      "kind": "verify",
+      "requested": 3,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": []
+        },
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": []
+        },
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": []
+        }
+      ],
+      "verdict": "fixed",
+      "wire": "not_reproduced",
+      "exitCode": 0,
+      "validAttempts": 3,
+      "attemptStatuses": [
+        "clean",
+        "clean",
+        "clean"
+      ]
+    },
+    {
+      "name": "verify still failing",
+      "kind": "verify",
+      "requested": 2,
+      "reports": [
+        {
+          "outcome": "reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)"
+        },
+        {
+          "outcome": "reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)"
+        }
+      ],
+      "verdict": "stillFailing",
+      "wire": "reproduced",
+      "exitCode": 1,
+      "validAttempts": 2,
+      "attemptStatuses": [
+        "reproduced",
+        "reproduced"
+      ]
+    },
+    {
+      "name": "verify flaky",
+      "kind": "verify",
+      "requested": 2,
+      "reports": [
+        {
+          "outcome": "reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)"
+        },
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": []
+        }
+      ],
+      "verdict": "flaky",
+      "wire": "flaky",
+      "exitCode": 2,
+      "validAttempts": 2,
+      "attemptStatuses": [
+        "reproduced",
+        "clean"
+      ]
+    },
+    {
+      "name": "verify one clean plus error is inconclusive",
+      "kind": "verify",
+      "requested": 2,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": []
+        },
+        {
+          "outcome": "error",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "message": "timeout"
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 1,
+      "attemptStatuses": [
+        "clean",
+        "invalid"
+      ]
+    },
+    {
+      "name": "verify fewer attempts than requested",
+      "kind": "verify",
+      "requested": 3,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": []
+        },
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": []
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 2,
+      "attemptStatuses": [
+        "clean",
+        "clean"
+      ]
+    },
+    {
+      "name": "verify with material divergence is not fixed",
+      "kind": "verify",
+      "requested": 2,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": []
+        },
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": [
+            "network.unrecorded"
+          ]
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 1,
+      "attemptStatuses": [
+        "clean",
+        "invalid"
+      ]
+    },
+    {
+      "name": "expected divergences keep an attempt clean",
+      "kind": "verify",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": [
+            "build.gitSha",
+            "screen.size",
+            "network.unused"
+          ]
+        }
+      ],
+      "verdict": "fixed",
+      "wire": "not_reproduced",
+      "exitCode": 0,
+      "validAttempts": 1,
+      "attemptStatuses": [
+        "clean"
+      ]
+    },
+    {
+      "name": "unknown divergence types are material",
+      "kind": "verify",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": [
+            "capability.unsupported"
+          ]
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 0,
+      "attemptStatuses": [
+        "invalid"
+      ]
+    },
+    {
+      "name": "restore failure is material",
+      "kind": "verify",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": [
+            "restore.late"
+          ]
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 0,
+      "attemptStatuses": [
+        "invalid"
+      ]
+    },
+    {
+      "name": "incomplete input dispatch is not clean",
+      "kind": "verify",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 2,
+          "eventsExpected": 3,
+          "divergences": []
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 0,
+      "attemptStatuses": [
+        "invalid"
+      ]
+    },
+    {
+      "name": "unexpected failure is not clean",
+      "kind": "verify",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": [],
+          "otherFailures": [
+            "exception:TypeError:x"
+          ]
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 0,
+      "attemptStatuses": [
+        "invalid"
+      ]
+    },
+    {
+      "name": "redacted text replay is material",
+      "kind": "verify",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": [
+            "text.redacted"
+          ]
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 0,
+      "attemptStatuses": [
+        "invalid"
+      ]
+    },
+    {
+      "name": "incompatible wins",
+      "kind": "replay",
+      "requested": 2,
+      "reports": [
+        {
+          "outcome": "reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)"
+        },
+        {
+          "outcome": "incompatible",
+          "message": "schema"
+        }
+      ],
+      "verdict": "incompatible",
+      "wire": "incompatible",
+      "exitCode": 3,
+      "validAttempts": 1,
+      "attemptStatuses": [
+        "reproduced",
+        "invalid"
+      ]
+    },
+    {
+      "name": "no assertion is inconclusive",
+      "kind": "replay",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "no_assertion"
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 0,
+      "attemptStatuses": [
+        "invalid"
+      ]
+    },
+    {
+      "name": "reproduction without expected signature is invalid",
+      "kind": "replay",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "reproduced"
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 0,
+      "attemptStatuses": [
+        "invalid"
+      ]
+    },
+    {
+      "name": "zero requested attempts",
+      "kind": "verify",
+      "requested": 0,
+      "reports": [],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 0,
+      "attemptStatuses": []
+    },
+    {
+      "name": "more reports than requested",
+      "kind": "verify",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": []
+        },
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": []
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 2,
+      "attemptStatuses": [
+        "clean",
+        "clean"
+      ]
+    }
+  ]
+}

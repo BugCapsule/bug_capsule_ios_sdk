@@ -1,0 +1,246 @@
+import Foundation
+
+/// Capture config the backend can change at runtime (kill switch,
+/// sampling, bodies, redaction).
+public struct RemoteCaptureConfig: Sendable, Equatable {
+    public var enabled: Bool
+    public var sampleRate: Double
+    public var maxCapsuleBytes: Int
+    public var captureNetworkBodies: Bool
+    public var redactKeys: [String]
+    public var configTtlSeconds: Int
+    /// Wall clock (epoch ms) of the successful fetch this config came from.
+    public var fetchedAtMs: Int
+
+    public init(
+        enabled: Bool = true, sampleRate: Double = 1, maxCapsuleBytes: Int = 5 * 1024 * 1024,
+        captureNetworkBodies: Bool = true, redactKeys: [String] = [], configTtlSeconds: Int = 300, fetchedAtMs: Int = 0
+    ) {
+        self.enabled = enabled
+        self.sampleRate = sampleRate
+        self.maxCapsuleBytes = maxCapsuleBytes
+        self.captureNetworkBodies = captureNetworkBodies
+        self.redactKeys = redactKeys
+        self.configTtlSeconds = configTtlSeconds
+        self.fetchedAtMs = fetchedAtMs
+    }
+
+    public struct FormatError: Error, Sendable { public let message: String }
+
+    /// Parses the `/v1/sdk/config` body (or the cache). Throws on wrong
+    /// types; values are clamped to sane ranges.
+    public init(json j: JSONObject, fetchedAtMs: Int? = nil) throws {
+        func check(_ key: String, _ ok: (JSONValue) -> Bool) throws {
+            if let v = j[key], !v.isNull, !ok(v) { throw FormatError(message: "remote config \"\(key)\" has the wrong type") }
+        }
+        try check("sampleRate") { $0.isNumber }
+        try check("configTtlSeconds") { $0.intValue != nil }
+        try check("maxCapsuleBytes") { $0.intValue != nil }
+        try check("enabled") { $0.boolValue != nil }
+        try check("captureNetworkBodies") { $0.boolValue != nil }
+        try check("redactKeys") { $0.arrayValue != nil }
+        try check("fetchedAtMs") { $0.intValue != nil }
+        let rate = j["sampleRate"]?.doubleValue ?? 1
+        enabled = j["enabled"]?.boolValue ?? true
+        sampleRate = rate.isNaN ? 0 : min(max(rate, 0), 1)
+        maxCapsuleBytes = max(j["maxCapsuleBytes"]?.intValue ?? 5 * 1024 * 1024, 1)
+        captureNetworkBodies = j["captureNetworkBodies"]?.boolValue ?? true
+        redactKeys = (j["redactKeys"]?.arrayValue ?? []).map { $0.stringValue ?? JSON.encode($0) }
+        configTtlSeconds = min(max(j["configTtlSeconds"]?.intValue ?? 300, 0), 86400)
+        self.fetchedAtMs = fetchedAtMs ?? j["fetchedAtMs"]?.intValue ?? 0
+    }
+
+    public var json: JSONValue {
+        [
+            "enabled": .bool(enabled), "sampleRate": .double(sampleRate), "maxCapsuleBytes": .int(maxCapsuleBytes),
+            "captureNetworkBodies": .bool(captureNetworkBodies), "redactKeys": .array(redactKeys.map { .string($0) }),
+            "configTtlSeconds": .int(configTtlSeconds), "fetchedAtMs": .int(fetchedAtMs),
+        ]
+    }
+}
+
+/// Where the last good config is persisted between launches.
+public protocol RemoteConfigCache: Sendable {
+    /// The cached config for `scope`, or nil (missing, corrupt, other scope).
+    func read(scope: String) -> RemoteCaptureConfig?
+    func write(scope: String, config: RemoteCaptureConfig) throws
+}
+
+/// Keeps the remote capture config current and decides what it allows
+/// (port of `remote_config.dart`).
+///
+/// * Startup: `loadCached` restores the last config for this backend URL and
+///   ingest key (`scope`). A cached kill switch applies however old it is.
+/// * Refresh: next fetch after the config's TTL (at least `minInterval`,
+///   30 s); after a failure, backoff 30 s → 30 min with ±20 % jitter,
+///   honouring `Retry-After`. `onResumed` refreshes a stale config.
+/// * Uploads are allowed only with an enabled config fetched within `maxStale`.
+/// * 401/403 acts like a kill switch for the session (not persisted).
+public actor RemoteConfigController {
+    public typealias OnChange = @Sendable (RemoteCaptureConfig?, RemoteCaptureConfig) -> Void
+
+    private let fetch: @Sendable () async -> ConfigFetchResult
+    private let cache: RemoteConfigCache
+    public let scope: String
+    private let onChange: OnChange
+    public let maxStale: TimeInterval
+    public let minInterval: TimeInterval
+    public let maxBackoff: TimeInterval
+    private let now: @Sendable () -> Date
+    private let random: @Sendable () -> Double
+    private let autoSchedule: Bool
+
+    public private(set) var current: RemoteCaptureConfig?
+    public private(set) var keyRejected = false
+    private var failures = 0
+    private var timer: Task<Void, Never>?
+    private var inFlight: Task<Void, Never>?
+    private var paused = false
+    private var disposed = false
+    /// Delay of the last scheduled refresh (tests).
+    public private(set) var scheduledDelay: TimeInterval?
+
+    public init(
+        fetch: @escaping @Sendable () async -> ConfigFetchResult, cache: RemoteConfigCache, scope: String,
+        onChange: @escaping OnChange, maxStale: TimeInterval = 7 * 24 * 3600, minInterval: TimeInterval = 30,
+        maxBackoff: TimeInterval = 1800, now: @escaping @Sendable () -> Date = { Date() },
+        random: @escaping @Sendable () -> Double = { Double.random(in: 0..<1) }, autoSchedule: Bool = true,
+        initial: RemoteCaptureConfig? = nil
+    ) {
+        current = initial
+        self.fetch = fetch
+        self.cache = cache
+        self.scope = scope
+        self.onChange = onChange
+        self.maxStale = maxStale
+        self.minInterval = minInterval
+        self.maxBackoff = maxBackoff
+        self.now = now
+        self.random = random
+        self.autoSchedule = autoSchedule
+    }
+
+    /// Cache scope: one per backend URL and ingest key (FNV-1a 64).
+    public static func scope(for backend: BugCapsuleBackendConfig?) -> String {
+        var h: UInt64 = 0xcbf2_9ce4_8422_2325
+        for b in "\(backend?.url ?? "")|\(backend?.ingestKey ?? "")".utf8 {
+            h ^= UInt64(b)
+            h = h &* 0x0000_0100_0000_01b3
+        }
+        return String(h, radix: 16)
+    }
+
+    var ttl: TimeInterval { max(TimeInterval(current?.configTtlSeconds ?? 0), minInterval) }
+
+    public var age: TimeInterval? {
+        guard let current else { return nil }
+        return now().timeIntervalSince1970 - TimeInterval(current.fetchedAtMs) / 1000
+    }
+
+    public var isFresh: Bool {
+        guard let age else { return false }
+        return age < ttl
+    }
+
+    public var captureAllowed: Bool { !keyRejected && (current?.enabled ?? true) }
+
+    public var uploadsAllowed: Bool {
+        guard !keyRejected, let current, current.enabled, let age else { return false }
+        return age <= maxStale
+    }
+
+    public func loadCached() {
+        current = cache.read(scope: scope)
+    }
+
+    /// Fetches now unless a fetch is already running (then waits for it).
+    public func refresh() async {
+        if disposed { return }
+        if let inFlight {
+            await inFlight.value
+            return
+        }
+        let task = Task { await self.doRefresh() }
+        inFlight = task
+        await task.value
+        inFlight = nil
+    }
+
+    /// Refreshes first when the config is missing or older than its TTL.
+    public func ensureFresh() async {
+        if !isFresh { await refresh() }
+    }
+
+    private func doRefresh() async {
+        timer?.cancel()
+        let result = await fetch()
+        if disposed { return }
+        switch result {
+        case .fetched(let config):
+            failures = 0
+            let previous = current
+            current = config
+            keyRejected = false
+            do {
+                try cache.write(scope: scope, config: config)
+            } catch {
+                BugCapsuleLog.warn("could not cache remote config: \(error)")
+            }
+            onChange(previous, config)
+            schedule(ttl)
+        case .failed(let message, let status, let retryAfter):
+            failures += 1
+            if (status == 401 || status == 403) && !keyRejected {
+                keyRejected = true
+                BugCapsuleLog.warn("ingest key rejected (HTTP \(status!)); capture stopped: \(message)")
+                let previous = current
+                onChange(previous, Self.disabledLike(previous))
+            }
+            var delay = min(minInterval * pow(2, Double(min(failures - 1, 16))), maxBackoff)
+            if let retryAfter, retryAfter > delay { delay = retryAfter }
+            schedule(delay * (0.8 + random() * 0.4))
+        }
+    }
+
+    static func disabledLike(_ c: RemoteCaptureConfig?) -> RemoteCaptureConfig {
+        RemoteCaptureConfig(
+            enabled: false, sampleRate: c?.sampleRate ?? 0, maxCapsuleBytes: c?.maxCapsuleBytes ?? 0,
+            captureNetworkBodies: false, redactKeys: c?.redactKeys ?? [], configTtlSeconds: c?.configTtlSeconds ?? 0,
+            fetchedAtMs: c?.fetchedAtMs ?? 0)
+    }
+
+    private func schedule(_ delay: TimeInterval) {
+        timer?.cancel()
+        timer = nil
+        scheduledDelay = delay
+        if disposed || paused || !autoSchedule { return }
+        timer = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(delay, 0) * 1_000_000_000))
+            if Task.isCancelled { return }
+            await self?.refresh()
+        }
+    }
+
+    public func onPaused() {
+        paused = true
+        timer?.cancel()
+        timer = nil
+    }
+
+    public func onResumed() async {
+        if !paused || disposed { return }
+        paused = false
+        if inFlight != nil { return }
+        if isFresh, let age {
+            schedule(ttl - age)
+        } else {
+            await refresh()
+        }
+    }
+
+    public func dispose() {
+        disposed = true
+        timer?.cancel()
+        timer = nil
+    }
+}

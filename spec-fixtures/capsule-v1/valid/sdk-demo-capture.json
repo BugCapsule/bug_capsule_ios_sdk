@@ -1,0 +1,710 @@
+{
+ "description": "A real capsule written by bug_capsule_flutter 0.1.0 (demo app).",
+ "expect": "valid",
+ "document": {
+  "format": "bugcapsule.capsule",
+  "specVersion": 1,
+  "manifest": {
+   "capsuleId": "e73f5ad0-60f7-4cc5-b6b3-b232d86bb6db",
+   "createdAt": "2026-10-19T09:39:26.690164Z",
+   "mode": "qa",
+   "app": {
+    "id": "com.bugcapsule.bug_capsule_demo",
+    "name": "BugCapsule Shop",
+    "version": "1.0.0",
+    "build": "1",
+    "flavor": null
+   },
+   "source": {
+    "gitSha": "2a42f834e57aa9d560f192b838156c52fff37e2e",
+    "dirty": false
+   },
+   "sdk": {
+    "name": "bug_capsule_flutter",
+    "version": "0.1.0"
+   },
+   "stateSchemaVersion": 1,
+   "platform": {
+    "os": "ios",
+    "osVersion": "27.0 (24A434)",
+    "locale": "en_EG",
+    "screen": {
+     "width": 402.0,
+     "height": 874.0,
+     "pixelRatio": 3.0
+    },
+    "dartVersion": "3.13.5"
+   },
+   "session": {
+    "id": "3e0b5f2b-dfdd-4e88-9551-8b343cb089fa",
+    "startedAt": "2026-10-19T09:38:17.550462Z",
+    "wallClockAtAnchorMs": 1792402698421,
+    "seed": 2527813754,
+    "durationMs": 68270
+   },
+   "failure": {
+    "kind": "assertion",
+    "signature": "assertion:cart_total_non_negative:",
+    "type": "cart_total_non_negative",
+    "message": "total -92.0 with coupon SAVE100",
+    "stack": null,
+    "assertionId": "cart_total_non_negative",
+    "t": 67960
+   },
+   "eligibility": {
+    "status": "eligible",
+    "missing": []
+   },
+   "integrations": [
+    "bloc",
+    "dio",
+    "go_router",
+    "shared_preferences"
+   ],
+   "stats": {
+    "eventCount": 45,
+    "droppedEvents": 0,
+    "checkpointKind": "launch"
+   },
+   "labels": {}
+  },
+  "checkpoint": {
+   "kind": "launch",
+   "t": -480,
+   "wallClockMs": 1792402697942,
+   "afterSeq": 0,
+   "data": {
+    "shared_preferences": {}
+   }
+  },
+  "events": [
+   {
+    "seq": 1,
+    "t": -283,
+    "type": "route",
+    "data": {
+     "location": "/"
+    }
+   },
+   {
+    "seq": 2,
+    "t": -238,
+    "type": "bloc.create",
+    "data": {
+     "bloc": "HomeCubit",
+     "key": "HomeCubit#0"
+    }
+   },
+   {
+    "seq": 3,
+    "t": 13588,
+    "type": "pointer",
+    "data": {
+     "phase": "down",
+     "pointer": 1,
+     "x": 201.0,
+     "y": 544.0,
+     "kind": "touch"
+    }
+   },
+   {
+    "seq": 4,
+    "t": 13593,
+    "type": "pointer",
+    "data": {
+     "phase": "up",
+     "pointer": 1,
+     "x": 201.0,
+     "y": 544.0,
+     "kind": "touch",
+     "buttons": 0
+    }
+   },
+   {
+    "seq": 5,
+    "t": 13603,
+    "type": "action",
+    "data": {
+     "id": "lab.clear"
+    }
+   },
+   {
+    "seq": 6,
+    "t": 13605,
+    "type": "pointer",
+    "data": {
+     "phase": "down",
+     "pointer": 2,
+     "x": 201.0,
+     "y": 264.0,
+     "kind": "touch"
+    }
+   },
+   {
+    "seq": 7,
+    "t": 13606,
+    "type": "pointer",
+    "data": {
+     "phase": "up",
+     "pointer": 2,
+     "x": 201.0,
+     "y": 264.0,
+     "kind": "touch",
+     "buttons": 0
+    }
+   },
+   {
+    "seq": 8,
+    "t": 13606,
+    "type": "action",
+    "data": {
+     "id": "home.cart"
+    }
+   },
+   {
+    "seq": 9,
+    "t": 13623,
+    "type": "bloc.create",
+    "data": {
+     "bloc": "CartBloc",
+     "key": "CartBloc#0"
+    }
+   },
+   {
+    "seq": 10,
+    "t": 13626,
+    "type": "bloc.event",
+    "data": {
+     "bloc": "CartBloc",
+     "key": "CartBloc#0",
+     "event": "CartLoaded"
+    }
+   },
+   {
+    "seq": 11,
+    "t": 14033,
+    "type": "http",
+    "data": {
+     "id": 0,
+     "key": "GET shop.bugcapsule.com/api/cart",
+     "occurrence": 0,
+     "method": "GET",
+     "url": "https://shop.bugcapsule.com/api/cart",
+     "requestHeaders": {},
+     "requestBody": null,
+     "requestEncoding": "json",
+     "status": 200,
+     "statusMessage": null,
+     "responseHeaders": {
+      "content-type": "application/json"
+     },
+     "responseBody": {
+      "cartId": "c_17462",
+      "items": [
+       {
+        "sku": "cap",
+        "name": "BugCapsule cap",
+        "price": 18.0,
+        "qty": 2
+       },
+       {
+        "sku": "mug",
+        "name": "Flutter mug",
+        "price": 12.5,
+        "qty": 2
+       },
+       {
+        "sku": "hoodie",
+        "name": "Widget hoodie",
+        "price": 55.0,
+        "qty": 2
+       }
+      ]
+     },
+     "bodyEncoding": "json",
+     "durationMs": 356
+    }
+   },
+   {
+    "seq": 12,
+    "t": 14053,
+    "type": "bloc.state",
+    "data": {
+     "bloc": "CartBloc",
+     "key": "CartBloc#0",
+     "state": "CartState",
+     "data": {
+      "status": "ready",
+      "cartId": "c_17462",
+      "items": [
+       {
+        "sku": "cap",
+        "name": "BugCapsule cap",
+        "price": 18.0,
+        "qty": 2
+       },
+       {
+        "sku": "mug",
+        "name": "Flutter mug",
+        "price": 12.5,
+        "qty": 2
+       },
+       {
+        "sku": "hoodie",
+        "name": "Widget hoodie",
+        "price": 55.0,
+        "qty": 2
+       }
+      ],
+      "coupon": null,
+      "orderId": null,
+      "message": null
+     }
+    }
+   },
+   {
+    "seq": 13,
+    "t": 27532,
+    "type": "pointer",
+    "data": {
+     "phase": "down",
+     "pointer": 3,
+     "x": 28.0,
+     "y": 90.0,
+     "kind": "touch"
+    }
+   },
+   {
+    "seq": 14,
+    "t": 27559,
+    "type": "pointer",
+    "data": {
+     "phase": "up",
+     "pointer": 3,
+     "x": 28.0,
+     "y": 90.0,
+     "kind": "touch",
+     "buttons": 0
+    }
+   },
+   {
+    "seq": 15,
+    "t": 27566,
+    "type": "pointer",
+    "data": {
+     "phase": "down",
+     "pointer": 4,
+     "x": 201.0,
+     "y": 264.0,
+     "kind": "touch"
+    }
+   },
+   {
+    "seq": 16,
+    "t": 27566,
+    "type": "pointer",
+    "data": {
+     "phase": "up",
+     "pointer": 4,
+     "x": 201.0,
+     "y": 264.0,
+     "kind": "touch",
+     "buttons": 0
+    }
+   },
+   {
+    "seq": 17,
+    "t": 28113,
+    "type": "bloc.close",
+    "data": {
+     "bloc": "CartBloc",
+     "key": "CartBloc#0"
+    }
+   },
+   {
+    "seq": 18,
+    "t": 37525,
+    "type": "pointer",
+    "data": {
+     "phase": "down",
+     "pointer": 5,
+     "x": 201.0,
+     "y": 264.0,
+     "kind": "touch"
+    }
+   },
+   {
+    "seq": 19,
+    "t": 37541,
+    "type": "pointer",
+    "data": {
+     "phase": "up",
+     "pointer": 5,
+     "x": 201.0,
+     "y": 264.0,
+     "kind": "touch",
+     "buttons": 0
+    }
+   },
+   {
+    "seq": 20,
+    "t": 37542,
+    "type": "action",
+    "data": {
+     "id": "home.cart"
+    }
+   },
+   {
+    "seq": 21,
+    "t": 37563,
+    "type": "bloc.create",
+    "data": {
+     "bloc": "CartBloc",
+     "key": "CartBloc#1"
+    }
+   },
+   {
+    "seq": 22,
+    "t": 37563,
+    "type": "bloc.event",
+    "data": {
+     "bloc": "CartBloc",
+     "key": "CartBloc#1",
+     "event": "CartLoaded"
+    }
+   },
+   {
+    "seq": 23,
+    "t": 37579,
+    "type": "bloc.state",
+    "data": {
+     "bloc": "CartBloc",
+     "key": "CartBloc#1",
+     "state": "CartState",
+     "data": {
+      "status": "loading",
+      "cartId": "c_17462",
+      "items": [
+       {
+        "sku": "cap",
+        "name": "BugCapsule cap",
+        "price": 18.0,
+        "qty": 2
+       },
+       {
+        "sku": "mug",
+        "name": "Flutter mug",
+        "price": 12.5,
+        "qty": 2
+       },
+       {
+        "sku": "hoodie",
+        "name": "Widget hoodie",
+        "price": 55.0,
+        "qty": 2
+       }
+      ],
+      "coupon": null,
+      "orderId": null,
+      "message": null
+     }
+    }
+   },
+   {
+    "seq": 24,
+    "t": 37720,
+    "type": "http",
+    "data": {
+     "id": 1,
+     "key": "GET shop.bugcapsule.com/api/cart",
+     "occurrence": 1,
+     "method": "GET",
+     "url": "https://shop.bugcapsule.com/api/cart",
+     "requestHeaders": {},
+     "requestBody": null,
+     "requestEncoding": "json",
+     "status": 200,
+     "statusMessage": null,
+     "responseHeaders": {
+      "content-type": "application/json"
+     },
+     "responseBody": {
+      "cartId": "c_64449",
+      "items": [
+       {
+        "sku": "sticker",
+        "name": "Sticker pack",
+        "price": 4.0,
+        "qty": 2
+       }
+      ]
+     },
+     "bodyEncoding": "json",
+     "durationMs": 138
+    }
+   },
+   {
+    "seq": 25,
+    "t": 37721,
+    "type": "bloc.state",
+    "data": {
+     "bloc": "CartBloc",
+     "key": "CartBloc#1",
+     "state": "CartState",
+     "data": {
+      "status": "ready",
+      "cartId": "c_64449",
+      "items": [
+       {
+        "sku": "sticker",
+        "name": "Sticker pack",
+        "price": 4.0,
+        "qty": 2
+       }
+      ],
+      "coupon": null,
+      "orderId": null,
+      "message": null
+     }
+    }
+   },
+   {
+    "seq": 26,
+    "t": 49093,
+    "type": "pointer",
+    "data": {
+     "phase": "down",
+     "pointer": 6,
+     "x": 165.0,
+     "y": 250.0,
+     "kind": "touch"
+    }
+   },
+   {
+    "seq": 27,
+    "t": 49111,
+    "type": "pointer",
+    "data": {
+     "phase": "up",
+     "pointer": 6,
+     "x": 165.0,
+     "y": 250.0,
+     "kind": "touch",
+     "buttons": 0
+    }
+   },
+   {
+    "seq": 28,
+    "t": 49820,
+    "type": "pointer",
+    "data": {
+     "phase": "down",
+     "pointer": 7,
+     "x": 354.0,
+     "y": 250.0,
+     "kind": "touch"
+    }
+   },
+   {
+    "seq": 29,
+    "t": 49842,
+    "type": "pointer",
+    "data": {
+     "phase": "up",
+     "pointer": 7,
+     "x": 354.0,
+     "y": 250.0,
+     "kind": "touch",
+     "buttons": 0
+    }
+   },
+   {
+    "seq": 30,
+    "t": 49843,
+    "type": "action",
+    "data": {
+     "id": "cart.applyCoupon"
+    }
+   },
+   {
+    "seq": 31,
+    "t": 49843,
+    "type": "bloc.event",
+    "data": {
+     "bloc": "CartBloc",
+     "key": "CartBloc#1",
+     "event": "CouponApplied"
+    }
+   },
+   {
+    "seq": 32,
+    "t": 49843,
+    "type": "bloc.state",
+    "data": {
+     "bloc": "CartBloc",
+     "key": "CartBloc#1",
+     "state": "CartState",
+     "data": {
+      "status": "ready",
+      "cartId": "c_64449",
+      "items": [
+       {
+        "sku": "sticker",
+        "name": "Sticker pack",
+        "price": 4.0,
+        "qty": 2
+       }
+      ],
+      "coupon": "",
+      "orderId": null,
+      "message": null
+     }
+    }
+   },
+   {
+    "seq": 33,
+    "t": 49847,
+    "type": "text",
+    "data": {
+     "id": "cart.coupon",
+     "value": "S"
+    }
+   },
+   {
+    "seq": 34,
+    "t": 49886,
+    "type": "text",
+    "data": {
+     "id": "cart.coupon",
+     "value": "SA"
+    }
+   },
+   {
+    "seq": 35,
+    "t": 49916,
+    "type": "text",
+    "data": {
+     "id": "cart.coupon",
+     "value": "SAV"
+    }
+   },
+   {
+    "seq": 36,
+    "t": 49925,
+    "type": "text",
+    "data": {
+     "id": "cart.coupon",
+     "value": "SAVE"
+    }
+   },
+   {
+    "seq": 37,
+    "t": 49933,
+    "type": "text",
+    "data": {
+     "id": "cart.coupon",
+     "value": "SAVE1"
+    }
+   },
+   {
+    "seq": 38,
+    "t": 49945,
+    "type": "text",
+    "data": {
+     "id": "cart.coupon",
+     "value": "SAVE10"
+    }
+   },
+   {
+    "seq": 39,
+    "t": 49955,
+    "type": "text",
+    "data": {
+     "id": "cart.coupon",
+     "value": "SAVE100"
+    }
+   },
+   {
+    "seq": 40,
+    "t": 67945,
+    "type": "pointer",
+    "data": {
+     "phase": "down",
+     "pointer": 8,
+     "x": 354.0,
+     "y": 250.0,
+     "kind": "touch"
+    }
+   },
+   {
+    "seq": 41,
+    "t": 67959,
+    "type": "pointer",
+    "data": {
+     "phase": "up",
+     "pointer": 8,
+     "x": 354.0,
+     "y": 250.0,
+     "kind": "touch",
+     "buttons": 0
+    }
+   },
+   {
+    "seq": 42,
+    "t": 67959,
+    "type": "action",
+    "data": {
+     "id": "cart.applyCoupon"
+    }
+   },
+   {
+    "seq": 43,
+    "t": 67960,
+    "type": "bloc.event",
+    "data": {
+     "bloc": "CartBloc",
+     "key": "CartBloc#1",
+     "event": "CouponApplied"
+    }
+   },
+   {
+    "seq": 44,
+    "t": 67962,
+    "type": "failure",
+    "data": {
+     "kind": "assertion",
+     "signature": "assertion:cart_total_non_negative:",
+     "type": "cart_total_non_negative",
+     "message": "total -92.0 with coupon SAVE100",
+     "assertionId": "cart_total_non_negative",
+     "t": 68832
+    }
+   },
+   {
+    "seq": 45,
+    "t": 67962,
+    "type": "bloc.state",
+    "data": {
+     "bloc": "CartBloc",
+     "key": "CartBloc#1",
+     "state": "CartState",
+     "data": {
+      "status": "ready",
+      "cartId": "c_64449",
+      "items": [
+       {
+        "sku": "sticker",
+        "name": "Sticker pack",
+        "price": 4.0,
+        "qty": 2
+       }
+      ],
+      "coupon": "SAVE100",
+      "orderId": null,
+      "message": null
+     }
+    }
+   }
+  ]
+ }
+}

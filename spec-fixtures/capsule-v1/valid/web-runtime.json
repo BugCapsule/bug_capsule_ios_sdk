@@ -1,0 +1,215 @@
+{
+ "description": "Captured by the web SDK: runtime, capabilities, fetch exchange, history route, pointer with target descriptor, semantic action, visibility lifecycle, platform.userAgent extension.",
+ "expect": "valid",
+ "document": {
+  "format": "bugcapsule.capsule",
+  "specVersion": 1,
+  "manifest": {
+   "capsuleId": "a0d0c0de-0000-4000-8000-0000000000c3",
+   "createdAt": "2026-10-21T12:00:05.120Z",
+   "mode": "qa",
+   "app": {
+    "id": "com.bugcapsule.shop",
+    "name": "BugCapsule Shop",
+    "version": "1.0.0",
+    "build": "7",
+    "flavor": null
+   },
+   "source": {
+    "gitSha": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+    "dirty": false
+   },
+   "sdk": {
+    "name": "@bugcapsule/web",
+    "version": "0.3.0"
+   },
+   "stateSchemaVersion": 1,
+   "platform": {
+    "os": "web",
+    "osVersion": "Chrome 141",
+    "locale": "en-US",
+    "screen": {
+     "width": 1280.0,
+     "height": 720.0,
+     "pixelRatio": 2.0
+    },
+    "userAgent": "Mozilla/5.0 (Macintosh) Chrome/141"
+   },
+   "session": {
+    "id": "a1b2c3d4-0000-4000-8000-00000000000a",
+    "startedAt": "2026-10-21T11:59:50.000Z",
+    "wallClockAtAnchorMs": 1792584000000,
+    "seed": 3141592653,
+    "durationMs": 5120
+   },
+   "failure": {
+    "kind": "exception",
+    "signature": "exception:TypeError:Cannot read properties of null (reading 'price')",
+    "type": "TypeError",
+    "message": "Cannot read properties of null (reading 'price')",
+    "stack": "TypeError: ...\n at total (app.js:10:5)",
+    "assertionId": null,
+    "t": 4980
+   },
+   "eligibility": {
+    "status": "eligible",
+    "missing": []
+   },
+   "integrations": [
+    "fetch",
+    "xhr",
+    "history",
+    "local_storage"
+   ],
+   "stats": {
+    "eventCount": 8,
+    "droppedEvents": 0,
+    "checkpointKind": "launch"
+   },
+   "labels": {
+    "note": "coupon flow"
+   },
+   "runtime": {
+    "name": "web",
+    "version": "Chrome 141",
+    "language": "javascript",
+    "frameworks": [
+     "react"
+    ]
+   },
+   "capabilities": {
+    "input.pointer.capture": "supported",
+    "input.pointer.replay": "supported",
+    "input.semantic.replay": "supported",
+    "text.replay": "supported",
+    "lifecycle.replay": "partial",
+    "network.fetch": "supported",
+    "network.xhr": "supported",
+    "storage.local_storage": "supported",
+    "storage.indexeddb": "explicit",
+    "clock.virtual": "explicit"
+   }
+  },
+  "checkpoint": {
+   "kind": "launch",
+   "t": -180,
+   "wallClockMs": 1792583999820,
+   "afterSeq": 0,
+   "data": {
+    "local_storage": {
+     "cart.v": "0.9"
+    },
+    "history": {
+     "location": "/cart"
+    }
+   }
+  },
+  "events": [
+   {
+    "seq": 1,
+    "t": 0,
+    "type": "lifecycle",
+    "data": {
+     "state": "resumed"
+    }
+   },
+   {
+    "seq": 2,
+    "t": 10,
+    "type": "route",
+    "data": {
+     "location": "/cart",
+     "source": "history",
+     "action": "push"
+    }
+   },
+   {
+    "seq": 3,
+    "t": 200,
+    "type": "http",
+    "data": {
+     "id": 3,
+     "key": "GET shop.bugcapsule.test/api/cart",
+     "occurrence": 0,
+     "method": "GET",
+     "url": "http://shop.bugcapsule.test/api/cart",
+     "requestHeaders": {
+      "accept": "application/json",
+      "authorization": "[REDACTED]"
+     },
+     "requestBody": null,
+     "requestEncoding": "json",
+     "status": 200,
+     "statusMessage": "OK",
+     "responseHeaders": {
+      "content-type": "application/json"
+     },
+     "responseBody": {
+      "items": []
+     },
+     "bodyEncoding": "json",
+     "durationMs": 150,
+     "error": null
+    }
+   },
+   {
+    "seq": 4,
+    "t": 800,
+    "type": "pointer",
+    "data": {
+     "phase": "down",
+     "pointer": 1,
+     "x": 640.0,
+     "y": 360.0,
+     "kind": "mouse",
+     "target": {
+      "action": "cart.checkout",
+      "selector": "[data-bugcapsule-action=\"cart.checkout\"]",
+      "tag": "button",
+      "text": "Checkout"
+     }
+    }
+   },
+   {
+    "seq": 5,
+    "t": 870,
+    "type": "pointer",
+    "data": {
+     "phase": "up",
+     "pointer": 1,
+     "x": 640.0,
+     "y": 360.0,
+     "kind": "mouse"
+    }
+   },
+   {
+    "seq": 6,
+    "t": 871,
+    "type": "action",
+    "data": {
+     "id": "cart.checkout"
+    }
+   },
+   {
+    "seq": 7,
+    "t": 2000,
+    "type": "lifecycle",
+    "data": {
+     "state": "hidden"
+    }
+   },
+   {
+    "seq": 8,
+    "t": 4980,
+    "type": "failure",
+    "data": {
+     "kind": "exception",
+     "signature": "exception:TypeError:Cannot read properties of null (reading 'price')",
+     "type": "TypeError",
+     "message": "Cannot read properties of null (reading 'price')",
+     "t": 4980
+    }
+   }
+  ]
+ }
+}

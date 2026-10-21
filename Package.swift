@@ -1,0 +1,39 @@
+// swift-tools-version: 6.0
+//
+// BugCapsule for iOS. Consumed by git URL through Swift Package Manager:
+//
+//   .package(url: "https://github.com/<org>/bug_capsule_ios_sdk.git", from: "0.3.0")
+//
+// Products:
+//   BugCapsule        the SDK linked into the app target
+//   BugCapsuleXCTest  helpers for the app's UI test target (replay runner)
+import PackageDescription
+
+let package = Package(
+    name: "BugCapsule",
+    platforms: [.iOS(.v15), .macOS(.v12)],
+    products: [
+        .library(name: "BugCapsule", targets: ["BugCapsule"]),
+        .library(name: "BugCapsuleXCTest", targets: ["BugCapsuleXCTest"]),
+    ],
+    targets: [
+        .target(
+            name: "BugCapsule",
+            path: "Sources/BugCapsule",
+            swiftSettings: [.swiftLanguageMode(.v6)],
+            linkerSettings: [.linkedLibrary("z")]
+        ),
+        .target(
+            name: "BugCapsuleXCTest",
+            path: "Sources/BugCapsuleXCTest",
+            swiftSettings: [.swiftLanguageMode(.v6)],
+            linkerSettings: [.linkedFramework("XCTest")]
+        ),
+        .testTarget(
+            name: "BugCapsuleTests",
+            dependencies: ["BugCapsule"],
+            path: "Tests/BugCapsuleTests",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+    ]
+)

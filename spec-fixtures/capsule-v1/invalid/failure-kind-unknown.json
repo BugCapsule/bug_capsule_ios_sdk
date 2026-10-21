@@ -1,0 +1,227 @@
+{
+ "description": "Unknown failure kind.",
+ "expect": "invalid",
+ "errorPath": "$.manifest.failure.kind",
+ "document": {
+  "format": "bugcapsule.capsule",
+  "specVersion": 1,
+  "manifest": {
+   "capsuleId": "6f9b1c2e-4a5d-4e8f-9a0b-1c2d3e4f5a6b",
+   "createdAt": "2026-10-19T10:00:00.000Z",
+   "mode": "qa",
+   "app": {
+    "id": "com.example.shop",
+    "name": "Shop",
+    "version": "1.4.0",
+    "build": "42",
+    "flavor": "staging"
+   },
+   "source": {
+    "gitSha": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+    "dirty": false
+   },
+   "sdk": {
+    "name": "bug_capsule_flutter",
+    "version": "0.2.0"
+   },
+   "stateSchemaVersion": 1,
+   "platform": {
+    "os": "ios",
+    "osVersion": "27.0 (24A434)",
+    "locale": "en_US",
+    "screen": {
+     "width": 390.0,
+     "height": 844.0,
+     "pixelRatio": 3.0
+    },
+    "dartVersion": "3.9.0"
+   },
+   "session": {
+    "id": "8c1d2e3f-0000-4000-8000-000000000001",
+    "startedAt": "2026-10-19T09:59:40.000Z",
+    "wallClockAtAnchorMs": 1760867980000,
+    "seed": 2527813754,
+    "durationMs": 20000
+   },
+   "failure": {
+    "kind": "crash",
+    "signature": "exception:StateError:Bad state: Cart total is negative (#)",
+    "type": "StateError",
+    "message": "Bad state: Cart total is negative (-3)",
+    "stack": "#0 main (package:shop/main.dart:10:3)",
+    "assertionId": null,
+    "t": 18234
+   },
+   "eligibility": {
+    "status": "partial",
+    "missing": [
+     {
+      "dependency": "network.bodies",
+      "reason": "1 recorded responses have no body"
+     }
+    ]
+   },
+   "integrations": [
+    "bloc",
+    "dio",
+    "go_router",
+    "shared_preferences"
+   ],
+   "stats": {
+    "eventCount": 9,
+    "droppedEvents": 0,
+    "checkpointKind": "launch"
+   },
+   "labels": {
+    "ticket": "QA-1"
+   },
+   "redaction": {
+    "extraKeys": [
+     "loyaltyId"
+    ],
+    "extraHeaders": [
+     "x-tenant"
+    ]
+   }
+  },
+  "checkpoint": {
+   "kind": "launch",
+   "t": -412,
+   "wallClockMs": 1760867979588,
+   "afterSeq": 0,
+   "data": {
+    "shared_preferences": {
+     "onboarding_done": {
+      "type": "bool",
+      "value": true
+     }
+    }
+   }
+  },
+  "events": [
+   {
+    "seq": 1,
+    "t": 0,
+    "type": "lifecycle",
+    "data": {
+     "state": "resumed"
+    }
+   },
+   {
+    "seq": 2,
+    "t": 120,
+    "type": "route",
+    "data": {
+     "location": "/cart?ref=[REDACTED]"
+    }
+   },
+   {
+    "seq": 3,
+    "t": 900,
+    "type": "http",
+    "data": {
+     "id": 0,
+     "key": "GET api.example.com/api/cart",
+     "occurrence": 0,
+     "method": "GET",
+     "url": "https://api.example.com/api/cart",
+     "requestHeaders": {
+      "authorization": "[REDACTED]"
+     },
+     "requestBody": null,
+     "requestEncoding": "json",
+     "status": 200,
+     "statusMessage": "OK",
+     "responseHeaders": {
+      "content-type": "application/json"
+     },
+     "responseBody": {
+      "items": [
+       {
+        "sku": "cap",
+        "qty": 1
+       }
+      ]
+     },
+     "bodyEncoding": "json",
+     "durationMs": 182
+    }
+   },
+   {
+    "seq": 4,
+    "t": 1500,
+    "type": "pointer",
+    "data": {
+     "phase": "down",
+     "pointer": 1,
+     "x": 120.5,
+     "y": 300.25,
+     "kind": "touch"
+    }
+   },
+   {
+    "seq": 5,
+    "t": 1580,
+    "type": "pointer",
+    "data": {
+     "phase": "up",
+     "pointer": 1,
+     "x": 120.5,
+     "y": 300.25,
+     "kind": "touch"
+    }
+   },
+   {
+    "seq": 6,
+    "t": 1600,
+    "type": "action",
+    "data": {
+     "id": "cart.checkout",
+     "payload": {
+      "coupon": "SAVE10"
+     }
+    }
+   },
+   {
+    "seq": 7,
+    "t": 1700,
+    "type": "text",
+    "data": {
+     "id": "cart.coupon",
+     "value": "SAVE10"
+    }
+   },
+   {
+    "seq": 8,
+    "t": 2000,
+    "type": "http",
+    "data": {
+     "id": 1,
+     "key": "POST api.example.com/api/checkout#0f1e2d3c4b5a6978",
+     "occurrence": 0,
+     "method": "POST",
+     "status": 0,
+     "durationMs": 30000,
+     "bodyEncoding": "omitted",
+     "error": {
+      "type": "connectionTimeout",
+      "message": "timed out"
+     }
+    }
+   },
+   {
+    "seq": 9,
+    "t": 18234,
+    "type": "failure",
+    "data": {
+     "kind": "exception",
+     "signature": "exception:StateError:Bad state: Cart total is negative (#)",
+     "type": "StateError",
+     "message": "Bad state: Cart total is negative (-3)",
+     "assertionId": null,
+     "t": 18234
+    }
+   }
+  ]
+ }
+}
