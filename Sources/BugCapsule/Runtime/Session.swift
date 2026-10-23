@@ -15,7 +15,7 @@ public struct CaptureResult: Sendable {
 }
 
 let sdkName = "bugcapsule-ios"
-let sdkVersion = "0.4.0"
+let sdkVersion = "0.4.1-beta.1"
 
 /// The running SDK: recording, capsule writing, uploads, remote config and
 /// replay setup. Integrations receive it in `setUp`. Thread-safe; UI work
@@ -672,7 +672,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
             let built = buildCapsule(failure: failure, labels: [:], crash: true, capsuleId: capsuleId, monitoring: link),
             built.problem == nil
         else { return }
-        let (outbox, maxBytes) = lock.locked { (outbox, maxCapsuleBytes) }
+        let (outbox, maxBytes) = lock.locked { (self.outbox, self.maxCapsuleBytes) }
         if let outbox, built.bytes.count <= maxBytes, built.bytes.count <= config.outboxLimits.maxBytes {
             UploadOutbox.writeSynchronously(directory: outbox.directory, capsuleId: built.capsule.manifest.capsuleId, bytes: built.bytes)
         }
