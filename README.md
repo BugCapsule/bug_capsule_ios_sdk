@@ -45,7 +45,7 @@ Xcode: *File → Add Package Dependencies…* with the repository URL, or in a
 `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/<org>/bug_capsule_ios_sdk.git", from: "0.4.0"),
+.package(url: "https://github.com/BugCapsule/bug_capsule_ios_sdk.git", from: "0.4.0"),
 // app target
 .product(name: "BugCapsule", package: "bug_capsule_ios_sdk"),
 // UI test target
@@ -627,3 +627,9 @@ Release (SwiftPM is distributed by git tag; nothing to upload):
 4. Binary distribution is not needed (source package, no dependencies). An
    XCFramework could be produced with `xcodebuild archive` +
    `-create-xcframework` if a closed-source build is ever required.
+
+## Release validation (2026-10-23)
+
+This repository is licensed under Apache-2.0 (see LICENSE). Local candidates are
+prepared without publishing. See `docs/release-readiness.md` for the current
+validation evidence and remaining release gates.
