@@ -2,7 +2,7 @@
 
 No package has been published. Versions remain Flutter/Android/iOS 0.4.0 and Web 0.3.0. Review the readiness ledger before release: a distributable archive does not close outstanding device/feature gates.
 
-All four SDKs and both CLIs now carry Apache-2.0, matching the pre-existing Android metadata, under the user's instruction to prepare the licensing. No individual copyright attribution was invented.
+All four SDKs and both CLIs are subject to the Bug Capsule Proprietary License. Copyright 2026 Bug Capsule. All rights reserved. Use, copying, modification, and distribution require prior written permission. Third-party licenses and rights validly granted for earlier versions remain unaffected. Previously generated release candidates must be rebuilt before distribution to include the current license.
 
 ## Flutter and multi-runtime CLI
 

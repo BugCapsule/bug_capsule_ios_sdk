@@ -630,6 +630,6 @@ Release (SwiftPM is distributed by git tag; nothing to upload):
 
 ## Release validation (2026-10-23)
 
-This repository is licensed under Apache-2.0 (see LICENSE). Local candidates are
+This repository is proprietary to Bug Capsule. Use, copying, modification, and distribution require prior written permission (see LICENSE). Local candidates are
 prepared without publishing. See `docs/release-readiness.md` for the current
 validation evidence and remaining release gates.
