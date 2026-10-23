@@ -2,7 +2,7 @@
 //
 // BugCapsule for iOS. Consumed by git URL through Swift Package Manager:
 //
-//   .package(url: "https://github.com/<org>/bug_capsule_ios_sdk.git", from: "0.4.0")
+//   .package(url: "https://github.com/BugCapsule/bug_capsule_ios_sdk.git", from: "0.4.0")
 //
 // Products:
 //   BugCapsule        the SDK linked into the app target

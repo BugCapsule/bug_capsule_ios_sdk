@@ -13,6 +13,6 @@ swift test
 mkdir -p dist
 name="bugcapsule-ios-$version"
 tar -czf "dist/$name.tar.gz" --exclude .build --exclude .swiftpm --exclude dist --exclude xcuserdata \
-  -s "|^\.|$name|" ./Package.swift ./README.md ./Sources ./Tests ./spec-fixtures ./Examples ./scripts
+  -s "|^\.|$name|" ./Package.swift ./README.md ./LICENSE ./docs ./Sources ./Tests ./spec-fixtures ./Examples ./scripts
 shasum -a 256 "dist/$name.tar.gz" | tee "dist/$name.tar.gz.sha256"
 echo "Release checklist: tag v$version, push the tag (SwiftPM resolves by tag)."
