@@ -15,7 +15,7 @@
 | Android distribution | Source/Javadoc/POM/SCM/developer metadata; local bundle signing/checksum tool; include Gradle plugin and marker at unified 0.4.0 (previously 0.3.0) | Clean independent consumer resolves both SDK and Gradle plugin from local Maven and builds release; unsigned review ZIP generated |
 | iOS 0.4.0 | LICENSE and release source packaging/documentation; existing semantic path verified through CLI | 114 host tests +119 iOS 27 simulator tests +release guard passed; archive clean SwiftPM consumer builds/runs |
 | Web 0.3.0 | Expand browser suite to Chromium/Firefox/WebKit; engine-correct error signatures; omit CLS when layout-shift observation unsupported | 251 unit +75 browser tests; typecheck/build; four tarballs installed together in independent consumer and imported |
-| Shared distribution | Apache-2.0 unified following user instruction, based on pre-existing Android declaration; no invented personal copyright name | LICENSE included in packages/archives; publishing guide and artifact SHA-256 manifest |
+| Shared distribution | Superseded: current distribution uses the Bug Capsule Proprietary License, requiring prior written permission; earlier validation artifacts must be rebuilt | LICENSE included in packages/archives; publishing guide and artifact SHA-256 manifest |
 | CI | Add blocking validation/artifact workflows for Android/iOS/Web | Configured locally; hosted GitHub runs not executed here |
 
 ## Fresh E2E results
