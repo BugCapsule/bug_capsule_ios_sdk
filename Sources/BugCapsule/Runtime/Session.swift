@@ -672,7 +672,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
             let built = buildCapsule(failure: failure, labels: [:], crash: true, capsuleId: capsuleId, monitoring: link),
             built.problem == nil
         else { return }
-        let (outbox, maxBytes) = lock.locked { (outbox, maxCapsuleBytes) }
+        let (outbox, maxBytes) = lock.locked { (self.outbox, self.maxCapsuleBytes) }
         if let outbox, built.bytes.count <= maxBytes, built.bytes.count <= config.outboxLimits.maxBytes {
             UploadOutbox.writeSynchronously(directory: outbox.directory, capsuleId: built.capsule.manifest.capsuleId, bytes: built.bytes)
         }
