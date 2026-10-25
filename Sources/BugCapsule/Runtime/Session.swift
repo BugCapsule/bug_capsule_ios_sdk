@@ -15,7 +15,7 @@ public struct CaptureResult: Sendable {
 }
 
 let sdkName = "bugcapsule-ios"
-let sdkVersion = "0.4.1-beta.1"
+let sdkVersion = "0.4.1-beta.2"
 
 /// The running SDK: recording, capsule writing, uploads, remote config and
 /// replay setup. Integrations receive it in `setUp`. Thread-safe; UI work
