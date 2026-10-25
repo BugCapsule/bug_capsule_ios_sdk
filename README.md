@@ -1,170 +1,193 @@
-# BugCapsule for iOS
+# BugCapsule iOS SDK
 
-BugCapsule turns a failure seen in QA into a portable `.bugcapsule` file that a
-developer can replay against the real app code, verify after a fix, and keep as
-a regression test. This is the native iOS SDK (Swift, Swift Package Manager).
-It writes capsule spec v1 (`spec/capsule-v1.md`) and implements runtime contract
-v1 for iOS (`spec/runtimes-v1.md`), so the `bugcapsule` CLI and the backend
-treat its capsules like the Flutter, Android and web ones.
+BugCapsule records what led up to a bug in your iOS app and saves it as a
+portable `.bugcapsule` file. A developer can **replay** that file on a
+simulator against the real app code, **verify** a fix against it, and keep it
+as a **regression test**. The same SDK also reports errors (including native
+crashes and app hangs), release health, performance traces and user feedback,
+and links each error to the capsule that replays it.
 
-It also implements monitoring v1 (`docs/monitoring-v1.md` in the backend):
-error events (including native crashes and app hangs), release-health
-sessions, performance tracing and user feedback, sent to `POST /v1/envelope`
-with the same credential. Events link to the capsule recorded for the same
-failure, so an issue lists the capsules that replay it.
+```
+QA hits a bug      ─► capsule captured, redacted on the device, uploaded
+bugcapsule run     ─► REPRODUCED 3/3   (XCUITest on a simulator)
+fix the code
+bugcapsule verify  ─► FIXED 3/3
+bugcapsule regress ─► runs in CI from now on
+```
 
-| | |
-|---|---|
-| SDK name in capsules and envelopes | `bugcapsule-ios` 0.4.0, `runtime.name: ios`, `language: swift` |
-| Platforms | iOS 15+ (the package also builds on macOS 12+ for its unit tests) |
-| Language | Swift 6 language mode, strict concurrency |
-| Products | `BugCapsule` (app target), `BugCapsuleXCTest` (UI test target) |
-| Dependencies | none (Foundation, zlib, UIKit/SwiftUI/CoreData when available). The package has a small C target, `BugCapsuleCrash` (async-signal-safe crash writer) |
+📖 Full documentation: **[docs.bugcapsule.com/ios](https://docs.bugcapsule.com/ios.html)**
 
 ## Contents
 
-1. [Quickstart](#quickstart)
-2. [Integration reference](#integration-reference)
-3. [Supported frameworks and capabilities](#supported-frameworks-and-capabilities)
-4. [Failure capture boundaries](#failure-capture-boundaries)
-5. [Monitoring: errors, release health, tracing, feedback](#monitoring-errors-release-health-tracing-feedback)
-6. [Privacy controls](#privacy-controls)
-7. [Storage, uploads and backend connectivity](#storage-uploads-and-backend-connectivity)
-8. [Replay with the CLI (XCUITest)](#replay-with-the-cli-xcuitest)
-9. [`bugcapsule.json` keys](#bugcapsulejson-keys)
-10. [Simulator vs physical devices](#simulator-vs-physical-devices)
-11. [Demo app](#demo-app)
-12. [Limitations](#limitations)
-13. [Development, tests and release procedure](#development-tests-and-release-procedure)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Connect your app](#connect-your-app)
+- [Make bugs replayable](#make-bugs-replayable)
+- [Replay, verify and keep a regression test](#replay-verify-and-keep-a-regression-test)
+- [Monitoring](#monitoring)
+- [Privacy](#privacy)
+- [Going to production](#going-to-production)
+- [Limitations](#limitations)
+- [Demo app](#demo-app)
+- [More documentation](#more-documentation)
+- [Support and license](#support-and-license)
 
-## Quickstart
+## Requirements
 
-### 1. Add the package
+- A BugCapsule project. Sign in at [app.bugcapsule.com](https://app.bugcapsule.com).
+- iOS 15+, Xcode with Swift 6.
+- An iOS simulator for replay.
+- No third-party dependencies.
 
-Xcode: *File → Add Package Dependencies…* with the repository URL, or in a
-`Package.swift`:
+## Install
+
+In Xcode, choose **File → Add Package Dependencies…**, enter
+`https://github.com/BugCapsule/bug_capsule_ios_sdk.git` and pick the exact
+version `0.4.1-beta.1`. Add **`BugCapsule`** to your app target and
+**`BugCapsuleXCTest`** to your UI test target.
+
+Or in a `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/BugCapsule/bug_capsule_ios_sdk.git", from: "0.4.0"),
+.package(url: "https://github.com/BugCapsule/bug_capsule_ios_sdk.git", exact: "0.4.1-beta.1"),
+
 // app target
 .product(name: "BugCapsule", package: "bug_capsule_ios_sdk"),
 // UI test target
 .product(name: "BugCapsuleXCTest", package: "bug_capsule_ios_sdk"),
 ```
 
-### 2. Start it first thing
+> **Versions.** The latest tagged release is `0.4.1-beta.1`. This README
+> describes `main`. **SDK tokens** (`token:`) and **`BugCapsule.status`** ship
+> in the next release. On `0.4.1-beta.1`, connect with an
+> [explicit address and ingest key](#connect-with-an-address-and-ingest-key)
+> instead.
 
-Copy the SDK token from the dashboard (*Project settings → Keys → SDK tokens*) and
-start BugCapsule with it:
+## Connect your app
+
+### 1. Get an SDK token
+
+In the dashboard, open **Project settings → Keys → SDK tokens** and generate a
+token. It looks like `bcsdk.v1.…` and is shown once, so copy it right away.
+
+The SDK token is the only value your app needs. It holds your BugCapsule
+address and a send-only credential: it can upload capsules and events and read
+capture settings, nothing else. That makes it safe to ship in the app. You can
+rotate or revoke it in the dashboard at any time.
+
+### 2. Start BugCapsule first thing
+
+UIKit:
 
 ```swift
 import BugCapsule
 
 func application(_ application: UIApplication,
                  didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-    BugCapsule.start(token: "GENERATED_TOKEN")
+    BugCapsule.start(token: "bcsdk.v1.…")
     return true
 }
 ```
 
-That is the whole connection setup. The token (`bcsdk.v1.…`) carries the API
-URL and an upload-only credential; it is safe to ship in the app (it cannot
-read data or change settings) and you can revoke or rotate it in the
-dashboard. App version and build default to `CFBundleShortVersionString` /
-`CFBundleVersion`, and capture is on (`.debug` mode in DEBUG builds,
-`.production` with sampling otherwise).
+SwiftUI:
 
-Connected is not the same as fully instrumented. Replay-grade capsules need
-the progressive adapters — network, navigation and app state — which you add
-as integrations (steps 3–4):
+```swift
+import BugCapsule
+import SwiftUI
+
+@main
+struct ShopApp: App {
+    init() { BugCapsule.start(token: "bcsdk.v1.…") }
+    var body: some Scene { WindowGroup { RootView() } }
+}
+```
+
+That is a complete connection. App version and build come from
+`CFBundleShortVersionString` / `CFBundleVersion`, and capture is on (`.debug`
+mode in DEBUG builds, `.production` with sampling otherwise).
+
+- **Start before your app reads `UserDefaults`.** In replay, `start` restores
+  the checkpoint there.
+- **It never breaks your app.** `start` never throws and never blocks. A token
+  that can't be used logs one `[bugcapsule]` line saying what to fix, and the
+  app runs without uploads.
+
+### 3. Check the connection
+
+```swift
+let status = BugCapsule.status
+status.connection.state                  // .connecting, .connected, .offline, .rejected, …
+status.connection.message                // what to do, when something is wrong
+status.connection.configFetchedAt        // set once BugCapsule accepted the token
+status.connection.firstCapsuleAcceptedAt // set once a capsule reached your project
+status.instrumentation.missing           // e.g. ["network", "navigation", "app_state"]
+```
+
+| `connection.state` | Meaning | What to do |
+|---|---|---|
+| `notConfigured` | Not started, or no token / backend: capsules stay on the device. | Pass a token. |
+| `invalidToken`, `unsupportedTokenVersion` | The token can't be used; `message` says why. | Paste the full `bcsdk.v1.…` token, or update the SDK. |
+| `connecting` | Waiting for the first configuration fetch. | Wait a moment. |
+| `connected` | The configuration was fetched in this run. | Nothing. |
+| `offline` | BugCapsule can't be reached. Data waits in the outbox and is retried. | Check the device's network. |
+| `rejected` | The token was refused (`reason`: `token_revoked`, `token_expired`, `token_unknown`, …). Capture and uploads stop for this run. | Generate a new token. |
+| `disabled` | `enabled: false`, or capture is switched off for the project. | — |
+
+### Connect with an address and ingest key
+
+For self-hosted setups, older SDK versions, or apps that already pass an
+address explicitly:
+
+```swift
+BugCapsule.start(BugCapsuleConfig(
+    backend: BugCapsuleBackendConfig(url: "https://api.bugcapsule.com",
+                                     ingestKey: "bci_…")))
+```
+
+`backend` wins when both are set (the SDK logs that the token was ignored).
+The ingest key is public like the token. **Never put a `bcs_…` secret key in
+an app.**
+
+## Make bugs replayable
+
+Being connected is not the same as faithful replay. Replay also needs your
+app's network, navigation and state. Add them as integrations;
+`BugCapsule.status.instrumentation.missing` tells you what is left.
 
 ```swift
 BugCapsule.start(
     BugCapsuleConfig(
-        token: "GENERATED_TOKEN",
-        mode: .qa,  // default: .debug in DEBUG builds, .production otherwise
+        token: "bcsdk.v1.…",
+        mode: .qa,                    // default: .debug in DEBUG builds, .production otherwise
         redactKeys: ["loyaltyId"]),
     integrations: [
-            BugCapsuleURLSession(rules: [
-                EndpointRule("POST", "/api/checkout", ignoreBodyFields: ["timestamp", "nonce"]),
-            ]),
-            BugCapsuleUserDefaults(keys: ["cart_cache"], prefixes: ["settings."]),
+        BugCapsuleURLSession(rules: [
+            // Fields that change on every run must not affect request matching.
+            EndpointRule("POST", "/api/checkout", ignoreBodyFields: ["timestamp", "nonce"]),
+        ]),
+        BugCapsuleUserDefaults(keys: ["cart_cache"], prefixes: ["settings."]),
         BugCapsuleNavigation.shared,
         BugCapsuleStateIntegration.shared,
     ])
 ```
 
-`start` must run before app code reads `UserDefaults` (first line of
-`application(_:didFinishLaunchingWithOptions:)`, or `App.init` for a SwiftUI
-`App`): in replay it restores the checkpoint there. It never blocks the app: if
-storage or setup fails, the app runs without capture. It never throws for a bad
-token either: a token that cannot be used (empty, damaged, an ingest or secret
-key pasted instead, or a newer token version than this SDK understands) logs
-one `[bugcapsule]` line that says what to do, the app runs without a backend,
-and `BugCapsule.status` reports `invalidToken` / `unsupportedTokenVersion`.
-
-#### Check the connection
-
-```swift
-let status = BugCapsule.status
-status.connection.state                  // .connecting, .connected, .offline, .rejected, ...
-status.connection.configFetchedAt        // 1st confirmation: configuration fetched
-status.connection.firstCapsuleAcceptedAt // 2nd confirmation: data accepted
-status.connection.firstEventAcceptedAt   //   (an error event, with monitoring)
-status.instrumentation.missing           // e.g. ["network", "navigation", "app_state"]
-```
-
-| `connection.state` | Meaning |
-|---|---|
-| `notConfigured` | Not started, or no token / backend (capsules are only saved on the device). |
-| `invalidToken`, `unsupportedTokenVersion` | The token cannot be used; `message` says why. |
-| `connecting` | Waiting for the first configuration fetch. |
-| `connected` | The configuration was fetched in this run. |
-| `offline` | The backend could not be reached (network error, timeout, 5xx). Data waits in the outbox and is retried. |
-| `rejected` | The backend refused the credential (`reason`: `token_revoked`, `token_expired`, `token_unknown`, ...; `message`: what to do). Capture and uploads are off for this run. |
-| `disabled` | `enabled: false`, or capture is turned off for the project. |
-
-`connection` also has `source` (`.token` / `.backend`) and `apiURL`.
-`instrumentation` reports `network` (a `BugCapsuleURLSession` integration and an
-instrumented session), `navigation` (`BugCapsuleNavigation` that has seen a
-navigation controller or a route), `appState` (`BugCapsuleUserDefaults`, or
-state registered with `BugCapsule.registerState`), `recording` and the UI
-`frameworks` seen.
-
-#### Self-hosted or advanced: explicit backend
-
-A self-hosted backend issues tokens that carry its own API URL, so the
-one-liner works there too. You can also configure the backend URL and ingest
-key yourself, as before:
-
-```swift
-BugCapsule.start(BugCapsuleConfig(
-    backend: BugCapsuleBackendConfig(url: "https://bugcapsule.example.com",
-                                     ingestKey: "bci_...")))   // never the bcs_ secret key
-```
-
-An explicit `backend` wins over `token` (the SDK logs that the token was
-ignored). `BugCapsuleConnectionToken.parse(_:)` and
-`BugCapsuleBackendConfig(token:)` turn a token into this configuration offline,
-for apps that want to validate one themselves.
-
-### 3. Instrument networking
+### Network
 
 ```swift
 let config = URLSessionConfiguration.default
-BugCapsule.instrument(config)                 // inserts BugCapsuleURLProtocol first
+BugCapsule.instrument(config)                 // inserts BugCapsule's URL protocol first
 let session = URLSession(configuration: config)
 
-// Alamofire: same thing, Session(configuration: config)
-// URLSession.shared: BugCapsule.instrumentSharedSession() (URLProtocol.registerClass, opt-in)
+// Alamofire: the same, with Session(configuration: config)
+// URLSession.shared: BugCapsule.instrumentSharedSession() (opt-in)
 ```
 
-### 4. Name the user's actions and text fields
+### Actions, text and navigation
 
 ```swift
 // UIKit
 button.addAction(BugCapsule.uiAction("cart.checkout") { [weak self] in self?.checkout() }, for: .touchUpInside)
-BugCapsule.trackText("cart.coupon", field: couponField)        // isSecureTextEntry is always redacted
+BugCapsule.trackText("cart.coupon", field: couponField)        // secure text entry is always redacted
 BugCapsule.observe(navigationController)                         // route events
 
 // SwiftUI
@@ -174,20 +197,76 @@ SecureField("PIN", text: BugCapsule.trackedText("login.pin", $pin, sensitive: tr
 SomeView().bugCapsuleRoute("/cart")
 ```
 
-Semantic replay invokes these actions by id and restores tracked text by id.
+Replay invokes these actions by id and restores tracked text by id. **Name the
+actions that matter**: iOS replay is semantic and doesn't replay raw touches
+(see [Limitations](#limitations)).
 
-### 5. Assert what "broken" means
+### Say what "broken" means
 
 ```swift
 BugCapsule.check("cart_total_non_negative", total >= 0, "total \(total)")
 BugCapsule.fail("checkout_stuck", "spinner after 10s")
-BugCapsule.report(error: error)            // errors the app caught
+BugCapsule.report(error: error)            // errors your app caught
 ```
 
-A failure writes a capsule automatically (after a 300 ms settle delay; at most 3
-per session, one per signature), saves it locally and queues it for upload.
+A failure writes a capsule automatically (300 ms after the failure; at most 3
+per session, one per failure signature), saves it on the device and queues it
+for upload. Uncaught `NSException`s also get a capsule, uploaded on the next
+launch. Swift traps (`fatalError`, force-unwrapping `nil`, …) and signals get
+no capsule but are still reported by [monitoring](#monitoring). For a
+replayable capsule, report the condition yourself with `check` or
+`report(error:)` before the code that would trap.
 
-### 6. Add the replay test to the UI test target
+### Other hooks
+
+| Add this | Why |
+|---|---|
+| `BugCapsule.registerState(_:snapshot:restore:)` | Your app's own state is saved in checkpoints and restored in replay. |
+| `BugCapsule.now()` instead of `Date()` | Replay returns the recorded time. |
+| `BugCapsule.random` instead of `Int.random` | Seeded per session, same seed in replay. |
+| `BugCapsule.capture(note:)` | Manual capture, e.g. from a QA button. |
+
+### Embed the git commit
+
+Add to your app's Info.plist:
+
+```xml
+<key>BugCapsuleGitSHA</key><string>$(BUGCAPSULE_GIT_SHA)</string>
+<key>BugCapsuleGitDirty</key><string>$(BUGCAPSULE_GIT_DIRTY)</string>
+```
+
+The CLI passes both build settings when it builds. For QA and CI builds, pass
+`BUGCAPSULE_GIT_SHA=$(git rev-parse HEAD)` to `xcodebuild`. Without it,
+capsules are `partial` and `bugcapsule run` can't check out the same commit.
+
+Full API: [docs/how-it-works.md](docs/how-it-works.md#integration-reference).
+
+## Replay, verify and keep a regression test
+
+### Install the CLI
+
+The `bugcapsule` CLI replays capsules from every BugCapsule SDK. It is a Dart
+tool shipped in the Flutter package, so it needs
+[Flutter](https://docs.flutter.dev/get-started/install) installed even for iOS
+projects.
+
+```bash
+dart pub global activate bug_capsule 0.4.1-beta.1
+bugcapsule --version
+```
+
+If the shell can't find `bugcapsule`, add `~/.pub-cache/bin` to your `PATH`.
+
+Log in with a personal token from **Project settings → Keys & CLI access**.
+In CI, use a service token in `BUGCAPSULE_TOKEN` instead.
+
+```bash
+bugcapsule login --url https://api.bugcapsule.com --token bcp_…
+```
+
+### Add the replay test
+
+In your UI test target:
 
 ```swift
 import BugCapsuleXCTest
@@ -197,517 +276,170 @@ final class BugCapsuleReplayTests: BugCapsuleReplayTestCase {
 }
 ```
 
-and a `bugcapsule.json` next to the `.xcodeproj` (see
-[keys](#bugcapsulejson-keys)). Then:
+### Configure replay
 
-```bash
-bugcapsule list
-bugcapsule inspect <id>
-bugcapsule run <id> -n 3          # REPRODUCED 3/3
-bugcapsule verify <id> -n 3       # after your fix: FIXED
-bugcapsule regress add <id> && bugcapsule regress run
-```
-
-### 7. Embed the git SHA (recommended)
-
-Add to the app's Info.plist:
-
-```xml
-<key>BugCapsuleGitSHA</key><string>$(BUGCAPSULE_GIT_SHA)</string>
-<key>BugCapsuleGitDirty</key><string>$(BUGCAPSULE_GIT_DIRTY)</string>
-```
-
-The CLI passes both build settings when it builds; for QA/CI builds pass
-`BUGCAPSULE_GIT_SHA=$(git rev-parse HEAD)` to `xcodebuild`. Without it capsules
-are `partial` (`build.gitSha`) and `bugcapsule run` cannot pin the commit.
-
-## Integration reference
-
-| API | Purpose |
-|---|---|
-| `BugCapsule.start(token:integrations:)` | Start with the SDK token and defaults. |
-| `BugCapsule.start(_:integrations:)` | Start capture (or replay, see below) with a full `BugCapsuleConfig`. |
-| `BugCapsule.status` | Connection state and the two confirmations, plus installed / missing instrumentation. |
-| `BugCapsuleConnectionToken.parse(_:)`, `BugCapsuleBackendConfig(token:)` | Parse a token offline (`invalid_token` / `unsupported_token_version` with an actionable message). |
-| `BugCapsuleConfig` | `token`, `mode`, `enabled`, `backend` (wins over `token`), `gitSha`/`gitDirty`, `stateSchemaVersion`, `checkpointInterval` (30 s), `window` (5 min), `maxEvents` (20,000), `productionSampleRate` (0.1), `autoCaptureOnFailure`, `maxCapsulesPerSession` (3), `captureNetworkBodies`, `maxBodyBytes` (256 KiB), `redactKeys`, `redactHeaders`, `redactPatterns`, `beforeRecord`, `beforeCheckpoint`, `outboxLimits` (10 / 10 MiB / 7 days), `maxStaleConfig` (7 days), `ignoreError`, `labels`. |
-| `BugCapsule.action(_:_:)`, `uiAction(_:_:)`, `registerAction`, `recordAction` | Semantic actions. |
-| `BugCapsule.trackText(_:field:)`, `trackedText(_:_:)`, `trackText(_:setter:)` + `textChanged` | Tracked text. |
-| `BugCapsule.check / fail / report(error:) / report(exception:)` | Failures. |
-| `BugCapsule.log(_:level:)` | `log` events. |
-| `BugCapsule.capture(note:)` | Manual capture (QA button); uses the latest failure if any, otherwise the capsule is `ineligible`. |
-| `BugCapsule.savedCaptures()` | The newest 20 capsule files. |
-| `BugCapsule.refreshRemoteConfig()`, `flushUploads()` | Force a config fetch / an upload pass (foreground only). |
-| `BugCapsule.random` | Seeded `RandomNumberGenerator` (`nextInt`, `nextDouble`), re-seeded in replay. |
-| `BugCapsule.now()` | Wall clock; the virtual replay clock in replay. |
-| `BugCapsule.instrument(_:)`, `instrumentSharedSession()` | URLSession capture/replay. |
-| `BugCapsule.observe(_:)`, `BugCapsuleNavigation.shared.setRoute`, `.bugCapsuleRoute(_:)`, `BugCapsuleRouteNaming` | Navigation. |
-| `BugCapsule.registerState(_:snapshot:restore:)`, `stateChanged` | App state in checkpoints (`state`). |
-| `BugCapsuleWindow`, `BugCapsule.recordTouches(_:in:)` | Explicit pointer capture. |
-| `BugCapsuleIntegration` | Write your own integration (name, snapshot, restore, eligibility). |
-
-Integrations and their checkpoint keys: `urlsession` (events only),
-`user_defaults` (`{key: {type, value}}`; types `bool`, `int`, `double`,
-`string`, `stringArray`, `data` base64, `date` epoch ms), `navigation`
-(`{route, backStack}`, periodic checkpoints), `state` (`{key: <JSON>}`).
-
-## Supported frameworks and capabilities
-
-Frameworks seen are listed in `manifest.runtime.frameworks` (`uikit`,
-`swiftui`). `manifest.capabilities` declares:
-
-| Capability | Value | Meaning |
-|---|---|---|
-| `input.semantic.replay` | supported | Registered actions invoked by id. |
-| `text.replay` | supported | Tracked text restored by id (UIKit fields get `.editingChanged`). |
-| `input.pointer.capture` | explicit | Touches recorded when the app uses `BugCapsuleWindow` / `recordTouches`. |
-| `input.pointer.replay` | **unsupported** | See [Limitations](#limitations). |
-| `lifecycle.replay` | partial | `UIApplication` notifications are posted; the real application state does not change. |
-| `network.urlsession` | supported | URLSession (and Alamofire through its configuration). |
-| `storage.user_defaults` | supported | Allowlisted keys only. |
-| `navigation.uikit`, `navigation.explicit` | explicit | Through `observe` / `setRoute`. |
-| `clock.virtual`, `random.seeded` | explicit | Only through `BugCapsule.now()` / `BugCapsule.random`. |
-| `crash.uncaught` | partial | NSException only, best effort, uploaded next launch. |
-
-## Failure capture boundaries
-
-Captured automatically:
-
-* failures the app reports: `BugCapsule.check`, `BugCapsule.fail`,
-  `BugCapsule.report(error:)` (type `String(describing: type(of: error))`,
-  message `String(describing: error)`), `BugCapsule.report(exception:)`;
-* uncaught Objective-C `NSException`s (thrown by UIKit/Foundation or with
-  `NSException.raise()`), through a chained `NSSetUncaughtExceptionHandler`. The
-  previously installed handler (e.g. a crash reporter) is always called
-  afterwards. The capsule is built and written synchronously to the outbox and
-  uploaded on the next launch; it carries `crash.persisted` in its eligibility
-  (nothing after the crash point exists). This is best effort: the process is
-  terminating.
-
-**No capsule** (but a monitoring event, see below), and never claimed:
-
-* Swift runtime traps (`fatalError`, `precondition`, force-unwrapping `nil`,
-  array index out of range, integer overflow, `try!`), POSIX signals
-  (`SIGSEGV`, `SIGBUS`, `SIGABRT` from `abort()`, ...) and Mach exceptions.
-  Building a capsule is not async-signal-safe, so for these only the
-  monitoring crash writer runs: the next launch sends a `fatal` event with
-  the crashing thread's stack, and the session is marked `crashed`.
-* Out-of-memory (jetsam) terminations, watchdog kills, the user force-quitting
-  the app in the foreground: no code runs. The next launch reports the
-  session as `abnormal` (no event).
-* C++ exceptions are reported as the `SIGABRT` that follows them, without the
-  C++ type.
-
-For a replayable capsule of such a failure, report the condition yourself
-(`check`/`report(error:)`) before the code that would trap. Exchanges still in flight when a capsule is written (typically by
-the crash handler) are recorded as `http` events with `"pending": true`; replay
-keeps those requests open, as the app never got their response.
-
-## Monitoring: errors, release health, tracing, feedback
-
-On by default (`BugCapsuleConfig.monitoring`); nothing is sent without a
-token or `backend`. Turn it all off with `monitoring: .disabled`, or remotely with
-`monitoringEnabled: false` (capsules are unaffected). Replay sessions never
-monitor (no events, sessions or trace headers).
-
-```swift
-var config = BugCapsuleConfig(token: "GENERATED_TOKEN")
-config.monitoring = BugCapsuleMonitoringOptions(
-    tracesSampleRate: 0.2,                               // remote tracesSampleRate overrides it
-    tracePropagationTargets: ["api.shop.example.com"],   // substrings or "/regex/"; none by default
-    enableTimeToFullDisplayTracing: true,
-    enableShakeToReport: true)
-BugCapsule.start(config, integrations: [BugCapsuleURLSession(), BugCapsuleNavigation.shared])
-```
-
-Defaults: `release` = `<bundle id>@<version>+<build>`, `environment` =
-`production` / `qa` / `development` from the capture mode.
-
-### Errors
-
-| What | How | Event |
-|---|---|---|
-| `BugCapsule.captureException(error, options:)`, `report(error:)`, `fail`/`check` | also the capsule pipeline: when a capsule is written for the failure, the event has `capsuleId` and the capsule `manifest.monitoring = {eventId, traceId, release, environment}` | `error`, mechanism `manual` / `assertion`, handled |
-| `captureMessage(_:level:)` | event only; `attachStacktrace` adds the calling thread | `message` |
-| Uncaught `NSException` | chained handler; event written synchronously, sent next launch | `fatal`, `nsexception`, unhandled |
-| Signals (`SIGSEGV`, `SIGBUS`, `SIGILL`, `SIGFPE`, `SIGTRAP`, `SIGABRT`, `SIGSYS`) and Mach exceptions (`EXC_BAD_ACCESS`, `EXC_BAD_INSTRUCTION`, `EXC_ARITHMETIC`, `EXC_BREAKPOINT`) | C handler (`BugCapsuleCrash`): preallocated buffers, only async-signal-safe calls, frame-pointer walk through `vm_read_overwrite`; writes `monitoring/crash.report` with the scope (tags, user, breadcrumbs, contexts) and the loaded images mirrored before the crash; previous handlers / exception ports are chained | `fatal`, `signal` / `mach_exception`, sent next launch |
-| App hangs | watchdog thread; main thread blocked ≥ 2 s (`appHangTimeout`) in the foreground; one event per hang with the sampled main-thread stack; off under a debugger | `App Hanging`, `app_hang` |
-
-Frames carry `instructionAddr` (callers adjusted into the call instruction)
-and `package`; `debugImages` are the `macho` images the frames point into
-(LC_UUID, load address, `__TEXT` vmaddr and size). System frames are named on
-device with `dladdr` (Swift names demangled); app frames are symbolicated by
-the server from the uploaded dSYM. `inApp` is the main executable (plus
-`inAppIncludes` / minus `inAppExcludes`).
-
-Scope (`setUser`, `setTag(s)`, `setExtra(s)`, `setContext`, `setLevel`,
-`setFingerprint`, `addBreadcrumb`, `clearBreadcrumbs`, `configureScope`,
-`withScope` for a temporary copy), `beforeSend(event, hint)`,
-`errorSampleRate` (fatal and capsule-linked events are always sent),
-`lastEventId()`, `flush(timeout:)`, `close()`.
-
-Breadcrumbs come from the same event stream as capsules (route, action,
-tracked-text id without its value, http, lifecycle, log, state, failure), so
-nothing is instrumented twice. They are collected even when the session is
-not recording a capsule (production sampling); `maxBreadcrumbs` (100, remote
-override) and `beforeBreadcrumb` apply.
-
-### Release health
-
-One session per foreground run, ending after 30 s in the background
-(`sessionTimeout`). Updates: `init` on start, one when the first error is
-captured, the end (`exited`; with errors it counts as errored). The open
-session is persisted; the next launch closes an unfinished one as `crashed`
-(crash report present), `abnormal` (died in the foreground: OOM, watchdog,
-force-quit) or `exited` (died in the background). `did` is the user id or a
-random install id. `startSession()` / `endSession()` for manual control;
-`enableAutoSessionTracking: false` or remote `sessionTracking: false` to turn
-it off. Sessions are never sampled.
-
-### Tracing
-
-* `startTransaction(name:op:bindToScope:)`, `startSpan(name:op:) { span in }`
-  (sync and async; the span is active inside the closure), `span.startChild`,
-  `setData`, `setTag`, `setStatus`, `finish()`. Sampling once per root
-  (`tracesSampler`, else the remote rate, else `tracesSampleRate`); the
-  decision propagates to children and through `traceparent`.
-* Screens (`ui.load`): every screen shown by a navigation controller passed to
-  `BugCapsule.observe(_:)`, every SwiftUI view with `.bugCapsuleRoute(_:)`,
-  and `BugCapsule.screenWillAppear(_:)` for anything else (modals, tabs). TTID
-  is the first frame after the screen starts; with
-  `enableTimeToFullDisplayTracing`, TTFD ends at
-  `BugCapsule.reportFullyDisplayed()` (30 s deadline). Ids in names become
-  `:id`. The transaction ends when its child spans have been idle for 3 s.
-* App start: `app.start.cold` from process start (or `app.start.warm` when
-  iOS prewarmed the process, from SDK start) to the first frame after the app
-  became active, with `app_start_cold`/`app_start_warm`.
-* Frames: `CADisplayLink` counts total, slow (> 1.5 × refresh interval) and
-  frozen (≥ 700 ms) frames; every transaction gets `frames_total`,
-  `frames_slow`, `frames_frozen`, `frames_delay`.
-* User interactions: a recorded action starts an `ui.action.click`
-  transaction when no screen load is running (dropped if it started no span).
-* URLSession: instrumented sessions (`BugCapsule.instrument`) get an
-  `http.client` span under the active span, and requests to
-  `tracePropagationTargets` get `traceparent` and `baggage` (existing
-  `baggage` entries kept, an existing `traceparent` never replaced). The
-  headers are added to the forwarded copy only: capsule request keys and
-  recorded request headers are unchanged, and replay never adds them. When
-  the session is not recording a capsule, the SDK's URL protocol still runs
-  for monitoring (spans, headers, http breadcrumbs) without recording bodies.
-* Core Data: `context.bugCapsuleFetch(request)` / `context.bugCapsuleSave()`
-  record `db.sql.query` spans (explicit wrappers, no swizzling).
-* Custom clients: `getTraceparent()`, `getBaggage(existing:)`,
-  `continueTrace(traceparent:baggage:)`; `beforeSendTransaction`.
-
-### User feedback
-
-`captureFeedback(message:name:email:associatedEventId:url:tags:capsuleId:)`,
-`BugCapsuleFeedbackViewController` (UIKit; `BugCapsule.showFeedbackForm()`),
-`BugCapsuleFeedbackForm` / `.bugCapsuleFeedbackSheet(isPresented:)`
-(SwiftUI). The forms link the feedback to `lastEventId()` and, with
-`captureCapsuleWithFeedback` (default in `qa` mode) while recording, write a
-capsule and link it. Shake to report: `enableShakeToReport` with
-`BugCapsuleWindow` as the window class, or call `BugCapsule.handleShake()`
-from your window's `motionEnded(_:with:)` (no swizzling).
-
-### Uploading dSYMs
-
-`scripts/bugcapsule-upload-dsyms.sh` uploads each DWARF file once per UUID to
-`POST /v1/debug-files?kind=dsym&debugId=<uuid>&arch=<arch>&name=<file>`
-(gzip). It needs the project **secret** key, so run it in CI or a local
-build, never ship the key:
-
-```bash
-BUGCAPSULE_URL=https://bugcapsule.example.com BUGCAPSULE_SECRET_KEY=bcs_... \
-  scripts/bugcapsule-upload-dsyms.sh build/App.xcarchive/dSYMs
-```
-
-As an Xcode Run Script build phase (Release, `DEBUG_INFORMATION_FORMAT =
-dwarf-with-dsym`; set the two variables in the scheme or CI environment):
-
-```bash
-"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/bug_capsule_ios_sdk/scripts/bugcapsule-upload-dsyms.sh"
-```
-
-Inside Xcode it reads `DWARF_DSYM_FOLDER_PATH`, skips `Debug` builds and never
-fails the build (`BUGCAPSULE_ALLOW_FAILURE=0` to make upload errors fatal).
-
-### Envelopes
-
-Items are redacted with the capsule rules (keys, headers, URL parameters,
-free text; ids, timestamps, addresses and debug images are kept) before they
-are persisted, batched for 1 s (≤ 100 items) into one envelope, gzipped on
-disk in `bugcapsule/envelopes/` (30 envelopes / 5 MiB / 7 days,
-`outboxLimits`), and sent with `sentAt` added, gzipped over 1 KiB. Same rules
-as capsule uploads: only with a fresh enabled remote config, backoff with
-`Retry-After` on 401/408/429/5xx, other 4xx dropped, rejected items never
-retried. Crash paths write their envelope synchronously. Remote
-`monitoringEnabled: false` (or the kill switch) deletes queued envelopes.
-
-## Privacy controls
-
-Redaction runs on device before anything is written (capsule spec
-*Redaction*; checked against `spec-fixtures/conformance/redaction.json`):
-
-* sensitive key names anywhere in bodies, UserDefaults values, action
-  payloads, state snapshots and checkpoints (`password`, `token`, `secret`,
-  `apikey`, `authorization`, `cookie`, `cardnumber`, `pin`, `otp`, `cvv`, ...
-  plus `redactKeys` and the remote config's `redactKeys`);
-* headers (`authorization`, `cookie`, `set-cookie`, `x-api-key`, ... plus
-  `redactHeaders`); URLs (user info, sensitive query/fragment parameters);
-* free text (bearer/basic tokens, JWTs, known API key formats, `key=value`
-  pairs, Luhn-valid card numbers, `redactPatterns`);
-* tracked text: the whole value when the id looks sensitive, when
-  `sensitive: true`, and always for `UITextField.isSecureTextEntry`.
-
-More controls: `beforeRecord` (edit/drop any event), `beforeCheckpoint`,
-`BugCapsuleURLSession(exclude:)` (record only method/URL/status/timing),
-`captureNetworkBodies: false` locally or remotely (also strips buffered
-bodies), the UserDefaults allowlist (nothing else is read), and the remote kill
-switch. Automatic redaction is best effort: it does not find secrets in URL
-path segments, personal data that is not a credential (names, emails,
-addresses), secrets under innocuous key names, or binary bodies.
-
-## Storage, uploads and backend connectivity
-
-* Files live in `Application Support/bugcapsule` (excluded from iCloud/iTunes
-  backup): `captures/` (newest 20), `outbox/`
-  (`<enqueuedAtMs>_<capsuleId>.bugcapsule`), `envelopes/` (monitoring),
-  `monitoring/` (open session, install id, crash report), `remote_config.json`. Writes are
-  atomic (temp + rename); temp files are removed at start; corrupt files are
-  dropped; a full disk drops the capsule. No SDK error reaches the app.
-* Backend: `GET /v1/sdk/config` and `POST /v1/capsules` (gzip body,
-  `Content-Type: application/octet-stream`, `Authorization: Bearer <credential>`,
-  the token's credential or the explicit ingest key), on the token's API URL or
-  the explicit backend URL.
-  200/201 uploaded; 401/408/429/5xx/network errors retry later (30 s → 1 h, ±20 %
-  jitter, `Retry-After` honoured); other 4xx drop the capsule; body
-  `code: capture_disabled` refreshes the config.
-* Remote config: TTL from `configTtlSeconds` (default 300 s, at least 30 s),
-  failure backoff 30 s → 30 min honouring `Retry-After`, refreshed when the app
-  becomes active, cached per (backend URL, ingest key); uploads only after a
-  successful fetch or with a cached config younger than `maxStaleConfig`
-  (7 days). Kill switch (`enabled: false`): recording stops, the buffer is
-  dropped, queued and saved capsules are deleted, and it persists across
-  launches until a fetch re-enables it. 401/403 (a revoked, expired or unknown
-  token or key) stops capture and uploads for the session; the SDK logs the
-  backend's reason and advice once and `BugCapsule.status` reports `rejected`.
-  Network errors, timeouts and 5xx are never fatal: the app keeps running, data
-  waits in the outbox, and the status says `offline` until a fetch succeeds.
-  Production sampling: `min(productionSampleRate, remote sampleRate)` at launch;
-  a lower rate mid-session keeps recording with probability new/old.
-* Lifecycle: uploads run only while the app is running (at launch, when it
-  becomes active, after a capture). No background task or background
-  `URLSession` is used, so nothing is promised while the app is suspended;
-  capsules wait in the outbox for the next foreground.
-* Simulator: `http://127.0.0.1:8787` reaches a backend on the Mac. Devices need
-  a reachable host (and an ATS exception for plain HTTP, e.g.
-  `NSAllowsLocalNetworking` for LAN addresses).
-
-## Replay with the CLI (XCUITest)
-
-```
-bugcapsule run <id>
-  └─ xcodebuild build-for-testing   (once; BUGCAPSULE_GIT_SHA/BUGCAPSULE_GIT_DIRTY build settings)
-  └─ per attempt:
-       simctl uninstall <bundleId>   (fresh data container)
-       TEST_RUNNER_BUGCAPSULE_REPLAY_URL=http://127.0.0.1:<port>/a/<token> \
-       xcodebuild test-without-building -xctestrun … -destination id=<udid> \
-         -only-testing:<UITestTarget>/BugCapsuleReplayTests/testReplay
-         └─ BugCapsuleReplayTestCase: XCUIApplication + launchEnvironment[BUGCAPSULE_REPLAY_URL]
-                                      + launch argument -BugCapsuleReplay
-              └─ app: BugCapsule.start() → GET settings + capsule → restore UserDefaults/state
-                      → at the first visible window: dispatch actions/text/lifecycle at recorded
-                        times, serve URLSession fixtures, watch for the failure
-                      → POST /result (+ BUGCAPSULE_RESULT:: line, + accessibility element)
-```
-
-* **Production protection**: the replay code path is compiled only with
-  `DEBUG` (`#if DEBUG`) and arms only when the process was launched with the
-  `-BugCapsuleReplay` argument *and* `BUGCAPSULE_REPLAY_URL` in its environment
-  (both set by the UI test). There is no URL scheme, deep link, push or file
-  trigger. A release build ignores both.
-* **Result channels**: the app POSTs the report (`attemptId` echoed; 409/410
-  mean the attempt is stale and are not retried). It also prints
-  `BUGCAPSULE_RESULT::{json}` and exposes the JSON as the value of an
-  accessibility element (`bugcapsule.replay.result`) in a 2×2 pt overlay window;
-  the UI test prints it as `BUGCAPSULE_RESULT::{json}` into the xcodebuild
-  output, which the CLI reads as the fallback channel. If the reproduced
-  failure is an uncaught NSException, the report is posted synchronously from
-  the exception handler before the process dies.
-* **Strategy**: semantic (see pointer replay below). Idle gaps longer than
-  1.5 s are compressed when nothing is in flight; recorded network latency is
-  always kept, so response ordering (races) replays.
-* **Network**: fixtures served by request key + occurrence after the recorded
-  `durationMs`; recorded errors are raised as `URLError`; cancellation works;
-  unrecorded requests fail with `URLError(.cannotConnectToHost)` and
-  `network.unrecorded` unless `--lenient-network`.
-* **Isolation**: every attempt uninstalls the app (fresh container); the CLI
-  enforces the attempt timeout (plus `startupSeconds` for xcodebuild/install),
-  kills xcodebuild on timeout or Ctrl-C, and treats a missing report as `error`.
-
-## `bugcapsule.json` keys
-
-Put it next to the `.xcodeproj`/`.xcworkspace`:
+Add a `bugcapsule.json` next to your `.xcodeproj` or `.xcworkspace`:
 
 ```json
 {
   "runtime": "ios",
   "ios": {
-    "project": "BugCapsuleDemo.xcodeproj",
-    "scheme": "BugCapsuleDemo",
-    "configuration": "Debug",
-    "bundleId": "com.bugcapsule.demo",
-    "replayTest": "BugCapsuleDemoUITests/BugCapsuleReplayTests/testReplay",
-    "simulator": "iPhone 18 Pro",
-    "startupSeconds": 120,
-    "buildSettings": {"SOME_SETTING": "value"}
-  },
-  "timeouts": {"buildSeconds": 1200, "attemptSeconds": 180}
+    "project": "Shop.xcodeproj",
+    "scheme": "Shop",
+    "bundleId": "com.example.shop",
+    "replayTest": "ShopUITests/BugCapsuleReplayTests/testReplay",
+    "simulator": "iPhone 16 Pro"
+  }
 }
 ```
 
-| Key | Default | Meaning |
-|---|---|---|
-| `ios.project` / `ios.workspace` | — | Passed as `-project` / `-workspace`. |
-| `ios.scheme` | required | Scheme that builds the app and the UI test target. |
-| `ios.configuration` | `Debug` | Must be a configuration that defines `DEBUG`. |
-| `ios.bundleId` | from the built app | App bundle id (required with `--xctestrun`). |
-| `ios.replayTest` | `<uiTestTarget>/BugCapsuleReplayTests/testReplay` | `-only-testing:` identifier. |
-| `ios.uiTestTarget` | `UITests` | Used only to derive `replayTest`. |
-| `ios.simulator` | first booted iPhone | Name substring or UDID (`--device` wins). Booted if needed. |
-| `ios.derivedDataPath` | `$TMPDIR/bugcapsule-ios-<hash>` | Build output (reused across runs). |
-| `ios.buildSettings` | — | Extra `KEY=VALUE` build settings for every build. |
-| `ios.startupSeconds` | 120 | Added to each attempt's timeout for install + launch. |
-| env `BUGCAPSULE_IOS_BUILD_SETTINGS` | — | Extra `KEY=VALUE KEY2=VALUE2` settings for this invocation only (temporary fix toggles). |
-| `--xctestrun <file>` | — | Prebuilt `build-for-testing` output; skips the build. |
+Use a build configuration that defines `DEBUG` (the default is `Debug`). All
+keys: [docs/how-it-works.md](docs/how-it-works.md#bugcapsulejson-keys).
 
-## Simulator vs physical devices
-
-* **Simulator (implemented and tested)**: no signing needed; the app reaches
-  the CLI's loopback replay server at `127.0.0.1`; isolation uninstalls the app
-  with `simctl`. Tested on iPhone 18 Pro, iOS 27.0, Xcode 27.0.
-* **Physical devices (not implemented in the launcher)**: capture works on any
-  device (it is ordinary app code). Replay on a device would need code signing
-  for the app and the UI test runner (a development team and provisioning
-  profiles), `--lan` so the replay server listens on the Mac's LAN address, an
-  ATS exception for that plain-HTTP address in the DEBUG build, and
-  `devicectl`/`xcodebuild` for uninstall and launch. The launcher refuses
-  device queries that match no simulator.
-
-## Demo app
-
-`Examples/Demo` is a small shop app (UIKit home screen, SwiftUI cart) with an
-in-process fake backend (`FakeShopServer`, a `URLProtocol` below the SDK's) that
-randomizes latency and data. Three planted bugs, each captured automatically:
-
-| # | Bug | Capture path | Notes |
-|---|---|---|---|
-| 1 | Data-dependent: coupon `SAVE100` takes a fixed 100 off, so carts below 100 get a negative total. | `BugCapsule.check("cart_total_non_negative")` | Has the isolated fix toggle `FIX_NEGATIVE_TOTAL`. |
-| 2 | Timing-sensitive network: profile and recommendations load concurrently; when the recommendations arrive first (~1 in 4) the banner code raises an `NSException`. | uncaught NSException → capsule written synchronously, uploaded next launch | The profile request in flight at the crash is recorded as `pending`. |
-| 3 | State restoration: "Simulate upgrade from v0.9" writes the v0.9 list format to `cart_cache`; opening the cart in a *later* session fails to decode it. | `BugCapsule.report(error:)` | Reproduces only because the checkpoint restores `UserDefaults`. |
-
-Also exercised: allowlisted UserDefaults (`cart_cache`, `demo.*`), a registered
-state object (`app.session`), UIKit navigation capture, SwiftUI tracked text and
-actions, `BugCapsuleWindow` pointer capture.
-
-**Fix toggle (bug 1)**: the cart's discount reads `#if FIX_NEGATIVE_TOTAL`. The
-app target's `SWIFT_ACTIVE_COMPILATION_CONDITIONS` is `DEBUG $(DEMO_FIXES)` and
-`DEMO_FIXES` is empty in the project. Apply the fix for one CLI invocation
-without touching tracked sources:
+### Run it
 
 ```bash
-BUGCAPSULE_IOS_BUILD_SETTINGS='DEMO_FIXES=FIX_NEGATIVE_TOTAL' bugcapsule verify <id> -p Examples/Demo
+bugcapsule list                      # capsules in your project
+bugcapsule inspect <id>              # failure, eligibility, network, timeline
+bugcapsule run <id> -n 3             # builds the capsule's commit and replays it on a simulator
+bugcapsule verify <id> -n 3          # builds your working tree; FIXED when the bug is gone
+bugcapsule regress add <id>          # keep it as a regression test
+bugcapsule regress run               # in CI: exit 1 when a regression fails
 ```
 
-Revert by omitting the variable (the next build is the buggy one again).
+The CLI builds once, then for each attempt reinstalls the app on the simulator
+(fresh data) and runs your replay test. Replay on physical devices is not
+supported yet; capture works on any device.
 
-Build and capture by hand (the SDK token is passed on the command line, never
-committed):
+**Replay is off in production.** The replay code is compiled only in `DEBUG`
+builds and only arms when the UI test launches the app with BugCapsule's
+launch argument and environment. There is no URL scheme, deep link or push
+into replay.
+
+See the [CLI reference](https://docs.bugcapsule.com/cli.html) and
+[how verdicts work](https://docs.bugcapsule.com/verdicts.html).
+
+## Monitoring
+
+Monitoring is on by default once a token (or backend) is set:
+
+| Signal | What you get |
+|---|---|
+| Errors | `captureException`, `report(error:)`, `check`/`fail`, uncaught `NSException`s, **native crashes** (signals and Mach exceptions) and **app hangs** (main thread blocked 2 s) |
+| Release health | One session per foreground run; `crashed` and `abnormal` (OOM, watchdog, force-quit) sessions |
+| Performance | Cold and warm app start, screen loads (TTID / TTFD), slow and frozen frames, URLSession spans, Core Data spans |
+| User feedback | A UIKit form, a SwiftUI form or sheet, shake to report |
+
+When a capsule is written for an error, the error links to it, so each issue
+lists the capsules that replay it.
+
+```swift
+var config = BugCapsuleConfig(token: "bcsdk.v1.…")
+config.monitoring = BugCapsuleMonitoringOptions(
+    tracesSampleRate: 0.2,
+    tracePropagationTargets: ["api.shop.example.com"],   // none by default
+    enableTimeToFullDisplayTracing: true,
+    enableShakeToReport: true)
+BugCapsule.start(config, integrations: [BugCapsuleURLSession(), BugCapsuleNavigation.shared])
+```
+
+`monitoring: .disabled` turns monitoring off; capsules keep working. Full API
+and behaviour: [docs/how-it-works.md](docs/how-it-works.md#monitoring).
+
+### Readable stack traces: upload dSYMs
+
+Build release builds with `DEBUG_INFORMATION_FORMAT = dwarf-with-dsym` and
+upload the dSYMs from CI with the bundled script. It needs the project
+**secret** key, so keep it in CI secrets and never ship it:
 
 ```bash
-cd Examples/Demo
-xcodebuild test -project BugCapsuleDemo.xcodeproj -scheme BugCapsuleDemo \
-  -destination 'id=<simulator udid>' -collect-test-diagnostics never \
-  BUGCAPSULE_TOKEN=bcsdk.v1.... \
-  -only-testing:BugCapsuleDemoUITests/CaptureFlowTests/testCaptureNegativeTotal
+BUGCAPSULE_URL=https://api.bugcapsule.com BUGCAPSULE_SECRET_KEY=bcs_… \
+  scripts/bugcapsule-upload-dsyms.sh build/App.xcarchive/dSYMs
 ```
 
-For a self-hosted backend you can pass `BUGCAPSULE_BACKEND_URL=... BUGCAPSULE_INGEST_KEY=bci_...`
-instead; the explicit pair wins over the token.
+Or as an Xcode Run Script build phase (set the two variables in the scheme or
+CI environment):
 
-`CaptureFlowTests` drives the app into each bug (`testCaptureNegativeTotal`,
-`testCaptureRaceCrash`, `testCaptureLegacyCart`,
-`testOfflineCaptureUploadsAfterRestart`). That is capture automation; replay is
-`BugCapsuleReplayTests`, run by the CLI. The project is generated from
-`project.yml` with XcodeGen (`xcodegen generate`); the generated project is
-checked in.
+```bash
+"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/bug_capsule_ios_sdk/scripts/bugcapsule-upload-dsyms.sh"
+```
+
+In Xcode it skips Debug builds and never fails the build
+(`BUGCAPSULE_ALLOW_FAILURE=0` makes upload errors fatal).
+
+## Privacy
+
+Redaction runs on the device before anything is written: sensitive keys in
+bodies, `UserDefaults`, action payloads and state; sensitive headers;
+credentials in URLs; and tokens, JWTs, API keys and card numbers in free text.
+Secure text fields are always redacted.
+
+Tighten it with `redactKeys`, `redactHeaders`, `redactPatterns`,
+`beforeRecord`, `beforeCheckpoint` and `BugCapsuleURLSession(exclude:)`. Only
+allowlisted `UserDefaults` keys are read. Your project settings can also add
+redaction keys, turn off body capture, lower sampling or switch capture off
+remotely.
+
+Redaction is best effort. It does **not** find secrets in URL path segments,
+personal data that isn't a credential (names, emails, addresses), secrets
+under innocuous key names, or binary bodies. Inspect real capsules with
+`bugcapsule inspect` before a wider rollout. More:
+[Privacy and redaction](https://docs.bugcapsule.com/privacy.html).
+
+## Going to production
+
+- Production sessions record a sample of sessions: `productionSampleRate`
+  (default `0.1`), capped by your project's rate. Monitoring sessions are not
+  sampled.
+- Learn the kill switch before you need it: `bugcapsule capture --on` stops
+  capture for every device and deletes queued capsules; `--off` resumes it.
+- Upload dSYMs for every release build.
+- Read the [production checklist](https://docs.bugcapsule.com/production.html).
+
+Data lives in `Application Support/bugcapsule` (excluded from backups). Uploads
+run while the app is in the foreground and retry with backoff; nothing is
+uploaded in the background. Storage and network errors never reach your app.
+Details: [docs/how-it-works.md](docs/how-it-works.md#storage-uploads-and-backend-connectivity).
 
 ## Limitations
 
-* **Pointer replay is not implemented** (`input.pointer.replay: unsupported`).
-  Touches are captured (explicitly) for diagnosis, but replay uses semantic
-  actions. A capsule with pointer input and no semantic action (or
-  `--strategy pointer`) gets the material `pointer.unsupported` divergence, and
-  such capsules are `partial` (`capability.input.pointer.replay`). Rationale:
-  XCUICoordinate taps from the test process cannot be timed to the recorded
-  milliseconds (each synthesized event waits for app quiescence) and cannot
-  follow idle compression, so they would make races and timing-dependent
-  failures unreliable. Name the actions that matter.
-* Lifecycle replay posts notifications only (`partial`); `hidden` has no iOS
-  equivalent (`lifecycle.unsupported`).
-* `BugCapsule.now()` / `BugCapsule.random` are the only virtualized clock and
-  randomness; `Date()` and `Int.random` in app code are not.
-* URLSession: redirects are followed inside the SDK's protocol (the final
-  response is recorded and served; app redirect delegates are not consulted);
-  authentication challenges use default handling; `httpBodyStream` bodies are
-  keyed without a body hash and not recorded; WebSocket/stream tasks are not
-  captured. When several instrumented configurations carry different custom
-  protocols, the SDK's downstream session uses all of them.
-* Only allowlisted UserDefaults keys of the listed types are captured;
-  Keychain, Core Data, files and SQLite are not (write an integration).
-* Navigation is restored from periodic checkpoints only through an app-provided
-  `BugCapsuleNavigation.shared.restorer`.
-* Cross-runtime replay is not supported (spec §12).
-* Monitoring: native crash reports cover the crashing thread only (no other
-  threads, no registers); the walk relies on frame pointers (always on for
-  Apple arm64). The alternate signal stack covers the main thread only, so a
-  stack overflow on another thread may leave no report. The Mach exception
-  server is not installed while a debugger is attached. Screens are traced
-  through `observe(_:)`, `.bugCapsuleRoute` and `screenWillAppear` (no
-  UIViewController swizzling), so screens shown otherwise need the explicit
-  call. Core Data spans need the explicit wrappers. No background
-  `URLSession` tracing, no fatal app-hang (watchdog) detection, no
-  MetricKit.
+- **Touches are not replayed.** Replay uses named actions and tracked text.
+  Touches are captured for diagnosis only. A capsule that has only touches is
+  `partial`.
+- Replay runs on simulators only.
+- Lifecycle replay posts notifications only; the real application state
+  doesn't change.
+- `BugCapsule.now()` and `BugCapsule.random` are the only virtualized clock
+  and randomness; `Date()` and `Int.random` in app code are not.
+- URLSession WebSocket and stream tasks, Keychain, Core Data, files and SQLite
+  are not captured (write an integration for your own storage).
+- Screens are traced through `observe(_:)`, `.bugCapsuleRoute` and
+  `screenWillAppear` only (no swizzling).
 
-## Development, tests and release procedure
+Full list: [docs/how-it-works.md#limitations](docs/how-it-works.md#limitations).
 
-```bash
-swift build
-swift test                                    # macOS host: core, conformance, network, outbox, replay, monitoring
-swift test -c release -Xswiftc -enable-testing --filter ReplayProtocolTests/testGate   # release build cannot arm replay
-xcodebuild test -scheme BugCapsule-Package -destination 'platform=iOS Simulator,name=iPhone 18 Pro'  # same suite + UIKit tests on iOS
-cd Examples/Demo && xcodebuild build-for-testing -project BugCapsuleDemo.xcodeproj -scheme BugCapsuleDemo \
-  -destination 'platform=iOS Simulator,name=iPhone 18 Pro'
-```
+## Demo app
 
-`spec-fixtures/` is a vendored copy of `bug_capsule_flutter_sdk/spec/fixtures`
-(sync with `bug_capsule_flutter_sdk/tool/sync_spec.sh`); `FixtureTests` fails
-when the copy differs from a sibling checkout.
+[`Examples/Demo`](Examples/Demo) is a small shop (UIKit home screen, SwiftUI
+cart) with three planted "can't reproduce" bugs: a wrong total, a network race
+and a stale cache after an upgrade. Walkthrough and fix toggle:
+[docs/how-it-works.md](docs/how-it-works.md#demo-app).
 
-Release (SwiftPM is distributed by git tag; nothing to upload):
+## More documentation
 
-1. Update `sdkVersion` in `Sources/BugCapsule/Runtime/Session.swift` and the
-   version in this README; sync `spec-fixtures`.
-2. Run the test commands above and an E2E replay of the demo
-   (`bugcapsule run`/`verify`).
-3. Tag `vX.Y.Z` (semantic versioning) and push the tag; consumers pin
-   `from: "X.Y.Z"`. Optionally publish release notes listing capability changes.
-4. Binary distribution is not needed (source package, no dependencies). An
-   XCFramework could be produced with `xcodebuild archive` +
-   `-create-xcframework` if a closed-source build is ever required.
+| Topic | Where |
+|---|---|
+| iOS SDK guide | [docs.bugcapsule.com/ios](https://docs.bugcapsule.com/ios.html) |
+| Quickstart (30 minutes, capture to verified fix) | [docs.bugcapsule.com/quickstart](https://docs.bugcapsule.com/quickstart.html) |
+| CLI reference | [docs.bugcapsule.com/cli](https://docs.bugcapsule.com/cli.html) |
+| How capture, monitoring, uploads and replay work | [docs/how-it-works.md](docs/how-it-works.md) |
+| Release symbols | [docs.bugcapsule.com/symbols](https://docs.bugcapsule.com/symbols.html) |
+| Troubleshooting | [docs.bugcapsule.com/troubleshooting](https://docs.bugcapsule.com/troubleshooting.html) |
+| Working on this repository | [docs/development.md](docs/development.md) |
 
-## Release validation (2026-10-23)
+## Support and license
 
-This repository is proprietary to Bug Capsule. Use, copying, modification, and distribution require prior written permission (see LICENSE). Local candidates are
-prepared without publishing. See `docs/release-readiness.md` for the current
-validation evidence and remaining release gates.
+Questions or access requests: [contact@bugcapsule.com](mailto:contact@bugcapsule.com).
+
+This SDK is proprietary software of Bug Capsule. Use, copying, modification
+and distribution require prior written permission. See [LICENSE](LICENSE).
