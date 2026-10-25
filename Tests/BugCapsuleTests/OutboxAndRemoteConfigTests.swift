@@ -272,7 +272,7 @@ final class BackendClientTests: XCTestCase {
         }
         defer { server.stop() }
         let client = BugCapsuleBackendClient(config: BugCapsuleBackendConfig(url: server.baseURL, ingestKey: "bci_x"))
-        guard case .failed(_, let status, _) = await client.fetchConfig() else { return XCTFail() }
+        guard case .failed(_, let status, _, _, _) = await client.fetchConfig() else { return XCTFail() }
         XCTAssertEqual(status, 401)
         let result = await client.upload(Data([0x1f, 0x8b]))
         XCTAssertEqual(result.status, .rejected)

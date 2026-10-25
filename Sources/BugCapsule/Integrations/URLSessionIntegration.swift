@@ -44,6 +44,14 @@ public final class BugCapsuleURLSession: BugCapsuleIntegration, @unchecked Senda
     nonisolated(unsafe) private static var _active: BugCapsuleURLSession?
     static var active: BugCapsuleURLSession? { activeLock.locked { _active } }
 
+    nonisolated(unsafe) private static var _protocolInstalled = false
+    /// `BugCapsuleURLProtocol` was installed (`instrument`, `instrumentSharedSession`)
+    /// or has seen an app request (`BugCapsule.status`).
+    static var protocolInstalled: Bool {
+        get { activeLock.locked { _protocolInstalled } }
+        set { activeLock.locked { _protocolInstalled = newValue } }
+    }
+
     public init(
         rules: [EndpointRule] = [], ignoreQuery: Set<String> = RequestKeyBuilder.defaultIgnoreQuery,
         ignoreBodyFields: Set<String> = [], maxBinaryBytes: Int = 64 * 1024, maxKeyBodyBytes: Int = 64 * 1024,
@@ -232,11 +240,13 @@ extension BugCapsule {
         original.protocolClasses = protocols
         BugCapsuleURLSession.registerDownstream(from: original)
         configuration.protocolClasses = [BugCapsuleURLProtocol.self] + protocols
+        BugCapsuleURLSession.protocolInstalled = true
     }
 
     /// Opt-in for `URLSession.shared` (and other sessions using the global
     /// protocol registry): `URLProtocol.registerClass(BugCapsuleURLProtocol.self)`.
     public static func instrumentSharedSession() {
         URLProtocol.registerClass(BugCapsuleURLProtocol.self)
+        BugCapsuleURLSession.protocolInstalled = true
     }
 }

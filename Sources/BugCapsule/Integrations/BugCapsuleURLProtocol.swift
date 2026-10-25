@@ -60,6 +60,7 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
     public override class func canInit(with request: URLRequest) -> Bool {
         if URLProtocol.property(forKey: handledKey, in: request) != nil { return false }
         guard let scheme = request.url?.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return false }
+        if !BugCapsuleURLSession.protocolInstalled { BugCapsuleURLSession.protocolInstalled = true }
         guard BugCapsuleURLSession.active != nil, let s = BugCapsuleSession.current else { return false }
         // Monitoring alone (session not recording) still wants spans,
         // trace headers and http breadcrumbs.

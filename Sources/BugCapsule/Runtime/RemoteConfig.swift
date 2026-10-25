@@ -106,6 +106,35 @@ public protocol RemoteConfigCache: Sendable {
     func write(scope: String, config: RemoteCaptureConfig) throws
 }
 
+/// A failed `GET /v1/sdk/config` (the last one is kept for status and support).
+public struct ConfigFetchFailure: Sendable, Equatable {
+    public var message: String
+    /// HTTP status; nil for a network error or timeout.
+    public var status: Int?
+    public var retryAfter: TimeInterval?
+    /// The backend's refusal reason (`token_revoked`, `token_expired`, `token_unknown`, ...).
+    public var reason: String?
+    /// What to do about it, from the backend.
+    public var detail: String?
+
+    public init(message: String, status: Int? = nil, retryAfter: TimeInterval? = nil, reason: String? = nil, detail: String? = nil) {
+        self.message = message
+        self.status = status
+        self.retryAfter = retryAfter
+        self.reason = reason
+        self.detail = detail
+    }
+
+    /// The backend refused the credential.
+    public var isRefusal: Bool { status == 401 || status == 403 }
+
+    /// Not reachable or not answering usefully: retried with backoff, never fatal.
+    public var isOffline: Bool {
+        guard let status else { return true }
+        return status >= 500 || status == 429 || status == 408
+    }
+}
+
 /// Keeps the remote capture config current and decides what it allows
 /// (port of `remote_config.dart`).
 ///
@@ -115,9 +144,11 @@ public protocol RemoteConfigCache: Sendable {
 ///   30 s); after a failure, backoff 30 s → 30 min with ±20 % jitter,
 ///   honouring `Retry-After`. `onResumed` refreshes a stale config.
 /// * Uploads are allowed only with an enabled config fetched within `maxStale`.
-/// * 401/403 acts like a kill switch for the session (not persisted).
+/// * 401/403 acts like a kill switch for the session (not persisted);
+///   `onRejected` is called once per refusal with the backend's reason.
 public actor RemoteConfigController {
     public typealias OnChange = @Sendable (RemoteCaptureConfig?, RemoteCaptureConfig) -> Void
+    public typealias OnRejected = @Sendable (ConfigFetchFailure) -> Void
 
     private let fetch: @Sendable () async -> ConfigFetchResult
     private let cache: RemoteConfigCache
@@ -129,9 +160,14 @@ public actor RemoteConfigController {
     private let now: @Sendable () -> Date
     private let random: @Sendable () -> Double
     private let autoSchedule: Bool
+    private let onRejected: OnRejected?
 
     public private(set) var current: RemoteCaptureConfig?
     public private(set) var keyRejected = false
+    /// The last failed fetch; nil after a successful one.
+    public private(set) var lastFailure: ConfigFetchFailure?
+    /// When a config was last fetched in this run (not from the cache).
+    public private(set) var fetchedThisSession: Date?
     private var failures = 0
     private var timer: Task<Void, Never>?
     private var inFlight: Task<Void, Never>?
@@ -145,9 +181,10 @@ public actor RemoteConfigController {
         onChange: @escaping OnChange, maxStale: TimeInterval = 7 * 24 * 3600, minInterval: TimeInterval = 30,
         maxBackoff: TimeInterval = 1800, now: @escaping @Sendable () -> Date = { Date() },
         random: @escaping @Sendable () -> Double = { Double.random(in: 0..<1) }, autoSchedule: Bool = true,
-        initial: RemoteCaptureConfig? = nil
+        initial: RemoteCaptureConfig? = nil, onRejected: OnRejected? = nil
     ) {
         current = initial
+        self.onRejected = onRejected
         self.fetch = fetch
         self.cache = cache
         self.scope = scope
@@ -218,6 +255,8 @@ public actor RemoteConfigController {
         switch result {
         case .fetched(let config):
             failures = 0
+            lastFailure = nil
+            fetchedThisSession = now()
             let previous = current
             current = config
             keyRejected = false
@@ -228,11 +267,18 @@ public actor RemoteConfigController {
             }
             onChange(previous, config)
             schedule(ttl)
-        case .failed(let message, let status, let retryAfter):
+        case .failed(let message, let status, let retryAfter, let reason, let detail):
             failures += 1
-            if (status == 401 || status == 403) && !keyRejected {
+            let failure = ConfigFetchFailure(message: message, status: status, retryAfter: retryAfter, reason: reason, detail: detail)
+            lastFailure = failure
+            if failure.isRefusal && !keyRejected {
                 keyRejected = true
-                BugCapsuleLog.warn("ingest key rejected (HTTP \(status!)); capture stopped: \(message)")
+                if let onRejected {
+                    onRejected(failure)
+                } else {
+                    BugCapsuleLog.warn(
+                        "ingest key rejected (\(reason ?? "HTTP \(status!)")); capture stopped: \(detail ?? message)")
+                }
                 let previous = current
                 onChange(previous, Self.disabledLike(previous))
             }

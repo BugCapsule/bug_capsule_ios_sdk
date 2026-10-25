@@ -31,7 +31,12 @@ public final class BugCapsuleSession: @unchecked Sendable {
         set { currentLock.locked { _current = newValue } }
     }
 
+    /// The configuration in effect: a usable `token` is resolved into `backend`.
     public let config: BugCapsuleConfig
+    /// How the backend was configured (nil: neither token nor backend).
+    public let connectionSource: BugCapsuleConnectionSource?
+    /// Why `config.token` could not be used.
+    public let tokenError: BugCapsuleTokenError?
     let integrations: [BugCapsuleIntegration]
     let overrides: BugCapsuleTestOverrides?
     public let mode: CaptureMode
@@ -75,9 +80,20 @@ public final class BugCapsuleSession: @unchecked Sendable {
     private var anchorWaiters: [@MainActor () -> Void] = []
     private var _monitoring: Monitoring?
     private var lastFailureEventId: String?
+    // Connection status (`BugCapsule.status`), mirrored from the remote config
+    // controller and the transport so it can be read synchronously.
+    private var configFetchedAt: Date?
+    private var lastConfigFailure: ConfigFetchFailure?
+    private var credentialRejected = false
+    private var remoteDisabled = false
+    private var firstEventAcceptedAt: Date?
+    private var firstCapsuleAcceptedAt: Date?
 
-    init(config: BugCapsuleConfig, integrations: [BugCapsuleIntegration], overrides: BugCapsuleTestOverrides?) {
+    init(config input: BugCapsuleConfig, integrations: [BugCapsuleIntegration], overrides: BugCapsuleTestOverrides?) {
+        let (config, source, tokenError) = Self.resolveConnection(input)
         self.config = config
+        connectionSource = source
+        self.tokenError = tokenError
         self.integrations = integrations
         self.overrides = overrides
         mode = config.resolvedMode
@@ -85,6 +101,31 @@ public final class BugCapsuleSession: @unchecked Sendable {
         gitDirty = config.resolvedGitDirty
         _random = BugCapsuleRandom(seed: seed)
         if let r = overrides?.random { samplingRandom = r } else { samplingRandom = { Double.random(in: 0..<1) } }
+    }
+
+    /// Turns `token` into `backend` (connection token v1). An explicit
+    /// `backend` wins; a token that cannot be used leaves no backend, so the
+    /// app runs without one instead of failing. Never throws.
+    static func resolveConnection(
+        _ input: BugCapsuleConfig
+    ) -> (BugCapsuleConfig, BugCapsuleConnectionSource?, BugCapsuleTokenError?) {
+        if input.backend != nil {
+            if input.token != nil {
+                BugCapsuleLog.warn("both token and backend are set; using backend and ignoring token")
+            }
+            return (input, .backend, nil)
+        }
+        guard let token = input.token else { return (input, nil, nil) }
+        switch BugCapsuleConnectionToken.parse(token) {
+        case .success(let backend):
+            var config = input
+            config.backend = backend
+            return (config, .token, nil)
+        case .failure(let error):
+            BugCapsuleLog.warn(
+                "the SDK token can't be used (\(error.code.rawValue)): \(error.message). The app runs without a BugCapsule backend.")
+            return (input, .token, error)
+        }
     }
 
     // MARK: public surface for integrations
@@ -256,7 +297,13 @@ public final class BugCapsuleSession: @unchecked Sendable {
     private func prepareCapture() throws {
         lock.locked { _redactor = baseRedactor() }
         guard config.enabled else { return }
-        let transport = overrides?.transport ?? config.backend.map { BugCapsuleBackendClient(config: $0) }
+        let base: BugCapsuleTransport? = overrides?.transport ?? config.backend.map { BugCapsuleBackendClient(config: $0) }
+        let transport = base.map { base in
+            ObservedTransport(
+                base,
+                onCapsule: { [weak self] in self?.noteAccepted(capsule: true) },
+                onEvent: { [weak self] in self?.noteAccepted(capsule: false) })
+        }
         let store = try CapsuleStore(root: overrides?.storageDirectory ?? CapsuleStore.defaultRoot())
         var cached: RemoteCaptureConfig?
         var outbox: UploadOutbox?
@@ -267,10 +314,21 @@ public final class BugCapsuleSession: @unchecked Sendable {
             let box = UploadOutbox(directory: store.outboxDirectory, limits: config.outboxLimits)
             outbox = box
             Task { await box.open() }
+            let source = connectionSource
             remote = RemoteConfigController(
-                fetch: { await transport.fetchConfig() }, cache: store.configCache, scope: scope,
+                fetch: { [weak self] in
+                    let result = await transport.fetchConfig()
+                    self?.noteConfigFetch(result)
+                    return result
+                }, cache: store.configCache, scope: scope,
                 onChange: { [weak self] previous, next in self?.applyRemote(previous, next) },
-                maxStale: config.maxStaleConfig, initial: cached)
+                maxStale: config.maxStaleConfig, initial: cached,
+                onRejected: { failure in
+                    let what = source == .token ? "SDK token" : "ingest key"
+                    BugCapsuleLog.warn(
+                        "the backend refused this app's \(what) (\(failure.reason ?? "HTTP \(failure.status ?? 0)"))"
+                            + (failure.detail.map { ": \($0)" } ?? "") + ". Capture and uploads are off for this run.")
+                })
         }
         lock.locked {
             self.store = store
@@ -278,6 +336,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
             self.outbox = outbox
             self.remote = remote
             _redactor = baseRedactor(remote: cached?.redactKeys ?? [])
+            remoteDisabled = cached?.enabled == false
             captureBodies = config.captureNetworkBodies && (cached?.captureNetworkBodies ?? true)
             maxCapsuleBytes = cached?.maxCapsuleBytes ?? maxCapsuleBytes
             recording = decideRecording(cached)
@@ -740,6 +799,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
         monitoring?.applyRemote(next)
         lock.lock()
         defer { lock.unlock() }
+        remoteDisabled = !next.enabled
         maxCapsuleBytes = next.maxCapsuleBytes
         if !next.enabled {
             disableCaptureLocked()
@@ -802,6 +862,95 @@ public final class BugCapsuleSession: @unchecked Sendable {
         if was { BugCapsuleLog.info("capture disabled by remote config") }
         if let outbox { Task { await outbox.purge() } }
         if let store { queue.async { store.clearSavedCaptures() } }
+    }
+
+    // MARK: connection status
+
+    private func noteConfigFetch(_ result: ConfigFetchResult) {
+        lock.locked {
+            switch result {
+            case .fetched:
+                configFetchedAt = Date()
+                lastConfigFailure = nil
+                credentialRejected = false
+            case .failed(let message, let status, let retryAfter, let reason, let detail):
+                let failure = ConfigFetchFailure(message: message, status: status, retryAfter: retryAfter, reason: reason, detail: detail)
+                lastConfigFailure = failure
+                if failure.isRefusal { credentialRejected = true }
+            }
+        }
+    }
+
+    private func noteAccepted(capsule: Bool) {
+        lock.locked {
+            if capsule {
+                if firstCapsuleAcceptedAt == nil { firstCapsuleAcceptedAt = Date() }
+            } else if firstEventAcceptedAt == nil {
+                firstEventAcceptedAt = Date()
+            }
+        }
+    }
+
+    /// Connection and instrumentation (`BugCapsule.status`).
+    public var status: BugCapsuleStatus {
+        let s = lock.locked {
+            (
+                configFetchedAt, lastConfigFailure, credentialRejected, remoteDisabled, firstEventAcceptedAt,
+                firstCapsuleAcceptedAt, recording, frameworks
+            )
+        }
+        let (fetchedAt, failure, rejected, disabledRemotely, firstEvent, firstCapsule, recording, frameworks) = s
+        let hasBackend = config.backend != nil || overrides?.transport != nil
+        let state: BugCapsuleConnectionState
+        if let tokenError {
+            state = tokenError.code == .invalidToken ? .invalidToken : .unsupportedTokenVersion
+        } else if !hasBackend {
+            state = .notConfigured
+        } else if !config.enabled {
+            state = .disabled
+        } else if rejected {
+            state = .rejected
+        } else if disabledRemotely {
+            state = .disabled
+        } else if fetchedAt != nil {
+            state = .connected
+        } else if let failure, failure.isOffline {
+            state = .offline
+        } else {
+            state = .connecting
+        }
+        var reason: String?
+        var message: String?
+        if let tokenError {
+            reason = tokenError.code.rawValue
+            message = tokenError.message
+        } else if state == .rejected {
+            reason = failure?.reason ?? failure?.message
+            message = failure?.detail ?? "the backend refused the credential"
+        } else if state == .offline {
+            reason = failure?.reason ?? failure?.message
+            message = "the backend could not be reached; data is kept and retried"
+        } else if state == .disabled {
+            message = config.enabled ? "capture is disabled by the project's remote configuration" : "capture is disabled (enabled: false)"
+        } else if state == .notConfigured {
+            message = "no token or backend configured; capsules are only saved on the device"
+        }
+        let network = BugCapsuleURLSession.protocolInstalled && integrations.contains { $0 is BugCapsuleURLSession }
+        let navigation = integrations.contains { ($0 as? BugCapsuleNavigation)?.hasSeenNavigation ?? false }
+        let appState = integrations.contains {
+            $0 is BugCapsuleUserDefaults || (($0 as? BugCapsuleStateIntegration)?.hasRegisteredState ?? false)
+        }
+        var missing: [String] = []
+        if !network { missing.append("network") }
+        if !navigation { missing.append("navigation") }
+        if !appState { missing.append("app_state") }
+        return BugCapsuleStatus(
+            connection: BugCapsuleStatus.Connection(
+                state: state, source: connectionSource, apiURL: config.backend?.url, reason: reason, message: message,
+                configFetchedAt: fetchedAt, firstEventAcceptedAt: firstEvent, firstCapsuleAcceptedAt: firstCapsule),
+            instrumentation: BugCapsuleStatus.Instrumentation(
+                recording: recording, network: network, navigation: navigation, appState: appState, frameworks: frameworks,
+                missing: missing))
     }
 
     // MARK: replay
