@@ -43,13 +43,13 @@ bugcapsule regress ─► runs in CI from now on
 
 In Xcode, choose **File → Add Package Dependencies…**, enter
 `https://github.com/BugCapsule/bug_capsule_ios_sdk.git` and pick the exact
-version `0.4.1-beta.1`. Add **`BugCapsule`** to your app target and
+version `0.4.1-beta.2`. Add **`BugCapsule`** to your app target and
 **`BugCapsuleXCTest`** to your UI test target.
 
 Or in a `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/BugCapsule/bug_capsule_ios_sdk.git", exact: "0.4.1-beta.1"),
+.package(url: "https://github.com/BugCapsule/bug_capsule_ios_sdk.git", exact: "0.4.1-beta.2"),
 
 // app target
 .product(name: "BugCapsule", package: "bug_capsule_ios_sdk"),
@@ -57,11 +57,8 @@ Or in a `Package.swift`:
 .product(name: "BugCapsuleXCTest", package: "bug_capsule_ios_sdk"),
 ```
 
-> **Versions.** The latest tagged release is `0.4.1-beta.1`. This README
-> describes `main`. **SDK tokens** (`token:`) and **`BugCapsule.status`** ship
-> in the next release. On `0.4.1-beta.1`, connect with an
-> [explicit address and ingest key](#connect-with-an-address-and-ingest-key)
-> instead.
+> **Versions.** SDK tokens and connection status are available starting with `0.4.1-beta.2`.
+> Existing explicit backend configuration remains supported.
 
 ## Connect your app
 
@@ -251,7 +248,7 @@ tool shipped in the Flutter package, so it needs
 projects.
 
 ```bash
-dart pub global activate bug_capsule 0.4.1-beta.1
+dart pub global activate bug_capsule 0.4.1-beta.2
 bugcapsule --version
 ```
 
