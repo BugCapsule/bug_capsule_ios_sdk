@@ -18,6 +18,9 @@ settings:
     BUGCAPSULE_GIT_SHA: ""
     BUGCAPSULE_GIT_DIRTY: ""
     # Backend for capture builds; pass on the xcodebuild command line, never commit.
+    # BUGCAPSULE_TOKEN (SDK token from the dashboard) is the usual setup; the
+    # explicit URL + ingest key is the self-hosted / advanced alternative.
+    BUGCAPSULE_TOKEN: ""
     BUGCAPSULE_BACKEND_URL: ""
     BUGCAPSULE_INGEST_KEY: ""
     # Temporary fix toggles (e.g. DEMO_FIXES=FIX_NEGATIVE_TOTAL), off by default.
@@ -44,6 +47,7 @@ targets:
           NSAllowsLocalNetworking: true
         BugCapsuleGitSHA: $(BUGCAPSULE_GIT_SHA)
         BugCapsuleGitDirty: $(BUGCAPSULE_GIT_DIRTY)
+        BugCapsuleToken: $(BUGCAPSULE_TOKEN)
         BugCapsuleBackendURL: $(BUGCAPSULE_BACKEND_URL)
         BugCapsuleIngestKey: $(BUGCAPSULE_INGEST_KEY)
     settings:

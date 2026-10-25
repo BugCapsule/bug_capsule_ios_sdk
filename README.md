@@ -10,7 +10,7 @@ treat its capsules like the Flutter, Android and web ones.
 It also implements monitoring v1 (`docs/monitoring-v1.md` in the backend):
 error events (including native crashes and app hangs), release-health
 sessions, performance tracing and user feedback, sent to `POST /v1/envelope`
-with the same ingest key. Events link to the capsule recorded for the same
+with the same credential. Events link to the capsule recorded for the same
 failure, so an issue lists the capsules that replay it.
 
 | | |
@@ -54,33 +54,99 @@ Xcode: *File → Add Package Dependencies…* with the repository URL, or in a
 
 ### 2. Start it first thing
 
+Copy the SDK token from the dashboard (*Project settings → Keys → SDK tokens*) and
+start BugCapsule with it:
+
 ```swift
 import BugCapsule
 
 func application(_ application: UIApplication,
                  didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-    BugCapsule.start(
-        BugCapsuleConfig(
-            mode: .qa,  // default: .debug in DEBUG builds, .production otherwise
-            backend: BugCapsuleBackendConfig(url: "https://bugcapsule.example.com",
-                                             ingestKey: "bci_..."),   // never the bcs_ secret key
-            redactKeys: ["loyaltyId"]),
-        integrations: [
+    BugCapsule.start(token: "GENERATED_TOKEN")
+    return true
+}
+```
+
+That is the whole connection setup. The token (`bcsdk.v1.…`) carries the API
+URL and an upload-only credential; it is safe to ship in the app (it cannot
+read data or change settings) and you can revoke or rotate it in the
+dashboard. App version and build default to `CFBundleShortVersionString` /
+`CFBundleVersion`, and capture is on (`.debug` mode in DEBUG builds,
+`.production` with sampling otherwise).
+
+Connected is not the same as fully instrumented. Replay-grade capsules need
+the progressive adapters — network, navigation and app state — which you add
+as integrations (steps 3–4):
+
+```swift
+BugCapsule.start(
+    BugCapsuleConfig(
+        token: "GENERATED_TOKEN",
+        mode: .qa,  // default: .debug in DEBUG builds, .production otherwise
+        redactKeys: ["loyaltyId"]),
+    integrations: [
             BugCapsuleURLSession(rules: [
                 EndpointRule("POST", "/api/checkout", ignoreBodyFields: ["timestamp", "nonce"]),
             ]),
             BugCapsuleUserDefaults(keys: ["cart_cache"], prefixes: ["settings."]),
-            BugCapsuleNavigation.shared,
-            BugCapsuleStateIntegration.shared,
-        ])
-    return true
-}
+        BugCapsuleNavigation.shared,
+        BugCapsuleStateIntegration.shared,
+    ])
 ```
 
 `start` must run before app code reads `UserDefaults` (first line of
 `application(_:didFinishLaunchingWithOptions:)`, or `App.init` for a SwiftUI
 `App`): in replay it restores the checkpoint there. It never blocks the app: if
-storage or setup fails, the app runs without capture.
+storage or setup fails, the app runs without capture. It never throws for a bad
+token either: a token that cannot be used (empty, damaged, an ingest or secret
+key pasted instead, or a newer token version than this SDK understands) logs
+one `[bugcapsule]` line that says what to do, the app runs without a backend,
+and `BugCapsule.status` reports `invalidToken` / `unsupportedTokenVersion`.
+
+#### Check the connection
+
+```swift
+let status = BugCapsule.status
+status.connection.state                  // .connecting, .connected, .offline, .rejected, ...
+status.connection.configFetchedAt        // 1st confirmation: configuration fetched
+status.connection.firstCapsuleAcceptedAt // 2nd confirmation: data accepted
+status.connection.firstEventAcceptedAt   //   (an error event, with monitoring)
+status.instrumentation.missing           // e.g. ["network", "navigation", "app_state"]
+```
+
+| `connection.state` | Meaning |
+|---|---|
+| `notConfigured` | Not started, or no token / backend (capsules are only saved on the device). |
+| `invalidToken`, `unsupportedTokenVersion` | The token cannot be used; `message` says why. |
+| `connecting` | Waiting for the first configuration fetch. |
+| `connected` | The configuration was fetched in this run. |
+| `offline` | The backend could not be reached (network error, timeout, 5xx). Data waits in the outbox and is retried. |
+| `rejected` | The backend refused the credential (`reason`: `token_revoked`, `token_expired`, `token_unknown`, ...; `message`: what to do). Capture and uploads are off for this run. |
+| `disabled` | `enabled: false`, or capture is turned off for the project. |
+
+`connection` also has `source` (`.token` / `.backend`) and `apiURL`.
+`instrumentation` reports `network` (a `BugCapsuleURLSession` integration and an
+instrumented session), `navigation` (`BugCapsuleNavigation` that has seen a
+navigation controller or a route), `appState` (`BugCapsuleUserDefaults`, or
+state registered with `BugCapsule.registerState`), `recording` and the UI
+`frameworks` seen.
+
+#### Self-hosted or advanced: explicit backend
+
+A self-hosted backend issues tokens that carry its own API URL, so the
+one-liner works there too. You can also configure the backend URL and ingest
+key yourself, as before:
+
+```swift
+BugCapsule.start(BugCapsuleConfig(
+    backend: BugCapsuleBackendConfig(url: "https://bugcapsule.example.com",
+                                     ingestKey: "bci_...")))   // never the bcs_ secret key
+```
+
+An explicit `backend` wins over `token` (the SDK logs that the token was
+ignored). `BugCapsuleConnectionToken.parse(_:)` and
+`BugCapsuleBackendConfig(token:)` turn a token into this configuration offline,
+for apps that want to validate one themselves.
 
 ### 3. Instrument networking
 
@@ -159,8 +225,11 @@ are `partial` (`build.gitSha`) and `bugcapsule run` cannot pin the commit.
 
 | API | Purpose |
 |---|---|
-| `BugCapsule.start(_:integrations:)` | Start capture (or replay, see below). |
-| `BugCapsuleConfig` | `mode`, `enabled`, `backend`, `gitSha`/`gitDirty`, `stateSchemaVersion`, `checkpointInterval` (30 s), `window` (5 min), `maxEvents` (20,000), `productionSampleRate` (0.1), `autoCaptureOnFailure`, `maxCapsulesPerSession` (3), `captureNetworkBodies`, `maxBodyBytes` (256 KiB), `redactKeys`, `redactHeaders`, `redactPatterns`, `beforeRecord`, `beforeCheckpoint`, `outboxLimits` (10 / 10 MiB / 7 days), `maxStaleConfig` (7 days), `ignoreError`, `labels`. |
+| `BugCapsule.start(token:integrations:)` | Start with the SDK token and defaults. |
+| `BugCapsule.start(_:integrations:)` | Start capture (or replay, see below) with a full `BugCapsuleConfig`. |
+| `BugCapsule.status` | Connection state and the two confirmations, plus installed / missing instrumentation. |
+| `BugCapsuleConnectionToken.parse(_:)`, `BugCapsuleBackendConfig(token:)` | Parse a token offline (`invalid_token` / `unsupported_token_version` with an actionable message). |
+| `BugCapsuleConfig` | `token`, `mode`, `enabled`, `backend` (wins over `token`), `gitSha`/`gitDirty`, `stateSchemaVersion`, `checkpointInterval` (30 s), `window` (5 min), `maxEvents` (20,000), `productionSampleRate` (0.1), `autoCaptureOnFailure`, `maxCapsulesPerSession` (3), `captureNetworkBodies`, `maxBodyBytes` (256 KiB), `redactKeys`, `redactHeaders`, `redactPatterns`, `beforeRecord`, `beforeCheckpoint`, `outboxLimits` (10 / 10 MiB / 7 days), `maxStaleConfig` (7 days), `ignoreError`, `labels`. |
 | `BugCapsule.action(_:_:)`, `uiAction(_:_:)`, `registerAction`, `recordAction` | Semantic actions. |
 | `BugCapsule.trackText(_:field:)`, `trackedText(_:_:)`, `trackText(_:setter:)` + `textChanged` | Tracked text. |
 | `BugCapsule.check / fail / report(error:) / report(exception:)` | Failures. |
@@ -236,12 +305,12 @@ keeps those requests open, as the app never got their response.
 ## Monitoring: errors, release health, tracing, feedback
 
 On by default (`BugCapsuleConfig.monitoring`); nothing is sent without a
-`backend`. Turn it all off with `monitoring: .disabled`, or remotely with
+token or `backend`. Turn it all off with `monitoring: .disabled`, or remotely with
 `monitoringEnabled: false` (capsules are unaffected). Replay sessions never
 monitor (no events, sessions or trace headers).
 
 ```swift
-var config = BugCapsuleConfig(backend: .init(url: "https://bugcapsule.example.com", ingestKey: "bci_..."))
+var config = BugCapsuleConfig(token: "GENERATED_TOKEN")
 config.monitoring = BugCapsuleMonitoringOptions(
     tracesSampleRate: 0.2,                               // remote tracesSampleRate overrides it
     tracePropagationTargets: ["api.shop.example.com"],   // substrings or "/regex/"; none by default
@@ -407,7 +476,9 @@ addresses), secrets under innocuous key names, or binary bodies.
   atomic (temp + rename); temp files are removed at start; corrupt files are
   dropped; a full disk drops the capsule. No SDK error reaches the app.
 * Backend: `GET /v1/sdk/config` and `POST /v1/capsules` (gzip body,
-  `Content-Type: application/octet-stream`, `Authorization: Bearer bci_...`).
+  `Content-Type: application/octet-stream`, `Authorization: Bearer <credential>`,
+  the token's credential or the explicit ingest key), on the token's API URL or
+  the explicit backend URL.
   200/201 uploaded; 401/408/429/5xx/network errors retry later (30 s → 1 h, ±20 %
   jitter, `Retry-After` honoured); other 4xx drop the capsule; body
   `code: capture_disabled` refreshes the config.
@@ -417,7 +488,11 @@ addresses), secrets under innocuous key names, or binary bodies.
   successful fetch or with a cached config younger than `maxStaleConfig`
   (7 days). Kill switch (`enabled: false`): recording stops, the buffer is
   dropped, queued and saved capsules are deleted, and it persists across
-  launches until a fetch re-enables it. 401/403 stops capture for the session.
+  launches until a fetch re-enables it. 401/403 (a revoked, expired or unknown
+  token or key) stops capture and uploads for the session; the SDK logs the
+  backend's reason and advice once and `BugCapsule.status` reports `rejected`.
+  Network errors, timeouts and 5xx are never fatal: the app keeps running, data
+  waits in the outbox, and the status says `offline` until a fetch succeeds.
   Production sampling: `min(productionSampleRate, remote sampleRate)` at launch;
   a lower rate mid-session keeps recording with probability new/old.
 * Lifecycle: uploads run only while the app is running (at launch, when it
@@ -546,16 +621,19 @@ BUGCAPSULE_IOS_BUILD_SETTINGS='DEMO_FIXES=FIX_NEGATIVE_TOTAL' bugcapsule verify 
 
 Revert by omitting the variable (the next build is the buggy one again).
 
-Build and capture by hand (the ingest key and URL are passed on the command
-line, never committed):
+Build and capture by hand (the SDK token is passed on the command line, never
+committed):
 
 ```bash
 cd Examples/Demo
 xcodebuild test -project BugCapsuleDemo.xcodeproj -scheme BugCapsuleDemo \
   -destination 'id=<simulator udid>' -collect-test-diagnostics never \
-  BUGCAPSULE_BACKEND_URL=http://127.0.0.1:8787 BUGCAPSULE_INGEST_KEY=bci_... \
+  BUGCAPSULE_TOKEN=bcsdk.v1.... \
   -only-testing:BugCapsuleDemoUITests/CaptureFlowTests/testCaptureNegativeTotal
 ```
+
+For a self-hosted backend you can pass `BUGCAPSULE_BACKEND_URL=... BUGCAPSULE_INGEST_KEY=bci_...`
+instead; the explicit pair wins over the token.
 
 `CaptureFlowTests` drives the app into each bug (`testCaptureNegativeTotal`,
 `testCaptureRaceCrash`, `testCaptureLegacyCart`,

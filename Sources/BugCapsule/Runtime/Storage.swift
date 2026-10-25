@@ -320,6 +320,19 @@ public actor UploadOutbox {
 }
 
 enum BugCapsuleLog {
-    static func info(_ message: String) { NSLog("[bugcapsule] %@", message) }
-    static func warn(_ message: String) { NSLog("[bugcapsule] %@", message) }
+    static func info(_ message: String) { emit(message) }
+    static func warn(_ message: String) { emit(message) }
+
+    private static let sinkLock = NSLock()
+    nonisolated(unsafe) private static var _sink: (@Sendable (String) -> Void)?
+    /// Receives every log line as well (tests).
+    static var sinkForTesting: (@Sendable (String) -> Void)? {
+        get { sinkLock.locked { _sink } }
+        set { sinkLock.locked { _sink = newValue } }
+    }
+
+    private static func emit(_ message: String) {
+        NSLog("[bugcapsule] %@", message)
+        sinkForTesting?("[bugcapsule] \(message)")
+    }
 }

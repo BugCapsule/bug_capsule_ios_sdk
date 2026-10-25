@@ -28,9 +28,16 @@ public struct OutboxLimits: Sendable, Equatable {
     }
 }
 
-/// SDK configuration. Only `appVersion`/`appBuild` are required; they
-/// default to the bundle's `CFBundleShortVersionString` / `CFBundleVersion`.
+/// SDK configuration. Everything has a default: `appVersion`/`appBuild`
+/// come from the bundle's `CFBundleShortVersionString` / `CFBundleVersion`.
+/// Connect it with `token` (the SDK token from the dashboard) or, for a
+/// self-hosted or advanced setup, an explicit `backend`.
 public struct BugCapsuleConfig: @unchecked Sendable {
+    /// SDK connection token from the dashboard (`bcsdk.v1.…`): the API URL
+    /// and the ingest-only credential in one string. Ignored (with a log
+    /// line) when `backend` is set. A token that cannot be used never stops
+    /// the app: it runs without a backend and `BugCapsule.status` says why.
+    public var token: String?
     public var appVersion: String
     public var appBuild: String
     public var appId: String?
@@ -41,6 +48,7 @@ public struct BugCapsuleConfig: @unchecked Sendable {
     public var mode: CaptureMode?
     /// Local master switch. The backend kill switch can also disable capture.
     public var enabled: Bool
+    /// Explicit backend URL + ingest key (self-hosted / advanced). Wins over `token`.
     public var backend: BugCapsuleBackendConfig?
     /// `nil`: the `BugCapsuleGitSHA` Info.plist key (set from the
     /// `BUGCAPSULE_GIT_SHA` build setting).
@@ -81,7 +89,7 @@ public struct BugCapsuleConfig: @unchecked Sendable {
     public var monitoring: BugCapsuleMonitoringOptions
 
     public init(
-        appVersion: String? = nil, appBuild: String? = nil, appId: String? = nil, appName: String? = nil,
+        token: String? = nil, appVersion: String? = nil, appBuild: String? = nil, appId: String? = nil, appName: String? = nil,
         flavor: String? = nil, mode: CaptureMode? = nil, enabled: Bool = true, backend: BugCapsuleBackendConfig? = nil,
         gitSha: String? = nil, gitDirty: Bool? = nil, stateSchemaVersion: Int = 1, checkpointInterval: TimeInterval = 30,
         window: TimeInterval = 300, maxEvents: Int = 20000, productionSampleRate: Double = 0.1,
@@ -95,6 +103,7 @@ public struct BugCapsuleConfig: @unchecked Sendable {
         monitoring: BugCapsuleMonitoringOptions = BugCapsuleMonitoringOptions()
     ) {
         let info = Bundle.main.infoDictionary ?? [:]
+        self.token = token
         self.appVersion = appVersion ?? (info["CFBundleShortVersionString"] as? String) ?? "0"
         self.appBuild = appBuild ?? (info["CFBundleVersion"] as? String) ?? "0"
         self.appId = appId ?? Bundle.main.bundleIdentifier
