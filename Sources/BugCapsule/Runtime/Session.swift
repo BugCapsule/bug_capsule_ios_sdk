@@ -893,13 +893,14 @@ public final class BugCapsuleSession: @unchecked Sendable {
 
     /// Connection and instrumentation (`BugCapsule.status`).
     public var status: BugCapsuleStatus {
+        // Explicit self and distinct local names: older compilers report a circular reference otherwise.
         let s = lock.locked {
             (
-                configFetchedAt, lastConfigFailure, credentialRejected, remoteDisabled, firstEventAcceptedAt,
-                firstCapsuleAcceptedAt, recording, frameworks
+                self.configFetchedAt, self.lastConfigFailure, self.credentialRejected, self.remoteDisabled, self.firstEventAcceptedAt,
+                self.firstCapsuleAcceptedAt, self.recording, self.frameworks
             )
         }
-        let (fetchedAt, failure, rejected, disabledRemotely, firstEvent, firstCapsule, recording, frameworks) = s
+        let (fetchedAt, failure, rejected, disabledRemotely, firstEvent, firstCapsule, isRecording, frameworkNames) = s
         let hasBackend = config.backend != nil || overrides?.transport != nil
         let state: BugCapsuleConnectionState
         if let tokenError {
@@ -949,7 +950,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
                 state: state, source: connectionSource, apiURL: config.backend?.url, reason: reason, message: message,
                 configFetchedAt: fetchedAt, firstEventAcceptedAt: firstEvent, firstCapsuleAcceptedAt: firstCapsule),
             instrumentation: BugCapsuleStatus.Instrumentation(
-                recording: recording, network: network, navigation: navigation, appState: appState, frameworks: frameworks,
+                recording: isRecording, network: network, navigation: navigation, appState: appState, frameworks: frameworkNames,
                 missing: missing))
     }
 
