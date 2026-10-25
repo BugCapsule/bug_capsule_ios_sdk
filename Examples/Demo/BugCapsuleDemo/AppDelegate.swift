@@ -55,9 +55,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 }
 
-/// Backend and capture settings. The ingest key and backend URL come from
-/// build settings (`BUGCAPSULE_BACKEND_URL`, `BUGCAPSULE_INGEST_KEY`)
-/// through Info.plist; they are never committed into sources.
+/// Backend and capture settings. The SDK token (`BUGCAPSULE_TOKEN`) or, for
+/// a self-hosted backend, the backend URL and ingest key
+/// (`BUGCAPSULE_BACKEND_URL`, `BUGCAPSULE_INGEST_KEY`) come from build
+/// settings through Info.plist; they are never committed into sources.
 enum DemoConfig {
     static func plist(_ key: String) -> String? {
         guard let v = Bundle.main.object(forInfoDictionaryKey: key) as? String else { return nil }
@@ -65,16 +66,27 @@ enum DemoConfig {
         return t.isEmpty || t.hasPrefix("$(") ? nil : t
     }
 
+    /// The SDK token from the dashboard: one string with the API URL and the
+    /// upload-only credential.
+    static var token: String? { plist("BugCapsuleToken") }
+
+    /// Self-hosted / advanced alternative; wins over the token when set.
     static var backend: BugCapsuleBackendConfig? {
         // Demo-only override used by the offline-capture UI test.
-        let url = ProcessInfo.processInfo.environment["BUGCAPSULE_DEMO_BACKEND_URL"] ?? plist("BugCapsuleBackendURL")
-        guard let url, let key = plist("BugCapsuleIngestKey") else { return nil }
-        return BugCapsuleBackendConfig(url: url, ingestKey: key)
+        let override = ProcessInfo.processInfo.environment["BUGCAPSULE_DEMO_BACKEND_URL"]
+        if let url = override ?? plist("BugCapsuleBackendURL"), let key = plist("BugCapsuleIngestKey") {
+            return BugCapsuleBackendConfig(url: url, ingestKey: key)
+        }
+        // Token builds: the token's credential against the overridden (unreachable) URL.
+        if let override, let token, let fromToken = try? BugCapsuleBackendConfig(token: token) {
+            return BugCapsuleBackendConfig(url: override, ingestKey: fromToken.ingestKey)
+        }
+        return nil
     }
 
     static func bugCapsuleConfig() -> BugCapsuleConfig {
         BugCapsuleConfig(
-            appName: "BugCapsule Shop", mode: .qa, backend: backend, stateSchemaVersion: 1,
+            token: token, appName: "BugCapsule Shop", mode: .qa, backend: backend, stateSchemaVersion: 1,
             labels: ["demo": "ios"])
     }
 }

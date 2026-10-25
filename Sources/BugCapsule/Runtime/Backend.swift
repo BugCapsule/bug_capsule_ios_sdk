@@ -20,7 +20,10 @@ public struct UploadResult: Sendable, Equatable {
 /// Result of one `GET /v1/sdk/config`.
 public enum ConfigFetchResult: Sendable {
     case fetched(RemoteCaptureConfig)
-    case failed(message: String, status: Int?, retryAfter: TimeInterval?)
+    /// [status]: the HTTP status, nil for a network error or timeout.
+    /// [reason] / [detail]: the backend's problem answer, e.g. `token_revoked`
+    /// and what to do about it (401/403).
+    case failed(message: String, status: Int?, retryAfter: TimeInterval?, reason: String? = nil, detail: String? = nil)
 }
 
 /// How the SDK talks to the backend; tests substitute a fake.
@@ -84,7 +87,11 @@ public final class BugCapsuleBackendClient: BugCapsuleTransport, @unchecked Send
                 return .failed(message: "not HTTP", status: nil, retryAfter: nil)
             }
             if http.statusCode != 200 {
-                return .failed(message: "HTTP \(http.statusCode)", status: http.statusCode, retryAfter: Self.retryAfter(http))
+                let problem = (try? JSON.parse(data))?.objectValue
+                return .failed(
+                    message: "HTTP \(http.statusCode)", status: http.statusCode, retryAfter: Self.retryAfter(http),
+                    reason: problem?["reason"]?.stringValue.map { String($0.prefix(100)) },
+                    detail: problem?["detail"]?.stringValue.map { String($0.prefix(500)) })
             }
             guard case .object(let o) = try JSON.parse(data) else {
                 return .failed(message: "config is not a JSON object", status: nil, retryAfter: nil)

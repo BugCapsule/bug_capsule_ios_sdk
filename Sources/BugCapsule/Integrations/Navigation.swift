@@ -33,6 +33,7 @@ public final class BugCapsuleNavigation: BugCapsuleIntegration, @unchecked Senda
     private var route: String?
     private var backStack: [String] = []
     private var pending: JSONObject?
+    private var observedController = false
 
     /// Restores a periodic checkpoint's route (main thread, before inputs replay).
     @MainActor public var restorer: ((_ route: String, _ backStack: [String]) throws -> Void)?
@@ -42,6 +43,9 @@ public final class BugCapsuleNavigation: BugCapsuleIntegration, @unchecked Senda
     public func setUp(_ session: BugCapsuleSession) { lock.locked { self.session = session } }
 
     public var currentRoute: String? { lock.locked { route } }
+
+    /// A navigation controller is observed or a route was set (`BugCapsule.status`).
+    var hasSeenNavigation: Bool { lock.locked { observedController || route != nil } }
 
     /// Records a navigation change. [action]: push, pop, replace, reset.
     public func setRoute(_ location: String, backStack: [String]? = nil, action: String = "push", source: String = "explicit") {
@@ -89,6 +93,7 @@ public final class BugCapsuleNavigation: BugCapsuleIntegration, @unchecked Senda
             if let existing = proxies[key], nav.delegate === existing { return }
             let proxy = NavigationDelegateProxy(original: nav.delegate, owner: self, depth: nav.viewControllers.count)
             proxies[key] = proxy
+            lock.locked { observedController = true }
             nav.delegate = proxy
             if let top = nav.topViewController {
                 let name = (top as? BugCapsuleRouteNaming)?.bugCapsuleRoute ?? String(describing: type(of: top))

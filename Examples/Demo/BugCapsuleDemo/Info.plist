@@ -10,6 +10,8 @@
 	<string>$(BUGCAPSULE_GIT_SHA)</string>
 	<key>BugCapsuleIngestKey</key>
 	<string>$(BUGCAPSULE_INGEST_KEY)</string>
+	<key>BugCapsuleToken</key>
+	<string>$(BUGCAPSULE_TOKEN)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

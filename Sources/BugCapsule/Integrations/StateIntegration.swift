@@ -26,6 +26,10 @@ public final class BugCapsuleStateIntegration: BugCapsuleIntegration, @unchecked
     @MainActor private var order: [String] = []
     private var pending: JSONObject = JSONObject()
     private var session: BugCapsuleSession?
+    private var registeredCount = 0
+
+    /// App state objects registered with `BugCapsule.registerState` (`BugCapsule.status`).
+    var hasRegisteredState: Bool { lock.locked { registeredCount > 0 } }
 
     public init() {}
 
@@ -33,7 +37,10 @@ public final class BugCapsuleStateIntegration: BugCapsuleIntegration, @unchecked
 
     @MainActor
     func register(_ key: String, snapshot: @escaping @MainActor () -> JSONValue?, restore: @escaping @MainActor (JSONValue) throws -> Void) {
-        if entries[key] == nil { order.append(key) }
+        if entries[key] == nil {
+            order.append(key)
+            lock.locked { registeredCount += 1 }
+        }
         entries[key] = Entry(snapshot: snapshot, restore: restore)
         let (session, data) = lock.locked { () -> (BugCapsuleSession?, JSONValue?) in
             let d = pending[key]

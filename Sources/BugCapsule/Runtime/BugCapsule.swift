@@ -4,12 +4,22 @@ import Foundation
 ///
 /// ```swift
 /// func application(_ app: UIApplication, didFinishLaunchingWithOptions o: ...) -> Bool {
-///     BugCapsule.start(BugCapsuleConfig(backend: .init(url: "https://bugcapsule.example.com", ingestKey: "bci_...")),
-///                      integrations: [BugCapsuleURLSession(), BugCapsuleUserDefaults(keys: ["cart_cache"]),
-///                                     BugCapsuleNavigation.shared, BugCapsuleStateIntegration.shared])
+///     BugCapsule.start(token: "bcsdk.v1.…")   // the SDK token from the dashboard
 ///     ...
 /// }
 /// ```
+///
+/// Replay-grade capture adds the progressive adapters (network, navigation,
+/// app state); `BugCapsule.status` reports which are still missing:
+///
+/// ```swift
+/// BugCapsule.start(BugCapsuleConfig(token: "bcsdk.v1.…"),
+///                  integrations: [BugCapsuleURLSession(), BugCapsuleUserDefaults(keys: ["cart_cache"]),
+///                                 BugCapsuleNavigation.shared, BugCapsuleStateIntegration.shared])
+/// ```
+///
+/// Self-hosted / advanced: an explicit backend instead of the token,
+/// `BugCapsuleConfig(backend: .init(url: "https://bugcapsule.example.com", ingestKey: "bci_..."))`.
 ///
 /// Call `start` first in `application(_:didFinishLaunchingWithOptions:)`
 /// (or `App.init`), before app code reads `UserDefaults`: in replay it
@@ -30,6 +40,23 @@ public enum BugCapsule {
         let session = BugCapsuleSession(config: config, integrations: integrations, overrides: overrides)
         session.start()
     }
+
+    /// Starts BugCapsule with the SDK token from the dashboard and defaults
+    /// for everything else (app version and build from the main bundle).
+    /// An unusable token never throws or blocks: the app runs without a
+    /// backend, one `[bugcapsule]` line says why and `status` reports it.
+    @MainActor
+    public static func start(
+        token: String, integrations: [BugCapsuleIntegration] = [], overrides: BugCapsuleTestOverrides? = nil
+    ) {
+        start(BugCapsuleConfig(token: token), integrations: integrations, overrides: overrides)
+    }
+
+    /// Connection (`state`, `source`, `apiURL`, `reason`, `message`, and the
+    /// two confirmations: config fetched, first data accepted) and which
+    /// progressive instrumentation adapters are installed or missing.
+    /// `.notConfigured` before `start`.
+    public static var status: BugCapsuleStatus { BugCapsuleSession.current?.status ?? .notStarted }
 
     public static var isStarted: Bool { BugCapsuleSession.current != nil }
     public static var isRecording: Bool { BugCapsuleSession.current?.isRecording ?? false }

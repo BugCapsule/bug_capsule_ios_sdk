@@ -1,0 +1,134 @@
+{
+  "$comment": "Connection token v1 test vectors (docs/sdk-connection-token.md). Every SDK parses each valid token to exactly url + ingestKey and refuses each invalid one with the given error code, offline.",
+  "version": 1,
+  "valid": [
+    {
+      "name": "hosted",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwczovL2FwaS5idWdjYXBzdWxlLmNvbSIsImtleSI6ImJjdF9RMnhwWlc1MFZtbHphV0pzWlVsdVoyVnpkRTl1YkhsTFpYbGZNREV5TXpRIn0",
+      "url": "https://api.bugcapsule.com",
+      "ingestKey": "bct_Q2xpZW50VmlzaWJsZUluZ2VzdE9ubHlLZXlfMDEyMzQ"
+    },
+    {
+      "name": "self-hosted with a path prefix and trailing slash",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwczovL2J1Z3MuZXhhbXBsZS5jb20vYnVnY2Fwc3VsZS8iLCJrZXkiOiJiY3RfVTJWc1praHZjM1JsWkVKMVowTmhjSE4xYkdWVFpHdFViMnRsYmw5aFltTiJ9",
+      "url": "https://bugs.example.com/bugcapsule",
+      "ingestKey": "bct_U2VsZkhvc3RlZEJ1Z0NhcHN1bGVTZGtUb2tlbl9hYmN"
+    },
+    {
+      "name": "local development over http",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwOi8vMTI3LjAuMC4xOjg3ODciLCJrZXkiOiJiY3RfUTJ4cFpXNTBWbWx6YVdKc1pVbHVaMlZ6ZEU5dWJIbExaWGxmTURFeU16USJ9",
+      "url": "http://127.0.0.1:8787",
+      "ingestKey": "bct_Q2xpZW50VmlzaWJsZUluZ2VzdE9ubHlLZXlfMDEyMzQ"
+    },
+    {
+      "name": "unknown fields are ignored",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwczovL2FwaS5idWdjYXBzdWxlLmNvbSIsImtleSI6ImJjdF9RMnhwWlc1MFZtbHphV0pzWlVsdVoyVnpkRTl1YkhsTFpYbGZNREV5TXpRIiwicmVnaW9uIjoiZXUiLCJub3RlIjoiZnV0dXJlIn0",
+      "url": "https://api.bugcapsule.com",
+      "ingestKey": "bct_Q2xpZW50VmlzaWJsZUluZ2VzdE9ubHlLZXlfMDEyMzQ"
+    },
+    {
+      "name": "surrounding whitespace is trimmed",
+      "token": "  bcsdk.v1.eyJhcGkiOiJodHRwczovL2FwaS5idWdjYXBzdWxlLmNvbSIsImtleSI6ImJjdF9RMnhwWlc1MFZtbHphV0pzWlVsdVoyVnpkRTl1YkhsTFpYbGZNREV5TXpRIn0\n",
+      "url": "https://api.bugcapsule.com",
+      "ingestKey": "bct_Q2xpZW50VmlzaWJsZUluZ2VzdE9ubHlLZXlfMDEyMzQ"
+    },
+    {
+      "name": "legacy ingest key inside a token",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwczovL2FwaS5idWdjYXBzdWxlLmNvbSIsImtleSI6ImJjaV9RMnhwWlc1MFZtbHphV0pzWlVsdVoyVnpkRTl1YkhsTFpYbGZNREV5TXpRIn0",
+      "url": "https://api.bugcapsule.com",
+      "ingestKey": "bci_Q2xpZW50VmlzaWJsZUluZ2VzdE9ubHlLZXlfMDEyMzQ"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "empty",
+      "token": "",
+      "error": "invalid_token"
+    },
+    {
+      "name": "an ingest key, not a token",
+      "token": "bci_Q2xpZW50VmlzaWJsZUluZ2VzdE9ubHlLZXlfMDEyMzQ",
+      "error": "invalid_token"
+    },
+    {
+      "name": "a secret key",
+      "token": "bcs_Q2xpZW50VmlzaWJsZUluZ2VzdE9ubHlLZXlfMDEyMzQ",
+      "error": "invalid_token"
+    },
+    {
+      "name": "random text",
+      "token": "hello world",
+      "error": "invalid_token"
+    },
+    {
+      "name": "a future version",
+      "token": "bcsdk.v2.eyJhcGkiOiJodHRwczovL2FwaS5idWdjYXBzdWxlLmNvbSIsImtleSI6ImJjdF9RMnhwWlc1MFZtbHphV0pzWlVsdVoyVnpkRTl1YkhsTFpYbGZNREV5TXpRIn0",
+      "error": "unsupported_token_version"
+    },
+    {
+      "name": "version zero",
+      "token": "bcsdk.v0.e30",
+      "error": "unsupported_token_version"
+    },
+    {
+      "name": "payload is not base64url",
+      "token": "bcsdk.v1.***not-base64***",
+      "error": "invalid_token"
+    },
+    {
+      "name": "payload is not JSON",
+      "token": "bcsdk.v1.bm90IGpzb24gYXQgYWxs",
+      "error": "invalid_token"
+    },
+    {
+      "name": "payload is a JSON array",
+      "token": "bcsdk.v1.WyJodHRwczovL2FwaS5idWdjYXBzdWxlLmNvbSJd",
+      "error": "invalid_token"
+    },
+    {
+      "name": "payload truncated by copy and paste",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwczovL2FwaS5idWd",
+      "error": "invalid_token"
+    },
+    {
+      "name": "missing key",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwczovL2FwaS5idWdjYXBzdWxlLmNvbSJ9",
+      "error": "invalid_token"
+    },
+    {
+      "name": "missing api",
+      "token": "bcsdk.v1.eyJrZXkiOiJiY3RfUTJ4cFpXNTBWbWx6YVdKc1pVbHVaMlZ6ZEU5dWJIbExaWGxmTURFeU16USJ9",
+      "error": "invalid_token"
+    },
+    {
+      "name": "secret key inside a token",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwczovL2FwaS5idWdjYXBzdWxlLmNvbSIsImtleSI6ImJjc19RMnhwWlc1MFZtbHphV0pzWlVsdVoyVnpkRTl1YkhsTFpYbGZNREV5TXpRIn0",
+      "error": "invalid_token"
+    },
+    {
+      "name": "key with characters outside base64url",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwczovL2FwaS5idWdjYXBzdWxlLmNvbSIsImtleSI6ImJjdF9hYmMgZGVmJCVeIn0",
+      "error": "invalid_token"
+    },
+    {
+      "name": "api is not http(s)",
+      "token": "bcsdk.v1.eyJhcGkiOiJmdHA6Ly9hcGkuYnVnY2Fwc3VsZS5jb20iLCJrZXkiOiJiY3RfUTJ4cFpXNTBWbWx6YVdKc1pVbHVaMlZ6ZEU5dWJIbExaWGxmTURFeU16USJ9",
+      "error": "invalid_token"
+    },
+    {
+      "name": "api has a query string",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwczovL2FwaS5idWdjYXBzdWxlLmNvbS8_eD0xIiwia2V5IjoiYmN0X1EyeHBaVzUwVm1semFXSnNaVWx1WjJWemRFOXViSGxMWlhsZk1ERXlNelEifQ",
+      "error": "invalid_token"
+    },
+    {
+      "name": "api has credentials",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwczovL3VzZXI6cHdAYXBpLmJ1Z2NhcHN1bGUuY29tIiwia2V5IjoiYmN0X1EyeHBaVzUwVm1semFXSnNaVWx1WjJWemRFOXViSGxMWlhsZk1ERXlNelEifQ",
+      "error": "invalid_token"
+    },
+    {
+      "name": "api is relative",
+      "token": "bcsdk.v1.eyJhcGkiOiIvdjEiLCJrZXkiOiJiY3RfUTJ4cFpXNTBWbWx6YVdKc1pVbHVaMlZ6ZEU5dWJIbExaWGxmTURFeU16USJ9",
+      "error": "invalid_token"
+    }
+  ]
+}
