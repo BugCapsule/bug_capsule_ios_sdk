@@ -179,6 +179,42 @@ let session = URLSession(configuration: config)
 // URLSession.shared: BugCapsule.instrumentSharedSession() (opt-in)
 ```
 
+### WebSockets
+
+`URLSessionWebSocketTask` can't be intercepted, so open sockets through
+`BugCapsuleWebSocket` (the same calls) and add `BugCapsuleWebSockets()`:
+
+```swift
+BugCapsule.start(config, integrations: [BugCapsuleURLSession(), BugCapsuleWebSockets()])
+
+let socket = BugCapsuleWebSocket(session: .shared, url: URL(string: "wss://quotes.example.com/v1/stream")!)
+socket.delegate = self              // didOpenWithProtocol / didCloseWith / didCompleteWithError
+socket.resume()
+try await socket.send(.string(#"{"op":"subscribe","symbol":"ACME"}"#))
+let message = try await socket.receive()
+socket.cancel(with: .normalClosure, reason: nil)
+```
+
+Connects, sends, received messages, errors and closes are recorded (redacted,
+like everything else). Text frames are kept; binary frames are recorded as
+their size only unless you pass `BugCapsuleWebSockets(captureBinary: true)`.
+Replay never opens a socket: the app connects, sends and receives exactly as
+recorded, in the recorded order and timing. A connection or frame that wasn't
+recorded fails with `BugCapsuleReplayError` and makes the attempt
+inconclusive, so a changed protocol never reads as a fix.
+
+### Other SDKs (native adapters)
+
+Results of third-party SDKs (location, Firebase, payments) are recorded through
+an adapter that implements `BugCapsuleNativeAdapter` and routes its calls and
+streams through `BugCapsuleNativeBridge`. Install it with
+`BugCapsuleNativeIntegration(adapter)`. In replay the SDK is never called; the
+recorded answers come back at their recorded times.
+`BugCapsuleLocationAdapter` is a small working example, and
+`BugCapsuleAdapterConformance.run` checks your own adapter offline
+(capture → capsule → replay, no divergences). See
+[docs/how-it-works.md](docs/how-it-works.md#interaction-dependencies-websockets-and-native-adapters).
+
 ### Actions, text and navigation
 
 ```swift
@@ -374,8 +410,9 @@ Secure text fields are always redacted.
 Tighten it with `redactKeys`, `redactHeaders`, `redactPatterns`,
 `beforeRecord`, `beforeCheckpoint` and `BugCapsuleURLSession(exclude:)`. Only
 allowlisted `UserDefaults` keys are read. Your project settings can also add
-redaction keys, turn off body capture, lower sampling or switch capture off
-remotely.
+redaction keys, turn off body capture, lower sampling, switch off a single
+adapter (for example WebSockets, without touching HTTP capture) or switch
+capture off remotely.
 
 Redaction is best effort. It does **not** find secrets in URL path segments,
 personal data that isn't a credential (names, emails, addresses), secrets
@@ -408,8 +445,13 @@ Details: [docs/how-it-works.md](docs/how-it-works.md#storage-uploads-and-backend
   doesn't change.
 - `BugCapsule.now()` and `BugCapsule.random` are the only virtualized clock
   and randomness; `Date()` and `Int.random` in app code are not.
-- URLSession WebSocket and stream tasks, Keychain, Core Data, files and SQLite
-  are not captured (write an integration for your own storage).
+- WebSockets are captured and replayed only through `BugCapsuleWebSocket`; a
+  `URLSessionWebSocketTask` created directly is neither recorded nor blocked
+  in replay. Binary frames are size-only by default, ping/pong is not
+  recorded, and a capsule whose window starts at a periodic checkpoint with a
+  socket open can't be replayed (record from launch).
+- URLSession stream tasks, Keychain, Core Data, files and SQLite are not
+  captured (write an integration for your own storage).
 - Screens are traced through `observe(_:)`, `.bugCapsuleRoute` and
   `screenWillAppear` only (no swizzling).
 
