@@ -35,6 +35,10 @@ final class Monitoring: @unchecked Sendable {
     private(set) var health: ReleaseHealth?
     let frames = FramesTracker()
     private(set) var hangs: AppHangTracker?
+    private(set) var metricKit: MetricKitSubscriber?
+    /// This instance installed the process-wide crash handlers.
+    private var ownsCrashHandlers = false
+    private(set) lazy var ledger = CrashLedger(file: directory?.appendingPathComponent("crash_times.json"))
     private weak var session: BugCapsuleSession?
     private let appInfo: (id: String?, name: String?, version: String, build: String)
     private let random: @Sendable () -> Double
@@ -155,16 +159,23 @@ final class Monitoring: @unchecked Sendable {
         if let previous = health.recoverPrevious(crashedAt: report?.time) {
             enqueue("session", previous)
         }
-        if let report, !report.suppressed {
-            _ = capture(eventFromReport(report))
+        if let report {
+            ledger.record(report.time)
+            if !report.suppressed { _ = capture(eventFromReport(report)) }
         }
         scope.onChange = { [weak self] in self?.scheduleContextSync() }
         // Uncaught NSExceptions become fatal events (chained handler).
         CrashHandler.install()
-        if options.enableNativeCrashHandling, let directory {
+        // The process-wide handlers belong to one owner (BugCapsuleCrashBridge
+        // when an embedding SDK installed it first).
+        let owns = CrashOwnership.claim(.sdk)
+        if !owns { BugCapsuleLog.warn("crash handlers already installed by BugCapsuleCrashBridge; monitoring skips them") }
+        lock.locked { ownsCrashHandlers = owns }
+        if owns, options.enableNativeCrashHandling, let directory {
             if !NativeCrashHandler.install(directory: directory, mach: options.enableMachExceptionHandling) {
                 BugCapsuleLog.warn("native crash handler not fully installed")
             }
+            NativeCrashHandler.setRelease(release, environment: environment)
             syncCrashContext()
         }
         #if canImport(UIKit)
@@ -174,8 +185,13 @@ final class Monitoring: @unchecked Sendable {
         #endif
         lock.locked { foreground = inForeground }
         if sessionTrackingEnabled && inForeground { health.start() }
-        if options.enableAppHangTracking && !NativeCrashHandler.debuggerAttached {
+        if owns && options.enableAppHangTracking && !NativeCrashHandler.debuggerAttached {
             startHangTracking(threshold: options.appHangTimeout)
+        }
+        if owns && options.enableMetricKit {
+            let subscriber = MetricKitSubscriber { [weak self] json, end in self?.receiveMetricKit(json, end: end) }
+            lock.locked { metricKit = subscriber }
+            subscriber.start()
         }
         if options.enableFramesTracking || options.enableScreenTracing || options.enableAppStartTracking {
             frames.start(counting: options.enableFramesTracking)
@@ -187,20 +203,25 @@ final class Monitoring: @unchecked Sendable {
         let tracker = AppHangTracker(
             threshold: threshold, mainThread: NativeCrashHandler.currentThreadPort,
             isForeground: { [weak self] in self?.lock.locked { self?.foreground ?? false } ?? false },
-            onHang: { [weak self] addresses in self?.captureAppHang(addresses, threshold: threshold) })
+            onHang: { [weak self] samples in self?.captureAppHang(samples, threshold: threshold) })
         lock.locked { hangs = tracker }
         tracker.start()
     }
 
     func stop() {
-        let (hangs, box): (AppHangTracker?, UploadOutbox?) = lock.locked {
+        let (hangs, box, metricKit, owns): (AppHangTracker?, UploadOutbox?, MetricKitSubscriber?, Bool) = lock.locked {
             stopped = true
-            return (self.hangs, outbox)
+            defer { ownsCrashHandlers = false }
+            return (self.hangs, outbox, self.metricKit, ownsCrashHandlers)
         }
         hangs?.stop()
+        metricKit?.stop()
         frames.stop()
         scope.onChange = nil
-        if options.enableNativeCrashHandling { NativeCrashHandler.uninstallForTesting() }
+        if owns {
+            if options.enableNativeCrashHandling { NativeCrashHandler.uninstallForTesting() }
+            CrashOwnership.release(.sdk)
+        }
         if let box { Task { await box.close() } }
     }
 
@@ -280,7 +301,11 @@ final class Monitoring: @unchecked Sendable {
 
     // MARK: events
 
-    private lazy var staticContexts: JSONObject = {
+    private lazy var staticContexts: JSONObject = Self.deviceContexts(
+        appId: appInfo.id, appName: appInfo.name, version: appInfo.version, build: appInfo.build)
+
+    /// `device`, `os`, `app` and `culture` contexts (constant for the process).
+    static func deviceContexts(appId: String?, appName: String?, version: String, build: String) -> JSONObject {
         var device: JSONObject = [
             "model": .string(DeviceInfo.model), "manufacturer": "Apple", "arch": .string(DeviceInfo.arch),
             "simulator": .bool(DeviceInfo.isSimulator),
@@ -297,14 +322,14 @@ final class Monitoring: @unchecked Sendable {
         let v = ProcessInfo.processInfo.operatingSystemVersion
         os["version"] = .string("\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)")
         if let build = DeviceInfo.osBuild { os["build"] = .string(build) }
-        var app: JSONObject = ["appVersion": .string(appInfo.version), "appBuild": .string(appInfo.build)]
-        if let id = appInfo.id { app["appId"] = .string(id) }
-        if let name = appInfo.name { app["appName"] = .string(name) }
+        var app: JSONObject = ["appVersion": .string(version), "appBuild": .string(build)]
+        if let appId { app["appId"] = .string(appId) }
+        if let appName { app["appName"] = .string(appName) }
         let culture: JSONObject = [
             "locale": .string(Locale.current.identifier), "timezone": .string(TimeZone.current.identifier),
         ]
         return ["device": .object(device), "os": .object(os), "app": .object(app), "culture": .object(culture)]
-    }()
+    }
 
     func contexts(_ extra: JSONObject = JSONObject(), span: BugCapsuleSpan?) -> JSONObject {
         var c = lock.locked { staticContexts }
@@ -454,32 +479,28 @@ final class Monitoring: @unchecked Sendable {
         return id
     }
 
-    func eventFromReport(_ r: NativeCrashReport) -> EventDraft {
-        let d = r.description
-        let resolve: (UInt64) -> DebugImage? = { addr in r.images.last { $0.loadAddress <= addr && $0.contains(addr) } }
-        let symbol: (UInt64, DebugImage) -> String? = { addr, image in
-            guard let current = DebugImageCache.shared.image(debugId: image.debugId) else { return nil }
-            return Symbolicator.function(at: addr &- image.loadAddress &+ current.loadAddress)
-        }
-        let (frames, images) = stack.frames(r.frames, firstIsPC: true, resolve: resolve, symbol: symbol)
-        let value = StackBuilder.exceptionValue(
-            type: d.type, value: d.value, module: nil, mechanism: d.mechanism, handled: false, frames: frames, data: d.data)
-        var draft = EventDraft(level: .fatal, exceptionValues: [value], images: images, timestamp: r.time)
-        draft.template = r.context ?? [:]
-        draft.hint = EventHint(fromPreviousLaunch: true)
-        draft.threads = [["id": 0, "crashed": true, "current": true, "stacktrace": StackBuilder.stacktrace(frames)]]
-        return draft
+    func eventFromReport(_ r: NativeCrashReport) -> EventDraft { CrashEvents.draft(from: r, stack: stack) }
+
+    func captureAppHang(_ samples: [ThreadSample], threshold: TimeInterval) {
+        capture(CrashEvents.hangDraft(samples, threshold: threshold, stack: stack))
     }
 
-    func captureAppHang(_ addresses: [UInt64], threshold: TimeInterval) {
-        let (frames, images) = stack.frames(addresses, firstIsPC: true, resolve: { DebugImageCache.shared.image(containing: $0) })
-        let ms = Int(threshold * 1000)
-        let value = StackBuilder.exceptionValue(
-            type: "App Hanging", value: "App hanging for at least \(ms) ms.", module: nil, mechanism: "app_hang",
-            handled: false, frames: frames)
-        var d = EventDraft(level: .error, exceptionValues: [value], images: images)
-        d.threads = [["id": 0, "name": "main", "crashed": false, "current": true, "stacktrace": StackBuilder.stacktrace(frames)]]
-        capture(d)
+    /// One MetricKit diagnostic payload: crashes BugCapsule already
+    /// reported (a native report within 60 s) are dropped.
+    func receiveMetricKit(_ json: JSONValue, end: Date?) {
+        guard isActive else { return }
+        for d in MetricKitConverter.diagnostics(fromPayload: json, stack: stack, timestamp: end) {
+            if d.isCrash && ledger.contains(near: d.draft.timestamp) { continue }
+            var draft = d.draft
+            let r = MetricKitConverter.release(
+                of: d, current: release, appId: appInfo.id, appVersion: appInfo.version, appBuild: appInfo.build,
+                customRelease: options.release != nil)
+            draft.template = [
+                "release": .string(r), "environment": .string(environment),
+                "contexts": .object(lock.locked { staticContexts }),
+            ]
+            capture(draft)
+        }
     }
 
     // MARK: feedback

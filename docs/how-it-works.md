@@ -87,7 +87,8 @@ Captured automatically:
   (`SIGSEGV`, `SIGBUS`, `SIGABRT` from `abort()`, ...) and Mach exceptions.
   Building a capsule is not async-signal-safe, so for these only the
   monitoring crash writer runs: the next launch sends a `fatal` event with
-  the crashing thread's stack, and the session is marked `crashed`.
+  the crashing thread's stack and every other thread's, and the session is
+  marked `crashed`.
 * Out-of-memory (jetsam) terminations, watchdog kills, the user force-quitting
   the app in the foreground: no code runs. The next launch reports the
   session as `abnormal` (no event).
@@ -126,8 +127,9 @@ Defaults: `release` = `<bundle id>@<version>+<build>`, `environment` =
 | `BugCapsule.captureException(error, options:)`, `report(error:)`, `fail`/`check` | also the capsule pipeline: when a capsule is written for the failure, the event has `capsuleId` and the capsule `manifest.monitoring = {eventId, traceId, release, environment}` | `error`, mechanism `manual` / `assertion`, handled |
 | `captureMessage(_:level:)` | event only; `attachStacktrace` adds the calling thread | `message` |
 | Uncaught `NSException` | chained handler; event written synchronously, sent next launch | `fatal`, `nsexception`, unhandled |
-| Signals (`SIGSEGV`, `SIGBUS`, `SIGILL`, `SIGFPE`, `SIGTRAP`, `SIGABRT`, `SIGSYS`) and Mach exceptions (`EXC_BAD_ACCESS`, `EXC_BAD_INSTRUCTION`, `EXC_ARITHMETIC`, `EXC_BREAKPOINT`) | C handler (`BugCapsuleCrash`): preallocated buffers, only async-signal-safe calls, frame-pointer walk through `vm_read_overwrite`; writes `monitoring/crash.report` with the scope (tags, user, breadcrumbs, contexts) and the loaded images mirrored before the crash; previous handlers / exception ports are chained | `fatal`, `signal` / `mach_exception`, sent next launch |
-| App hangs | watchdog thread; main thread blocked ≥ 2 s (`appHangTimeout`) in the foreground; one event per hang with the sampled main-thread stack; off under a debugger | `App Hanging`, `app_hang` |
+| Signals (`SIGSEGV`, `SIGBUS`, `SIGILL`, `SIGFPE`, `SIGTRAP`, `SIGABRT`, `SIGSYS`) and Mach exceptions (`EXC_BAD_ACCESS`, `EXC_BAD_INSTRUCTION`, `EXC_ARITHMETIC`, `EXC_BREAKPOINT`) | C handler (`BugCapsuleCrash`): preallocated buffers, only async-signal-safe calls, frame-pointer walk through `vm_read_overwrite`; the other threads are listed with `task_threads`, suspended while they are walked and resumed before the report is written (Mach exception thread; best effort from the signal handler); on arm64 the link register is added as the first caller when the pc is in a leaf function; writes `monitoring/crash.report` with the threads, the release and environment, the scope (tags, user, breadcrumbs, contexts) and the loaded images mirrored before the crash; previous handlers / exception ports are chained | `fatal`, `signal` / `mach_exception`, `threads` (≤ 100 × 100 frames), sent next launch |
+| App hangs | watchdog thread; main thread blocked ≥ 2 s (`appHangTimeout`) in the foreground; one event per hang with every thread sampled (main first, `current`); off under a debugger | `App Hanging`, `app_hang` |
+| MetricKit (iOS 14+, `enableMetricKit`) | `MXMetricManager` subscriber registered off the main thread; call stack trees become frames and `macho` images. A crash diagnostic within 60 s of a crash BugCapsule reported (`monitoring/crash_times.json`) is dropped; the release is the diagnostic's build (`<bundle id>@<version>+<build>` unless `release` is custom) | `fatal`, `metrickit`; hangs `error`, `app_hang` |
 
 Frames carry `instructionAddr` (callers adjusted into the call instruction)
 and `package`; `debugImages` are the `macho` images the frames point into
@@ -155,7 +157,9 @@ One session per foreground run, ending after 30 s in the background
 captured, the end (`exited`; with errors it counts as errored). The open
 session is persisted; the next launch closes an unfinished one as `crashed`
 (crash report present), `abnormal` (died in the foreground: OOM, watchdog,
-force-quit) or `exited` (died in the background). `did` is the user id or a
+force-quit) or `exited` (died in the background), with the release and
+environment it ran with (persisted; older files fall back to the current
+release). `did` is the user id or a
 random install id. `startSession()` / `endSession()` for manual control;
 `enableAutoSessionTracking: false` or remote `sessionTracking: false` to turn
 it off. Sessions are never sampled.
@@ -561,9 +565,11 @@ on.
 * Navigation is restored from periodic checkpoints only through an app-provided
   `BugCapsuleNavigation.shared.restorer`.
 * Cross-runtime replay is not supported (spec §12).
-* Monitoring: native crash reports cover the crashing thread only (no other
-  threads, no registers); the walk relies on frame pointers (always on for
-  Apple arm64). The alternate signal stack covers the main thread only, so a
+* Monitoring: native crash reports carry no registers, and threads other
+  than the crashing one are best effort (at most 100, 100 frames each,
+  trimmed to 448 KiB); the walk relies on frame pointers (always on for
+  Apple arm64), and the leaf-function caller comes from the link register
+  only on arm64. The alternate signal stack covers the main thread only, so a
   stack overflow on another thread may leave no report. The Mach exception
   server is not installed while a debugger is attached. Screens are traced
   through `observe(_:)`, `.bugCapsuleRoute` and `screenWillAppear` (no

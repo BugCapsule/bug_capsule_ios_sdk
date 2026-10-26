@@ -5,7 +5,9 @@ import Foundation
 /// persisted on every change, so a run the process did not end cleanly is
 /// reported on the next launch: `crashed` with a crash report, `abnormal`
 /// when it died in the foreground (OOM, watchdog, force-quit), `exited`
-/// when it died in the background.
+/// when it died in the background. The persisted state keeps the release
+/// and environment of its run, so a session recovered after an app update
+/// is reported for the release that ran it.
 final class ReleaseHealth: @unchecked Sendable {
     struct State: Equatable {
         var sid: String
@@ -18,19 +20,25 @@ final class ReleaseHealth: @unchecked Sendable {
         var foreground: Bool
         var backgroundAt: Date?
         var updated: Date
+        /// nil in state files written before they were persisted.
+        var release: String?
+        var environment: String?
 
         var json: JSONValue {
             [
                 "sid": .string(sid), "did": .string(did), "seq": .int(seq), "initSent": .bool(initSent),
                 "started": .string(ISODate.format(started)), "status": .string(status), "errors": .int(errors),
                 "foreground": .bool(foreground), "backgroundAt": backgroundAt.map { .string(ISODate.format($0)) } ?? .null,
-                "updated": .string(ISODate.format(updated)),
+                "updated": .string(ISODate.format(updated)), "release": release.map { .string($0) } ?? .null,
+                "environment": environment.map { .string($0) } ?? .null,
             ]
         }
 
-        init(sid: String, did: String, started: Date) {
+        init(sid: String, did: String, started: Date, release: String? = nil, environment: String? = nil) {
             self.sid = sid
             self.did = did
+            self.release = release
+            self.environment = environment
             seq = 0
             initSent = false
             self.started = started
@@ -54,6 +62,8 @@ final class ReleaseHealth: @unchecked Sendable {
             foreground = json["foreground"]?.boolValue ?? true
             backgroundAt = json["backgroundAt"]?.stringValue.flatMap(ISODate.parse)
             updated = json["updated"]?.stringValue.flatMap(ISODate.parse) ?? started
+            release = json["release"]?.stringValue
+            environment = json["environment"]?.stringValue
         }
     }
 
@@ -100,8 +110,8 @@ final class ReleaseHealth: @unchecked Sendable {
             "sid": .string(s.sid), "did": .string(s.did), "seq": .int(s.seq), "init": .bool(isInit),
             "started": .string(ISODate.format(s.started)), "timestamp": .string(ISODate.format(time)),
             "status": .string(s.status), "errors": .int(s.errors),
-            "duration": .double(max(time.timeIntervalSince(s.started), 0)), "release": .string(release),
-            "environment": .string(environment), "runtime": "ios",
+            "duration": .double(max(time.timeIntervalSince(s.started), 0)), "release": .string(s.release ?? release),
+            "environment": .string(s.environment ?? environment), "runtime": "ios",
         ]
     }
 
@@ -133,7 +143,7 @@ final class ReleaseHealth: @unchecked Sendable {
     func start(at time: Date = Date()) {
         end(at: time)
         let payload: JSONObject = lock.locked {
-            var s = State(sid: uuidV4(), did: did(), started: time)
+            var s = State(sid: uuidV4(), did: did(), started: time, release: release, environment: environment)
             let p = updateLocked(&s, at: time)
             state = s
             persistLocked()

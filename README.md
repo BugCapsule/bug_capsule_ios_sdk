@@ -358,7 +358,7 @@ Monitoring is on by default once a token (or backend) is set:
 
 | Signal | What you get |
 |---|---|
-| Errors | `captureException`, `report(error:)`, `check`/`fail`, uncaught `NSException`s, **native crashes** (signals and Mach exceptions) and **app hangs** (main thread blocked 2 s) |
+| Errors | `captureException`, `report(error:)`, `check`/`fail`, uncaught `NSException`s, **native crashes** (signals and Mach exceptions, with every thread's stack), **app hangs** (main thread blocked 2 s) and **MetricKit** crash and hang diagnostics |
 | Release health | One session per foreground run; `crashed` and `abnormal` (OOM, watchdog, force-quit) sessions |
 | Performance | Cold and warm app start, screen loads (TTID / TTFD), slow and frozen frames, URLSession spans, Core Data spans |
 | User feedback | A UIKit form, a SwiftUI form or sheet, shake to report |
@@ -378,6 +378,50 @@ BugCapsule.start(config, integrations: [BugCapsuleURLSession(), BugCapsuleNaviga
 
 `monitoring: .disabled` turns monitoring off; capsules keep working. Full API
 and behaviour: [docs/how-it-works.md](docs/how-it-works.md#monitoring).
+
+### Crash reporting
+
+Crashes are written to disk by an async-signal-safe handler and sent on the
+next launch as `fatal` events:
+
+- **Signals and Mach exceptions** (`EXC_BAD_ACCESS`, Swift traps, `abort()`):
+  the crashing thread's stack plus every other thread (up to 100 threads,
+  100 frames each), with the scope, release and environment of the run that
+  crashed. A crash in a leaf function keeps its caller (arm64 link register).
+- **Uncaught `NSException`s**: written synchronously before the process ends.
+- **App hangs**: one `app_hang` error per hang, with every thread's stack.
+- **MetricKit** (iOS 14+): crash diagnostics BugCapsule did not see itself
+  (e.g. a crash before `start`) and hang diagnostics, delivered by iOS on a
+  later launch. Same crash within 60 s of a BugCapsule report: sent once.
+- **Release health**: the run that crashed or died is closed on the next
+  launch with its own release, also after an update.
+
+Turn parts off with `enableNativeCrashHandling`, `enableMachExceptionHandling`,
+`enableAppHangTracking` and `enableMetricKit` in `BugCapsuleMonitoringOptions`.
+Upload dSYMs (below) to get file and line for app frames.
+
+#### For SDK authors: `BugCapsuleCrashBridge` (embedding only)
+
+Apps don't need this: `BugCapsule.start` already does all of the above.
+`BugCapsuleCrashBridge` is for an SDK that embeds this one and sends events
+itself (the BugCapsule Flutter SDK's iOS plugin). It runs the crash handlers,
+hang watchdog and MetricKit without this SDK's sessions or outbox, and has
+the same shape as Android's `dev.bugcapsule.android.embedding.CrashBridge`:
+
+```swift
+BugCapsuleCrashBridge.install(
+    release: "com.shop.app@1.4.0+52", environment: "production",
+    options: .init(nativeCrashes: true, appHangs: 2, metricKit: true, inAppIncludes: ["Runner"]))
+BugCapsuleCrashBridge.updateScope(json: scopeJSON)       // user, tags, contexts, breadcrumbs
+let crashed = BugCapsuleCrashBridge.lastRunCrashed
+for event in BugCapsuleCrashBridge.takePendingEvents() {  // monitoring-v1 event JSON
+    send(event)                                           // returned once, then deleted
+}
+```
+
+Only one of the two installs the handlers: when `BugCapsule.start` ran
+first, `install` returns false; when the bridge ran first, monitoring skips
+its own crash handlers.
 
 ### Readable stack traces: upload dSYMs
 

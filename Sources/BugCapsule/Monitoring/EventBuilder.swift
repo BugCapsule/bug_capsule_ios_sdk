@@ -21,6 +21,8 @@ struct StackBuilder {
         guard let mainExecutable else { return false }
         if imagePath == mainExecutable { return true }
         let mainName = (mainExecutable as NSString).lastPathComponent
+        // A bare binary name (MetricKit) matches the main executable's.
+        if !imagePath.contains("/") { return name == mainName }
         return name == mainName && imagePath.contains(".app/") && mainExecutable.contains(".app/")
     }
 
