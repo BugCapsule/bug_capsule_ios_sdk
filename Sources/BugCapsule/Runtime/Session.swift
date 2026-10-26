@@ -204,6 +204,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
                 if out["bodyEncoding"] == .string("base64") { out["responseBody"] = data["responseBody"] }
                 if out["requestEncoding"] == .string("base64") { out["requestBody"] = data["requestBody"] }
             }
+            if type == "screenshot" { out["base64"] = data["base64"] } // Binary pixels are masked by the provider.
             if type == EventTypes.failure, case .string? = data["signature"] { out["signature"] = data["signature"] }
             if InteractionTypes.isInteraction(type) {
                 // Match keys and payload objects were built from redacted

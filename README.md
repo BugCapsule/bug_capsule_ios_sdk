@@ -482,3 +482,8 @@ Questions or access requests: [contact@bugcapsule.com](mailto:contact@bugcapsule
 
 This SDK is proprietary software of Bug Capsule. Use, copying, modification
 and distribution require prior written permission. See [LICENSE](LICENSE).
+
+## Optional capsule screenshots (unreleased)
+
+Opt-in PNG frames are stored inside capsules and displayed against event time.
+See [capture, privacy, limits and platform examples](docs/screenshots-v1.md).
