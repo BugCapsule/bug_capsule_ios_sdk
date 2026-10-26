@@ -21,12 +21,17 @@ public struct RemoteCaptureConfig: Sendable, Equatable {
     public var maxBreadcrumbs: Int?
     /// When set, replaces the app's list.
     public var tracePropagationTargets: [String]?
+    /// Interaction adapters switched off for this project (capsule-v2 §7),
+    /// by adapter id, e.g. `bugcapsule-ios.urlsession-websocket`. HTTP
+    /// capture is unaffected.
+    public var disabledAdapters: [String]
 
     public init(
         enabled: Bool = true, sampleRate: Double = 1, maxCapsuleBytes: Int = 5 * 1024 * 1024,
         captureNetworkBodies: Bool = true, redactKeys: [String] = [], configTtlSeconds: Int = 300, fetchedAtMs: Int = 0,
         monitoringEnabled: Bool = true, errorSampleRate: Double? = nil, tracesSampleRate: Double? = nil,
-        sessionTracking: Bool = true, maxBreadcrumbs: Int? = nil, tracePropagationTargets: [String]? = nil
+        sessionTracking: Bool = true, maxBreadcrumbs: Int? = nil, tracePropagationTargets: [String]? = nil,
+        disabledAdapters: [String] = []
     ) {
         self.enabled = enabled
         self.sampleRate = sampleRate
@@ -41,6 +46,7 @@ public struct RemoteCaptureConfig: Sendable, Equatable {
         self.sessionTracking = sessionTracking
         self.maxBreadcrumbs = maxBreadcrumbs
         self.tracePropagationTargets = tracePropagationTargets
+        self.disabledAdapters = disabledAdapters
     }
 
     public struct FormatError: Error, Sendable { public let message: String }
@@ -64,6 +70,7 @@ public struct RemoteCaptureConfig: Sendable, Equatable {
         try check("sessionTracking") { $0.boolValue != nil }
         try check("maxBreadcrumbs") { $0.intValue != nil }
         try check("tracePropagationTargets") { $0.arrayValue != nil }
+        try check("disabledAdapters") { $0.arrayValue != nil }
         func unit(_ key: String) -> Double? {
             guard let d = j[key]?.doubleValue else { return nil }
             return d.isNaN ? 0 : min(max(d, 0), 1)
@@ -82,6 +89,7 @@ public struct RemoteCaptureConfig: Sendable, Equatable {
         sessionTracking = j["sessionTracking"]?.boolValue ?? true
         maxBreadcrumbs = j["maxBreadcrumbs"]?.intValue.map { min(max($0, 0), 1000) }
         tracePropagationTargets = j["tracePropagationTargets"]?.arrayValue?.compactMap(\.stringValue)
+        disabledAdapters = (j["disabledAdapters"]?.arrayValue ?? []).compactMap(\.stringValue)
     }
 
     public var json: JSONValue {
@@ -95,6 +103,7 @@ public struct RemoteCaptureConfig: Sendable, Equatable {
         if let tracesSampleRate { o["tracesSampleRate"] = .double(tracesSampleRate) }
         if let maxBreadcrumbs { o["maxBreadcrumbs"] = .int(maxBreadcrumbs) }
         if let tracePropagationTargets { o["tracePropagationTargets"] = .array(tracePropagationTargets.map { .string($0) }) }
+        if !disabledAdapters.isEmpty { o["disabledAdapters"] = .array(disabledAdapters.map { .string($0) }) }
         return .object(o)
     }
 }
@@ -292,7 +301,7 @@ public actor RemoteConfigController {
         RemoteCaptureConfig(
             enabled: false, sampleRate: c?.sampleRate ?? 0, maxCapsuleBytes: c?.maxCapsuleBytes ?? 0,
             captureNetworkBodies: false, redactKeys: c?.redactKeys ?? [], configTtlSeconds: c?.configTtlSeconds ?? 0,
-            fetchedAtMs: c?.fetchedAtMs ?? 0, monitoringEnabled: false)
+            fetchedAtMs: c?.fetchedAtMs ?? 0, monitoringEnabled: false, disabledAdapters: c?.disabledAdapters ?? [])
     }
 
     private func schedule(_ delay: TimeInterval) {

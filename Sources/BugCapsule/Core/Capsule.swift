@@ -342,6 +342,10 @@ public struct CapsuleManifest: Sendable, Equatable {
     public var runtime: RuntimeInfo?
     public var capabilities: [(String, String)]
     public var monitoring: CapsuleMonitoringLink?
+    /// Interaction dependencies (capsule-v2 §2). A capsule with at least one
+    /// is written as spec v2; v1 capsules have none (a v1 document's field
+    /// is ignored).
+    public var dependencies: [CapsuleDependency]
 
     public init(
         capsuleId: String, createdAt: Date, mode: CaptureMode, app: AppInfo, gitSha: String?, dirty: Bool?,
@@ -349,7 +353,8 @@ public struct CapsuleManifest: Sendable, Equatable {
         failure: FailureRecord?, eligibility: Eligibility, integrations: [String], eventCount: Int,
         droppedEvents: Int, checkpointKind: CheckpointKind, labels: [(String, String)] = [],
         redactionKeys: [String] = [], redactionHeaders: [String] = [], runtime: RuntimeInfo? = nil,
-        capabilities: [(String, String)] = [], monitoring: CapsuleMonitoringLink? = nil
+        capabilities: [(String, String)] = [], monitoring: CapsuleMonitoringLink? = nil,
+        dependencies: [CapsuleDependency] = []
     ) {
         self.capsuleId = capsuleId
         self.createdAt = createdAt
@@ -374,9 +379,10 @@ public struct CapsuleManifest: Sendable, Equatable {
         self.runtime = runtime
         self.capabilities = capabilities
         self.monitoring = monitoring
+        self.dependencies = dependencies
     }
 
-    init(json j: JSONObject) {
+    init(json j: JSONObject, specVersion: Int = 1) {
         let source = j["source"]?.objectValue ?? JSONObject()
         let sdk = j["sdk"]?.objectValue ?? JSONObject()
         let stats = j["stats"]?.objectValue ?? JSONObject()
@@ -410,7 +416,12 @@ public struct CapsuleManifest: Sendable, Equatable {
             v.stringValue.map { (k, $0) }
         }
         monitoring = j["monitoring"]?.objectValue.flatMap(CapsuleMonitoringLink.init(json:))
+        dependencies =
+            specVersion >= 2
+            ? (j["dependencies"]?.arrayValue ?? []).compactMap { $0.objectValue.map(CapsuleDependency.init(json:)) } : []
     }
+
+    public func dependency(_ id: String) -> CapsuleDependency? { dependencies.first { $0.id == id } }
 
     public var runtimeName: String { runtime?.name ?? RuntimeInfo.infer(sdkName: sdkName) }
 
@@ -451,6 +462,7 @@ public struct CapsuleManifest: Sendable, Equatable {
             o["capabilities"] = .object(c)
         }
         if let monitoring { o["monitoring"] = monitoring.json }
+        if !dependencies.isEmpty { o["dependencies"] = .array(dependencies.map(\.json)) }
         return .object(o)
     }
 

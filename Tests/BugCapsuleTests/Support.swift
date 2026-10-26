@@ -67,3 +67,13 @@ func httpEvent(
             "bodyEncoding": .string(encoding), "durationMs": .int(durationMs), "error": error,
         ])
 }
+
+/// A settable millisecond clock for scheduler tests.
+final class ManualClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _now = 0
+    var now: Int {
+        get { lock.locked { _now } }
+        set { lock.locked { _now = newValue } }
+    }
+}

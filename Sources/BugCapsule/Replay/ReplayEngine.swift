@@ -13,6 +13,10 @@ import Foundation
 ///   notifications (`lifecycle.replay: partial`).
 /// * With idle compression, long idle gaps are skipped; the virtual clock
 ///   (`BugCapsule.now()`) runs ahead of real time by the skipped amount.
+/// * Interaction dependencies (capsule-v2: WebSockets, native adapters) are
+///   served by `interactions` on the same clock: a delivery that is due
+///   limits a skip to its deadline; an idle open connection does not keep
+///   replay busy.
 public final class ReplayEngine: ReplayContext, @unchecked Sendable {
     public let capsule: Capsule
     public let settings: ReplaySettings
@@ -41,6 +45,9 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
     private var finishHooks: [@Sendable (ReplayEngine) -> Void] = []
     /// Called with the final report (tests).
     var onReport: (@Sendable (ReplayReport) -> Void)?
+    /// Recorded interaction dependencies (empty when the capsule has none:
+    /// adapters still fail unrecorded operations instead of going live).
+    private(set) var interactions: InteractionReplay?
 
     init(capsule: Capsule, settings: ReplaySettings, buildGitSha: String?, channel: ReplayChannel?, session: BugCapsuleSession?) {
         self.capsule = capsule
@@ -50,6 +57,11 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
         self.session = session
         fixtures = FixtureStore(events: capsule.events)
         idle = IdleCompressor(events: capsule.events)
+        interactions = InteractionReplay(
+            capsule: capsule, clock: { [weak self] in self?.interactionClock() ?? 0 },
+            base: capsule.checkpoint.kind == .launch ? 0 : capsule.checkpoint.t,
+            diverge: { [weak self] type, detail in self?.diverge(type, detail) },
+            activity: { [weak self] in self?.activity() })
     }
 
     // MARK: clocks
@@ -64,6 +76,10 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
 
     /// Replay clock in recorded milliseconds since run start.
     func elapsed() -> Int { clockMs() + lock.locked { skippedMs } }
+
+    /// Clock of the interaction scheduler: runs from engine creation (apps
+    /// connect before the anchor) and includes skipped idle time.
+    func interactionClock() -> Int { Int(((uptime() - restoreStart) * 1000).rounded(.down)) + lock.locked { skippedMs } }
 
     /// Virtual wall clock: checkpoint time + elapsed since restore + skipped idle time.
     func virtualNow() -> Date {
@@ -165,6 +181,7 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
     @MainActor
     func run() async -> ReplayReport {
         lock.locked { runStart = uptime() }
+        interactions?.runStarted(at: interactionClock())
         strategy = chooseStrategy()
         let expectedFailure = capsule.manifest.failure
         let base = self.base
@@ -180,14 +197,26 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
             let idleSince = settings.idleCompression ? idle.idleSince(from: previous, to: event.t) : nil
             previous = event.t
             while !isReproduced {
+                interactions?.pump()
                 let wait = due - elapsed()
                 if wait <= 0 { break }
                 if let idleSince, idle.maySkip(now: elapsed() + base, idleSince: idleSince, busy: busy, quietMs: quietMs) {
-                    lock.locked {
-                        skippedMs += wait
-                        gapsCompressed += 1
+                    // A recorded delivery due before the input bounds the
+                    // jump (capsule-v2 §5): it arrives at its time, then the
+                    // gap is re-checked.
+                    let untilDue = interactions?.nextDueAt.map { $0 - interactionClock() } ?? wait
+                    if untilDue <= 0 {
+                        try? await Task.sleep(nanoseconds: 2_000_000)
+                        continue
                     }
-                    break
+                    let skip = min(untilDue, wait)
+                    lock.locked {
+                        skippedMs += skip
+                        if skip == wait { gapsCompressed += 1 }
+                    }
+                    interactions?.clockJumped()
+                    if skip == wait { break }
+                    continue
                 }
                 // Inside a compressible gap re-check idleness every 50 ms;
                 // otherwise wake at least every 50 ms to notice the failure.
@@ -201,7 +230,8 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
             let failureDue = expectedFailure.map { $0.t - base } ?? 0
             let deadline = max(failureDue, lastT) + (expectedFailure == nil ? 1500 : settings.settleTimeoutMs)
             while !isReproduced && elapsed() < deadline {
-                try? await Task.sleep(nanoseconds: UInt64(min(deadline - elapsed(), 50)) * 1_000_000)
+                interactions?.pump()
+                try? await Task.sleep(nanoseconds: UInt64(max(min(deadline - elapsed(), 50), 1)) * 1_000_000)
             }
         }
         return buildReport()
@@ -212,6 +242,7 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
         for hook in hooks { hook(self) }
         for key in fixtures.unusedKeys() { diverge("network.unused", key) }
         let expectedFailure = capsule.manifest.failure
+        for (type, detail) in interactions?.finish(failureT: expectedFailure?.t) ?? [] { diverge(type, detail) }
         let observed = lock.locked { reproduced }
         let outcome: ReplayOutcome =
             expectedFailure == nil ? .noAssertion : observed != nil ? .reproduced : .notReproduced

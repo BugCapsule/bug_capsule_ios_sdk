@@ -1,0 +1,330 @@
+{
+ "description": "platform.result names its call.",
+ "expect": "invalid",
+ "errorPath": "$.events[1].data.call",
+ "document": {
+  "format": "bugcapsule.capsule",
+  "specVersion": 2,
+  "manifest": {
+   "capsuleId": "5a5a0000-0000-4000-8000-0000000000a1",
+   "createdAt": "2026-10-26T10:00:00.000Z",
+   "mode": "qa",
+   "app": {
+    "id": "com.example.trader",
+    "version": "2.0.0",
+    "build": "200"
+   },
+   "source": {
+    "gitSha": "b1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+    "dirty": false
+   },
+   "sdk": {
+    "name": "bug_capsule_flutter",
+    "version": "0.5.0-beta.1"
+   },
+   "stateSchemaVersion": 1,
+   "platform": {
+    "os": "android",
+    "osVersion": "16",
+    "locale": "en_US",
+    "screen": {
+     "width": 411.0,
+     "height": 914.0,
+     "pixelRatio": 2.625
+    },
+    "dartVersion": "3.11.0"
+   },
+   "session": {
+    "id": "s-v2",
+    "startedAt": "2026-10-26T09:59:50.000Z",
+    "wallClockAtAnchorMs": 1792922390000,
+    "seed": 7,
+    "durationMs": 10000
+   },
+   "failure": {
+    "kind": "exception",
+    "signature": "exception:StateError:Bad state: Quote went stale (#)",
+    "type": "StateError",
+    "message": "Bad state: Quote went stale (3)",
+    "assertionId": null,
+    "t": 4200
+   },
+   "eligibility": {
+    "status": "eligible",
+    "missing": []
+   },
+   "integrations": [
+    "web_socket"
+   ],
+   "stats": {
+    "eventCount": 13,
+    "droppedEvents": 0,
+    "checkpointKind": "launch"
+   },
+   "labels": {},
+   "dependencies": [
+    {
+     "id": "channels",
+     "kind": "platform.channel",
+     "adapter": "bug_capsule.platform_channels",
+     "adapterVersion": "0.5.0-beta.1",
+     "schema": 1,
+     "required": true,
+     "coverage": "partial",
+     "operations": [
+      "call",
+      "listen"
+     ],
+     "gaps": [
+      {
+       "code": "codec.unsupported",
+       "count": 1,
+       "detail": "dev.flutter.pigeon.example uses a custom codec"
+      }
+     ]
+    }
+   ]
+  },
+  "checkpoint": {
+   "kind": "launch",
+   "t": -300,
+   "wallClockMs": 1792922389700,
+   "afterSeq": 0,
+   "data": {}
+  },
+  "events": [
+   {
+    "seq": 1,
+    "t": -50,
+    "type": "platform.call",
+    "data": {
+     "dep": "channels",
+     "channel": "plugins.example.com/battery",
+     "codec": "standard.method",
+     "call": "c1",
+     "dir": "dart",
+     "method": "getLevel",
+     "args": {
+      "mode": "full",
+      "replayable": true,
+      "value": null
+     },
+     "key": "plugins.example.com/battery|getLevel|af63bd4c8601b7df",
+     "occurrence": 0,
+     "isolate": "root"
+    }
+   },
+   {
+    "seq": 2,
+    "t": -40,
+    "type": "platform.result",
+    "data": {
+     "dep": "channels",
+     "channel": "plugins.example.com/battery",
+     "value": {
+      "mode": "full",
+      "replayable": true,
+      "value": {
+       "$t": "double",
+       "v": "80.0"
+      }
+     }
+    }
+   },
+   {
+    "seq": 3,
+    "t": 10,
+    "type": "platform.call",
+    "data": {
+     "dep": "channels",
+     "channel": "plugins.example.com/battery",
+     "codec": "standard.method",
+     "call": "c2",
+     "dir": "dart",
+     "method": "getLevel",
+     "args": {
+      "mode": "full",
+      "replayable": true,
+      "value": null
+     },
+     "key": "plugins.example.com/battery|getLevel|af63bd4c8601b7df",
+     "occurrence": 1
+    }
+   },
+   {
+    "seq": 4,
+    "t": 11,
+    "type": "platform.error",
+    "data": {
+     "dep": "channels",
+     "channel": "plugins.example.com/battery",
+     "call": "c2",
+     "kind": "platform",
+     "code": "UNAVAILABLE",
+     "message": "Battery info unavailable",
+     "details": {
+      "mode": "full",
+      "replayable": true,
+      "value": null
+     }
+    }
+   },
+   {
+    "seq": 5,
+    "t": 20,
+    "type": "platform.call",
+    "data": {
+     "dep": "channels",
+     "channel": "plugins.example.com/nfc",
+     "codec": "standard.method",
+     "call": "c3",
+     "dir": "dart",
+     "method": "start",
+     "args": {
+      "mode": "full",
+      "replayable": true,
+      "value": {
+       "$t": "map",
+       "e": [
+        [
+         1,
+         {
+          "$t": "bytes",
+          "b64": "AAEC"
+         }
+        ]
+       ]
+      }
+     },
+     "key": "plugins.example.com/nfc|start|0c1d2e3f4a5b6c7d",
+     "occurrence": 0
+    }
+   },
+   {
+    "seq": 6,
+    "t": 21,
+    "type": "platform.error",
+    "data": {
+     "dep": "channels",
+     "channel": "plugins.example.com/nfc",
+     "call": "c3",
+     "kind": "missing"
+    }
+   },
+   {
+    "seq": 7,
+    "t": 30,
+    "type": "platform.listen",
+    "data": {
+     "dep": "channels",
+     "channel": "plugins.example.com/charging",
+     "codec": "standard.method",
+     "sub": "s1",
+     "gen": 0,
+     "args": {
+      "mode": "full",
+      "replayable": true,
+      "value": null
+     },
+     "key": "plugins.example.com/charging|listen|af63bd4c8601b7df",
+     "occurrence": 0
+    }
+   },
+   {
+    "seq": 8,
+    "t": 35,
+    "type": "platform.event",
+    "data": {
+     "dep": "channels",
+     "channel": "plugins.example.com/charging",
+     "sub": "s1",
+     "index": 0,
+     "value": {
+      "mode": "full",
+      "replayable": true,
+      "value": "charging"
+     }
+    }
+   },
+   {
+    "seq": 9,
+    "t": 36,
+    "type": "platform.event",
+    "data": {
+     "dep": "channels",
+     "channel": "plugins.example.com/charging",
+     "sub": "s1",
+     "index": 1,
+     "error": {
+      "code": "SENSOR",
+      "message": "sensor lost"
+     }
+    }
+   },
+   {
+    "seq": 10,
+    "t": 500,
+    "type": "platform.call",
+    "data": {
+     "dep": "channels",
+     "channel": "plugins.example.com/push",
+     "codec": "standard.method",
+     "call": "c4",
+     "dir": "platform",
+     "method": "onMessage",
+     "args": {
+      "mode": "full",
+      "replayable": true,
+      "value": {
+       "title": "Hi",
+       "count": {
+        "$t": "int",
+        "v": "9007199254740993"
+       }
+      }
+     },
+     "key": "plugins.example.com/push|onMessage|1a2b3c4d5e6f7081",
+     "occurrence": 0
+    }
+   },
+   {
+    "seq": 11,
+    "t": 501,
+    "type": "platform.result",
+    "data": {
+     "dep": "channels",
+     "channel": "plugins.example.com/push",
+     "call": "c4",
+     "value": {
+      "mode": "full",
+      "replayable": true,
+      "value": true
+     }
+    }
+   },
+   {
+    "seq": 12,
+    "t": 600,
+    "type": "platform.cancel",
+    "data": {
+     "dep": "channels",
+     "channel": "plugins.example.com/charging",
+     "sub": "s1"
+    }
+   },
+   {
+    "seq": 13,
+    "t": 4200,
+    "type": "failure",
+    "data": {
+     "kind": "exception",
+     "signature": "exception:StateError:Bad state: Quote went stale (#)",
+     "type": "StateError",
+     "message": "Bad state: Quote went stale (3)",
+     "assertionId": null,
+     "t": 4200
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,889 @@
+{
+  "format": "bugcapsule.conformance",
+  "version": 1,
+  "generatedBy": "packages/bug_capsule/tool/generate_conformance.dart",
+  "description": "Interaction dependencies (spec capsule-v2): typed values (§3.1), interaction keys (§5), payload encoding with the default redactor (§3, §7) and delivery scheduling (§5, lib/src/core/interactions.dart).",
+  "typedValues": [
+    {
+      "name": "null",
+      "encoded": null,
+      "reencoded": null,
+      "canonical": "null",
+      "hash": "77074ba43945e752"
+    },
+    {
+      "name": "string",
+      "encoded": "héllo",
+      "reencoded": "héllo",
+      "canonical": "\"héllo\"",
+      "hash": "ae752de68f6bc570"
+    },
+    {
+      "name": "small int",
+      "encoded": 42,
+      "reencoded": 42,
+      "canonical": "42",
+      "hash": "87e38583e4ce6c39"
+    },
+    {
+      "name": "int beyond 2^53",
+      "encoded": {
+        "$t": "int",
+        "v": "9007199254740993"
+      },
+      "reencoded": {
+        "$t": "int",
+        "v": "9007199254740993"
+      },
+      "canonical": "{\"$t\":\"int\",\"v\":\"9007199254740993\"}",
+      "hash": "1621eac0193f5c2a"
+    },
+    {
+      "name": "fractional double",
+      "encoded": 12.5,
+      "reencoded": 12.5,
+      "canonical": "12.5",
+      "hash": "f8903fbbe1ba6025"
+    },
+    {
+      "name": "integral double",
+      "encoded": {
+        "$t": "double",
+        "v": "80.0"
+      },
+      "reencoded": {
+        "$t": "double",
+        "v": "80.0"
+      },
+      "canonical": "{\"$t\":\"double\",\"v\":\"80.0\"}",
+      "hash": "43ec518af9fc38e0"
+    },
+    {
+      "name": "NaN",
+      "encoded": {
+        "$t": "double",
+        "v": "NaN"
+      },
+      "reencoded": {
+        "$t": "double",
+        "v": "NaN"
+      },
+      "canonical": "{\"$t\":\"double\",\"v\":\"NaN\"}",
+      "hash": "40a0fd6f4c9c5485"
+    },
+    {
+      "name": "negative zero",
+      "encoded": {
+        "$t": "double",
+        "v": "-0.0"
+      },
+      "reencoded": {
+        "$t": "double",
+        "v": "-0.0"
+      },
+      "canonical": "{\"$t\":\"double\",\"v\":\"-0.0\"}",
+      "hash": "33d0f7d3ed42f949"
+    },
+    {
+      "name": "bytes",
+      "encoded": {
+        "$t": "bytes",
+        "b64": "AAEC/w=="
+      },
+      "reencoded": {
+        "$t": "bytes",
+        "b64": "AAEC/w=="
+      },
+      "canonical": "{\"$t\":\"bytes\",\"b64\":\"AAEC/w==\"}",
+      "hash": "dc2042ae3de71d24"
+    },
+    {
+      "name": "int32 array",
+      "encoded": {
+        "$t": "i32",
+        "v": [
+          1,
+          -2,
+          3
+        ]
+      },
+      "reencoded": {
+        "$t": "i32",
+        "v": [
+          1,
+          -2,
+          3
+        ]
+      },
+      "canonical": "{\"$t\":\"i32\",\"v\":[1,-2,3]}",
+      "hash": "1221190eee1a5710"
+    },
+    {
+      "name": "int64 array",
+      "encoded": {
+        "$t": "i64",
+        "v": [
+          "1",
+          "-9223372036854775808"
+        ]
+      },
+      "reencoded": {
+        "$t": "i64",
+        "v": [
+          "1",
+          "-9223372036854775808"
+        ]
+      },
+      "canonical": "{\"$t\":\"i64\",\"v\":[\"1\",\"-9223372036854775808\"]}",
+      "hash": "2147d1cf04c11d45"
+    },
+    {
+      "name": "float64 array with infinity",
+      "encoded": {
+        "$t": "f64",
+        "v": [
+          1.5,
+          "Infinity"
+        ]
+      },
+      "reencoded": {
+        "$t": "f64",
+        "v": [
+          1.5,
+          "Infinity"
+        ]
+      },
+      "canonical": "{\"$t\":\"f64\",\"v\":[1.5,\"Infinity\"]}",
+      "hash": "82df8c912dcbf8e3"
+    },
+    {
+      "name": "map with int keys",
+      "encoded": {
+        "$t": "map",
+        "e": [
+          [
+            1,
+            "one"
+          ],
+          [
+            "two",
+            2
+          ]
+        ]
+      },
+      "reencoded": {
+        "$t": "map",
+        "e": [
+          [
+            1,
+            "one"
+          ],
+          [
+            "two",
+            2
+          ]
+        ]
+      },
+      "canonical": "{\"$t\":\"map\",\"e\":[[1,\"one\"],[\"two\",2]]}",
+      "hash": "fd79e0bf3348279d"
+    },
+    {
+      "name": "map with a $t key",
+      "encoded": {
+        "$t": "map",
+        "e": [
+          [
+            "$t",
+            "x"
+          ]
+        ]
+      },
+      "reencoded": {
+        "$t": "map",
+        "e": [
+          [
+            "$t",
+            "x"
+          ]
+        ]
+      },
+      "canonical": "{\"$t\":\"map\",\"e\":[[\"$t\",\"x\"]]}",
+      "hash": "7ddcfb2a06e6f1d4"
+    },
+    {
+      "name": "nested plain map",
+      "encoded": {
+        "b": [
+          true,
+          {
+            "$t": "double",
+            "v": "2.0"
+          }
+        ],
+        "a": {
+          "c": null
+        }
+      },
+      "reencoded": {
+        "b": [
+          true,
+          {
+            "$t": "double",
+            "v": "2.0"
+          }
+        ],
+        "a": {
+          "c": null
+        }
+      },
+      "canonical": "{\"a\":{\"c\":null},\"b\":[true,{\"$t\":\"double\",\"v\":\"2.0\"}]}",
+      "hash": "918cccb3ac679ab9"
+    }
+  ],
+  "keys": [
+    {
+      "scope": "plugins.example.com/battery",
+      "method": "getLevel",
+      "args": null,
+      "key": "plugins.example.com/battery|getLevel|77074ba43945e752"
+    },
+    {
+      "scope": "plugins.example.com/battery",
+      "method": "getLevel",
+      "args": {},
+      "key": "plugins.example.com/battery|getLevel|5465b8252e5b66c3"
+    },
+    {
+      "scope": "doc.get",
+      "method": null,
+      "args": {
+        "path": "carts/user-1"
+      },
+      "key": "doc.get||de64b7475604cbed"
+    },
+    {
+      "scope": "doc.get",
+      "method": null,
+      "args": {
+        "z": 1,
+        "a": [
+          {
+            "y": 2,
+            "x": 1
+          }
+        ]
+      },
+      "key": "doc.get||3f38974501eea447"
+    },
+    {
+      "scope": "plugins.example.com/nfc",
+      "method": "start",
+      "args": {
+        "$t": "map",
+        "e": [
+          [
+            1,
+            {
+              "$t": "bytes",
+              "b64": "AAEC"
+            }
+          ]
+        ]
+      },
+      "key": "plugins.example.com/nfc|start|0ffeae6655999b1c"
+    },
+    {
+      "scope": "wss://quotes.example.com/v1/stream?token=[REDACTED]",
+      "method": null,
+      "args": null,
+      "key": "wss://quotes.example.com/v1/stream?token=[REDACTED]||77074ba43945e752"
+    }
+  ],
+  "payloads": [
+    {
+      "name": "text frame",
+      "kind": "text",
+      "value": "{\"op\":\"subscribe\"}",
+      "payload": {
+        "mode": "full",
+        "replayable": true,
+        "value": "{\"op\":\"subscribe\"}",
+        "bytes": 18,
+        "kind": "text"
+      }
+    },
+    {
+      "name": "text frame with a token",
+      "kind": "text",
+      "value": "{\"op\":\"auth\",\"token\":\"abc123\"}",
+      "payload": {
+        "mode": "redacted",
+        "replayable": false,
+        "value": "{\"op\":\"auth\",\"token\":\"[REDACTED]\"}",
+        "bytes": 30,
+        "kind": "text"
+      }
+    },
+    {
+      "name": "binary frame without a serializer",
+      "kind": "binary",
+      "value": {
+        "$t": "bytes",
+        "b64": "AAECAwQ="
+      },
+      "payload": {
+        "mode": "metadata",
+        "replayable": false,
+        "bytes": 5,
+        "kind": "binary"
+      }
+    },
+    {
+      "name": "binary frame with captureBinary",
+      "kind": "binary",
+      "value": {
+        "$t": "bytes",
+        "b64": "AAECAwQ="
+      },
+      "captureBinary": true,
+      "payload": {
+        "mode": "full",
+        "replayable": true,
+        "value": {
+          "$t": "bytes",
+          "b64": "AAECAwQ="
+        },
+        "bytes": 5,
+        "kind": "binary"
+      }
+    },
+    {
+      "name": "value with a sensitive key",
+      "value": {
+        "uid": "u1",
+        "password": "hunter2"
+      },
+      "payload": {
+        "mode": "redacted",
+        "replayable": false,
+        "value": {
+          "uid": "u1",
+          "password": "[REDACTED]"
+        },
+        "bytes": 33
+      }
+    },
+    {
+      "name": "redacted value declared replayable",
+      "value": {
+        "uid": "u1",
+        "password": "hunter2"
+      },
+      "redactedReplayable": true,
+      "payload": {
+        "mode": "redacted",
+        "replayable": true,
+        "value": {
+          "uid": "u1",
+          "password": "[REDACTED]"
+        },
+        "bytes": 33
+      }
+    },
+    {
+      "name": "value over the payload limit",
+      "value": {
+        "blob": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "maxPayloadBytes": 32,
+      "payload": {
+        "mode": "truncated",
+        "replayable": false,
+        "bytes": 61
+      }
+    }
+  ],
+  "schedules": [
+    {
+      "name": "responses keep their recorded latency after a late connect",
+      "deps": [
+        "ws"
+      ],
+      "base": 0,
+      "events": [
+        {
+          "seq": 1,
+          "t": 100,
+          "type": "ws.connect",
+          "data": {
+            "dep": "ws",
+            "conn": "ws1",
+            "key": "K",
+            "occurrence": 0
+          }
+        },
+        {
+          "seq": 2,
+          "t": 180,
+          "type": "ws.open",
+          "data": {
+            "dep": "ws",
+            "conn": "ws1"
+          }
+        },
+        {
+          "seq": 3,
+          "t": 200,
+          "type": "ws.send",
+          "data": {
+            "dep": "ws",
+            "conn": "ws1",
+            "index": 0
+          }
+        },
+        {
+          "seq": 4,
+          "t": 260,
+          "type": "ws.message",
+          "data": {
+            "dep": "ws",
+            "conn": "ws1",
+            "index": 0
+          }
+        },
+        {
+          "seq": 5,
+          "t": 260,
+          "type": "ws.message",
+          "data": {
+            "dep": "ws",
+            "conn": "ws1",
+            "index": 1
+          }
+        },
+        {
+          "seq": 6,
+          "t": 900,
+          "type": "ws.message",
+          "data": {
+            "dep": "ws",
+            "conn": "ws1",
+            "index": 2
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": 0,
+          "op": "runStarted"
+        },
+        {
+          "at": 1000,
+          "op": "take",
+          "dep": "ws",
+          "type": "ws.connect",
+          "key": "K"
+        },
+        {
+          "at": 1000,
+          "op": "bind",
+          "scope": "ws:ws1"
+        },
+        {
+          "at": 1500,
+          "op": "takeNext",
+          "scope": "ws:ws1",
+          "types": [
+            "ws.send"
+          ]
+        }
+      ],
+      "matched": [
+        1,
+        3
+      ],
+      "deliveries": [
+        {
+          "seq": 2,
+          "at": 1080
+        },
+        {
+          "seq": 4,
+          "at": 1560
+        },
+        {
+          "seq": 5,
+          "at": 1560
+        },
+        {
+          "seq": 6,
+          "at": 2200
+        }
+      ],
+      "unused": []
+    },
+    {
+      "name": "concurrent identical connections are matched by order",
+      "deps": [
+        "ws"
+      ],
+      "base": 0,
+      "events": [
+        {
+          "seq": 1,
+          "t": 100,
+          "type": "ws.connect",
+          "data": {
+            "dep": "ws",
+            "conn": "a",
+            "key": "K",
+            "occurrence": 0
+          }
+        },
+        {
+          "seq": 2,
+          "t": 100,
+          "type": "ws.connect",
+          "data": {
+            "dep": "ws",
+            "conn": "b",
+            "key": "K",
+            "occurrence": 1
+          }
+        },
+        {
+          "seq": 3,
+          "t": 150,
+          "type": "ws.message",
+          "data": {
+            "dep": "ws",
+            "conn": "b",
+            "index": 0
+          }
+        },
+        {
+          "seq": 4,
+          "t": 170,
+          "type": "ws.message",
+          "data": {
+            "dep": "ws",
+            "conn": "a",
+            "index": 0
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": 0,
+          "op": "runStarted"
+        },
+        {
+          "at": 100,
+          "op": "take",
+          "dep": "ws",
+          "type": "ws.connect",
+          "key": "K"
+        },
+        {
+          "at": 100,
+          "op": "bind",
+          "scope": "ws:a"
+        },
+        {
+          "at": 100,
+          "op": "take",
+          "dep": "ws",
+          "type": "ws.connect",
+          "key": "K"
+        },
+        {
+          "at": 100,
+          "op": "bind",
+          "scope": "ws:b"
+        }
+      ],
+      "matched": [
+        1,
+        2
+      ],
+      "deliveries": [
+        {
+          "seq": 3,
+          "at": 150
+        },
+        {
+          "seq": 4,
+          "at": 170
+        }
+      ],
+      "unused": []
+    },
+    {
+      "name": "events wait for their subscription and are never early",
+      "deps": [
+        "ch"
+      ],
+      "base": 0,
+      "events": [
+        {
+          "seq": 1,
+          "t": 30,
+          "type": "platform.listen",
+          "data": {
+            "dep": "ch",
+            "channel": "c",
+            "sub": "s1",
+            "key": "L",
+            "occurrence": 0
+          }
+        },
+        {
+          "seq": 2,
+          "t": 35,
+          "type": "platform.event",
+          "data": {
+            "dep": "ch",
+            "channel": "c",
+            "sub": "s1",
+            "index": 0
+          }
+        },
+        {
+          "seq": 3,
+          "t": 36,
+          "type": "platform.event",
+          "data": {
+            "dep": "ch",
+            "channel": "c",
+            "sub": "s1",
+            "index": 1
+          }
+        },
+        {
+          "seq": 4,
+          "t": 600,
+          "type": "platform.cancel",
+          "data": {
+            "dep": "ch",
+            "channel": "c",
+            "sub": "s1"
+          }
+        },
+        {
+          "seq": 5,
+          "t": 700,
+          "type": "platform.done",
+          "data": {
+            "dep": "ch",
+            "channel": "c",
+            "sub": "s1"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": 0,
+          "op": "runStarted"
+        },
+        {
+          "at": 400,
+          "op": "take",
+          "dep": "ch",
+          "type": "platform.listen",
+          "key": "L"
+        },
+        {
+          "at": 402,
+          "op": "bind",
+          "scope": "platform.sub:s1"
+        }
+      ],
+      "matched": [
+        1
+      ],
+      "deliveries": [
+        {
+          "seq": 2,
+          "at": 405
+        },
+        {
+          "seq": 3,
+          "at": 406
+        }
+      ],
+      "unused": [
+        {
+          "type": "platform.unused",
+          "detail": "platform.sub:s1: platform.cancel, platform.done from 600ms"
+        }
+      ]
+    },
+    {
+      "name": "platform-to-app calls follow the replay clock once handled",
+      "deps": [
+        "ch"
+      ],
+      "base": 0,
+      "events": [
+        {
+          "seq": 1,
+          "t": -20,
+          "type": "platform.call",
+          "data": {
+            "dep": "ch",
+            "channel": "push",
+            "call": "c0",
+            "dir": "platform",
+            "key": "P",
+            "occurrence": 0
+          }
+        },
+        {
+          "seq": 2,
+          "t": 500,
+          "type": "platform.call",
+          "data": {
+            "dep": "ch",
+            "channel": "push",
+            "call": "c1",
+            "dir": "platform",
+            "key": "P",
+            "occurrence": 1
+          }
+        },
+        {
+          "seq": 3,
+          "t": 501,
+          "type": "platform.result",
+          "data": {
+            "dep": "ch",
+            "channel": "push",
+            "call": "c1"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": 10,
+          "op": "bind",
+          "scope": "platform.in:push"
+        },
+        {
+          "at": 50,
+          "op": "runStarted"
+        },
+        {
+          "at": 560,
+          "op": "takeNext",
+          "scope": "platform.call:c1",
+          "types": [
+            "platform.result",
+            "platform.error"
+          ]
+        }
+      ],
+      "matched": [
+        3
+      ],
+      "deliveries": [
+        {
+          "seq": 1,
+          "at": 10
+        },
+        {
+          "seq": 2,
+          "at": 550
+        }
+      ],
+      "unused": []
+    },
+    {
+      "name": "unmatched interactions before and after the failure",
+      "deps": [
+        "ws"
+      ],
+      "base": 0,
+      "failureT": 500,
+      "events": [
+        {
+          "seq": 1,
+          "t": 100,
+          "type": "ws.connect",
+          "data": {
+            "dep": "ws",
+            "conn": "ws1",
+            "key": "K",
+            "occurrence": 0
+          }
+        },
+        {
+          "seq": 2,
+          "t": 150,
+          "type": "ws.message",
+          "data": {
+            "dep": "ws",
+            "conn": "ws1",
+            "index": 0
+          }
+        },
+        {
+          "seq": 3,
+          "t": 400,
+          "type": "ws.send",
+          "data": {
+            "dep": "ws",
+            "conn": "ws1",
+            "index": 0
+          }
+        },
+        {
+          "seq": 4,
+          "t": 900,
+          "type": "ws.send",
+          "data": {
+            "dep": "ws",
+            "conn": "ws1",
+            "index": 1
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": 0,
+          "op": "runStarted"
+        },
+        {
+          "at": 100,
+          "op": "take",
+          "dep": "ws",
+          "type": "ws.connect",
+          "key": "K"
+        },
+        {
+          "at": 100,
+          "op": "bind",
+          "scope": "ws:ws1"
+        }
+      ],
+      "matched": [
+        1
+      ],
+      "deliveries": [
+        {
+          "seq": 2,
+          "at": 150
+        }
+      ],
+      "unused": [
+        {
+          "type": "ws.unused",
+          "detail": "ws:ws1: ws.send from 400ms"
+        },
+        {
+          "type": "ws.unusedAfterFailure",
+          "detail": "ws:ws1: ws.send from 900ms"
+        }
+      ]
+    }
+  ]
+}

@@ -22,18 +22,52 @@ public enum Verdict: String, Sendable {
 public enum AttemptStatus: String, Sendable { case reproduced, clean, invalid }
 
 public enum DivergencePolicy {
-    public static let expected: Set<String> = ["build.gitSha", "screen.size", "network.unused"]
+    /// Expected differences. Everything else, including divergence types this
+    /// version does not know, is material.
+    public static let expected: Set<String> = [
+        "build.gitSha", "screen.size", "network.unused",
+        // capsule-v2 §5: interactions recorded after the failure.
+        "ws.unusedAfterFailure", "platform.unusedAfterFailure", "native.unusedAfterFailure",
+    ]
     public static func isMaterial(_ d: Divergence) -> Bool { !expected.contains(d.type) }
+
+    /// The capsule-v2 §8 reason code of a material interaction divergence,
+    /// or nil for other divergence types.
+    public static func reasonCode(_ type: String) -> String? {
+        if type == "dependency.live" || type == "dependency.late" { return "interaction.live" }
+        guard let dot = type.firstIndex(of: ".") else { return nil }
+        let family = type[..<dot]
+        guard family == "ws" || family == "platform" || family == "native" else { return nil }
+        switch type[type.index(after: dot)...] {
+        case "unused", "undelivered": return "interaction.missing"
+        case "unrecorded": return "interaction.unexpected"
+        case "mismatch": return "interaction.mismatch"
+        case "noPayload": return "interaction.incomplete"
+        case "unrestored": return "interaction.unrestored"
+        default: return nil
+        }
+    }
 }
 
 public struct AttemptAssessment: Sendable {
     public let report: ReplayReport
     public let status: AttemptStatus
     public let reasons: [String]
+    /// Machine-readable codes for `reasons` that concern interaction
+    /// dependencies (capsule-v2 §8), e.g. `interaction.missing`. Sorted.
+    public let reasonCodes: [String]
+
+    public init(report: ReplayReport, status: AttemptStatus, reasons: [String], reasonCodes: [String] = []) {
+        self.report = report
+        self.status = status
+        self.reasons = reasons
+        self.reasonCodes = reasonCodes
+    }
 }
 
 public func assessAttempt(_ r: ReplayReport) -> AttemptAssessment {
     var reasons: [String] = []
+    var codes = Set<String>()
     switch r.outcome {
     case .reproduced:
         if r.expectedSignature == nil {
@@ -43,6 +77,7 @@ public func assessAttempt(_ r: ReplayReport) -> AttemptAssessment {
         return AttemptAssessment(report: r, status: .reproduced, reasons: [])
     case .incompatible:
         reasons.append("incompatible: \(r.message ?? "capsule cannot run against this build")")
+        if r.message?.hasPrefix("dependency.") == true { codes.insert("dependency.unsupported") }
     case .noAssertion:
         reasons.append("capsule has no failure assertion")
     case .error:
@@ -60,9 +95,11 @@ public func assessAttempt(_ r: ReplayReport) -> AttemptAssessment {
         for type in material {
             let n = r.divergences.filter { $0.type == type }.count
             reasons.append("divergence \(type)\(n > 1 ? " ×\(n)" : "")")
+            if let code = DivergencePolicy.reasonCode(type) { codes.insert(code) }
         }
     }
-    return AttemptAssessment(report: r, status: reasons.isEmpty ? .clean : .invalid, reasons: reasons)
+    return AttemptAssessment(
+        report: r, status: reasons.isEmpty ? .clean : .invalid, reasons: reasons, reasonCodes: codes.sorted())
 }
 
 public struct RunEvaluation: Sendable {
@@ -71,6 +108,8 @@ public struct RunEvaluation: Sendable {
     public let verdict: Verdict
     public let attempts: [AttemptAssessment]
     public let reasons: [String]
+    /// Interaction reason codes over all attempts (capsule-v2 §8), sorted.
+    public let reasonCodes: [String]
 
     public var reproductions: Int { attempts.filter { $0.status == .reproduced }.count }
     public var cleanAttempts: Int { attempts.filter { $0.status == .clean }.count }
@@ -108,5 +147,7 @@ public func evaluateRun(_ kind: RunKind, requestedAttempts: Int, reports: [Repla
     } else {
         verdict = c == n ? .fixed : (r > 0 && c > 0) ? .flaky : r > 0 ? .stillFailing : .inconclusive
     }
-    return RunEvaluation(kind: kind, requestedAttempts: n, verdict: verdict, attempts: attempts, reasons: reasons)
+    return RunEvaluation(
+        kind: kind, requestedAttempts: n, verdict: verdict, attempts: attempts, reasons: reasons,
+        reasonCodes: Set(attempts.flatMap(\.reasonCodes)).sorted())
 }

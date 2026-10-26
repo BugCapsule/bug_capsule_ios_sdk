@@ -125,6 +125,110 @@ final class ConformanceTests: XCTestCase {
             XCTAssertEqual(e.exitCode, c["exitCode"]!.intValue!, name)
             XCTAssertEqual(e.validAttempts, c["validAttempts"]!.intValue!, name)
             XCTAssertEqual(e.attempts.map(\.status.rawValue), c["attemptStatuses"]!.arrayValue!.compactMap(\.stringValue), name)
+            XCTAssertEqual(e.reasonCodes, c["reasonCodes"]!.arrayValue!.compactMap(\.stringValue), name)
         }
+    }
+
+    // MARK: interactions.json (capsule-v2)
+
+    func testInteractionTypedValues() throws {
+        let cases = try conformance("interactions")["typedValues"]!.arrayValue!
+        XCTAssertGreaterThanOrEqual(cases.count, 15)
+        for c in cases {
+            let name = c["name"]!.stringValue!
+            let encoded = c["encoded"]!
+            let reencoded = TypedValue.encode(TypedValue.decode(encoded))
+            // Tagged map entries keep their order (arrays); plain objects
+            // decode to dictionaries and re-encode with sorted keys.
+            XCTAssertEqual(reencoded, c["reencoded"]!, name)
+            XCTAssertEqual(
+                RequestKeyBuilder.canonicalJSON(reencoded), RequestKeyBuilder.canonicalJSON(c["reencoded"]!), name)
+            XCTAssertEqual(RequestKeyBuilder.canonicalJSON(encoded), c["canonical"]!.stringValue!, name)
+            XCTAssertEqual(RequestKeyBuilder.hash(RequestKeyBuilder.canonicalJSON(encoded)), c["hash"]!.stringValue!, name)
+        }
+    }
+
+    func testInteractionKeys() throws {
+        let cases = try conformance("interactions")["keys"]!.arrayValue!
+        XCTAssertGreaterThanOrEqual(cases.count, 6)
+        for c in cases {
+            XCTAssertEqual(
+                interactionKey(c["scope"]!.stringValue!, c["method"]?.stringValue, c["args"] ?? .null),
+                c["key"]!.stringValue!)
+        }
+    }
+
+    func testInteractionPayloads() throws {
+        let cases = try conformance("interactions")["payloads"]!.arrayValue!
+        XCTAssertGreaterThanOrEqual(cases.count, 7)
+        let redactor = Redactor()
+        for c in cases {
+            let name = c["name"]!.stringValue!
+            let encoder = PayloadEncoder(
+                redactor: { redactor },
+                budget: PayloadBudget(InteractionLimits(maxPayloadBytes: c["maxPayloadBytes"]?.intValue ?? 64 * 1024)),
+                stats: DependencyStats(), now: { 0 }, captureBinary: c["captureBinary"]?.boolValue ?? false,
+                redactedReplayable: c["redactedReplayable"]?.boolValue ?? false)
+            let payload = encoder.encode(TypedValue.decode(c["value"]!), kind: c["kind"]?.stringValue)
+            XCTAssertEqual(payload.json, c["payload"]!, name)
+        }
+    }
+
+    func testInteractionSchedules() throws {
+        let cases = try conformance("interactions")["schedules"]!.arrayValue!
+        XCTAssertGreaterThanOrEqual(cases.count, 5)
+        for c in cases {
+            let name = c["name"]!.stringValue!
+            let result = runSchedule(c)
+            XCTAssertEqual(result.matched, c["matched"]!, name)
+            XCTAssertEqual(result.deliveries, c["deliveries"]!, name)
+            XCTAssertEqual(result.unused, c["unused"]!, name)
+        }
+    }
+
+    /// The conformance driver of `generate_conformance.dart` (`_schedule`).
+    private func runSchedule(_ c: JSONValue) -> (matched: JSONValue, deliveries: JSONValue, unused: JSONValue) {
+        var seq = 0
+        let events = c["events"]!.arrayValue!.map { e -> BugCapsuleEvent in
+            seq += 1
+            return BugCapsuleEvent(seq: seq, t: e["t"]!.intValue!, type: e["type"]!.stringValue!, data: e["data"]!.objectValue!)
+        }
+        let clock = ManualClock()
+        var deliveries: [JSONValue] = []
+        let script = InteractionScript(
+            events: events, dependencies: Set(c["deps"]!.arrayValue!.compactMap(\.stringValue)), clock: { clock.now },
+            base: c["base"]!.intValue!)
+        let deliver: (RecordedInteraction) -> Void = { r in deliveries.append(["seq": .int(r.event.seq), "at": .int(clock.now)]) }
+        func advance(to target: Int) {
+            while let next = script.nextDueAt, next <= target {
+                if next > clock.now { clock.now = next }
+                script.pump()
+            }
+            clock.now = target
+            script.pump()
+        }
+        var matched: [JSONValue] = []
+        for step in c["steps"]!.arrayValue! {
+            advance(to: step["at"]!.intValue!)
+            switch step["op"]!.stringValue! {
+            case "runStarted": script.runStarted(at: clock.now)
+            case "bind": script.bind(step["scope"]!.stringValue!, deliver)
+            case "unbind": script.unbind(step["scope"]!.stringValue!)
+            case "take":
+                let r = script.take(dep: step["dep"]!.stringValue!, type: step["type"]!.stringValue!, key: step["key"]!.stringValue!)
+                matched.append(r.map { .int($0.event.seq) } ?? .null)
+            case "takeNext":
+                let r = script.takeNext(
+                    scope: step["scope"]!.stringValue!, types: Set(step["types"]!.arrayValue!.compactMap(\.stringValue)))
+                matched.append(r.map { .int($0.event.seq) } ?? .null)
+            default: XCTFail("unknown op")
+            }
+            script.pump()
+        }
+        while let next = script.nextDueAt { advance(to: next) }
+        let unused = script.unused(failureT: c["failureT"]?.intValue).map { t, d -> JSONValue in
+            ["type": .string(t), "detail": .string(d)]
+        }
+        return (.array(matched), .array(deliveries), .array(unused))
     }
 }

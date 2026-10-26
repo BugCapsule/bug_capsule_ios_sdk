@@ -1,0 +1,271 @@
+{
+ "description": "native.call carries its operation id.",
+ "expect": "invalid",
+ "errorPath": "$.events[2].data.op",
+ "document": {
+  "format": "bugcapsule.capsule",
+  "specVersion": 2,
+  "manifest": {
+   "capsuleId": "5a5a0000-0000-4000-8000-0000000000a1",
+   "createdAt": "2026-10-26T10:00:00.000Z",
+   "mode": "qa",
+   "app": {
+    "id": "com.example.trader",
+    "version": "2.0.0",
+    "build": "200"
+   },
+   "source": {
+    "gitSha": "b1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+    "dirty": false
+   },
+   "sdk": {
+    "name": "bug_capsule_flutter",
+    "version": "0.5.0-beta.1"
+   },
+   "stateSchemaVersion": 1,
+   "platform": {
+    "os": "android",
+    "osVersion": "16",
+    "locale": "en_US",
+    "screen": {
+     "width": 411.0,
+     "height": 914.0,
+     "pixelRatio": 2.625
+    },
+    "dartVersion": "3.11.0"
+   },
+   "session": {
+    "id": "s-v2",
+    "startedAt": "2026-10-26T09:59:50.000Z",
+    "wallClockAtAnchorMs": 1792922390000,
+    "seed": 7,
+    "durationMs": 10000
+   },
+   "failure": {
+    "kind": "exception",
+    "signature": "exception:StateError:Bad state: Quote went stale (#)",
+    "type": "StateError",
+    "message": "Bad state: Quote went stale (3)",
+    "assertionId": null,
+    "t": 4200
+   },
+   "eligibility": {
+    "status": "eligible",
+    "missing": []
+   },
+   "integrations": [
+    "web_socket"
+   ],
+   "stats": {
+    "eventCount": 9,
+    "droppedEvents": 0,
+    "checkpointKind": "launch"
+   },
+   "labels": {},
+   "dependencies": [
+    {
+     "id": "auth",
+     "kind": "native",
+     "adapter": "bug_capsule.firebase_auth",
+     "adapterVersion": "0.5.0-beta.1",
+     "schema": 1,
+     "required": true,
+     "coverage": "complete",
+     "operations": [
+      "authStateChanges"
+     ],
+     "tested": [
+      {
+       "package": "firebase_auth",
+       "version": "6.1.1"
+      }
+     ]
+    },
+    {
+     "id": "firestore",
+     "kind": "native",
+     "adapter": "bug_capsule.cloud_firestore",
+     "adapterVersion": "0.5.0-beta.1",
+     "schema": 1,
+     "required": true,
+     "coverage": "complete",
+     "operations": [
+      "doc.get",
+      "doc.snapshots",
+      "doc.set"
+     ]
+    },
+    {
+     "id": "analytics",
+     "kind": "native",
+     "adapter": "example.analytics",
+     "adapterVersion": "1.0.0",
+     "schema": 1,
+     "required": false,
+     "coverage": "diagnostic"
+    }
+   ]
+  },
+  "checkpoint": {
+   "kind": "launch",
+   "t": -300,
+   "wallClockMs": 1792922389700,
+   "afterSeq": 0,
+   "data": {}
+  },
+  "events": [
+   {
+    "seq": 1,
+    "t": 5,
+    "type": "native.subscribe",
+    "data": {
+     "dep": "auth",
+     "sub": "n1",
+     "operation": "authStateChanges",
+     "instance": "[DEFAULT]",
+     "args": {
+      "mode": "full",
+      "replayable": true,
+      "value": null
+     },
+     "key": "authStateChanges||af63bd4c8601b7df",
+     "occurrence": 0
+    }
+   },
+   {
+    "seq": 2,
+    "t": 40,
+    "type": "native.event",
+    "data": {
+     "dep": "auth",
+     "sub": "n1",
+     "index": 0,
+     "value": {
+      "mode": "redacted",
+      "replayable": true,
+      "value": {
+       "uid": "user-1",
+       "isAnonymous": false,
+       "email": "[REDACTED]"
+      }
+     }
+    }
+   },
+   {
+    "seq": 3,
+    "t": 100,
+    "type": "native.call",
+    "data": {
+     "dep": "firestore",
+     "operation": "doc.get",
+     "instance": "[DEFAULT]",
+     "args": {
+      "mode": "full",
+      "replayable": true,
+      "value": {
+       "path": "carts/user-1"
+      }
+     },
+     "key": "doc.get||5c3d2e1f0a9b8c7d",
+     "occurrence": 0
+    }
+   },
+   {
+    "seq": 4,
+    "t": 160,
+    "type": "native.result",
+    "data": {
+     "dep": "firestore",
+     "op": "o1",
+     "value": {
+      "mode": "full",
+      "replayable": true,
+      "value": {
+       "id": "user-1",
+       "exists": true,
+       "data": {
+        "total": -3
+       },
+       "metadata": {
+        "fromCache": true,
+        "hasPendingWrites": false
+       }
+      }
+     }
+    }
+   },
+   {
+    "seq": 5,
+    "t": 170,
+    "type": "native.call",
+    "data": {
+     "dep": "firestore",
+     "op": "o2",
+     "operation": "doc.set",
+     "args": {
+      "mode": "full",
+      "replayable": true,
+      "value": {
+       "path": "carts/user-1",
+       "data": {
+        "total": 0
+       }
+      }
+     },
+     "key": "doc.set||9f8e7d6c5b4a3921",
+     "occurrence": 0,
+     "parent": "o1"
+    }
+   },
+   {
+    "seq": 6,
+    "t": 210,
+    "type": "native.error",
+    "data": {
+     "dep": "firestore",
+     "op": "o2",
+     "code": "permission-denied",
+     "message": "Missing or insufficient permissions."
+    }
+   },
+   {
+    "seq": 7,
+    "t": 220,
+    "type": "native.call",
+    "data": {
+     "dep": "analytics",
+     "op": "o3",
+     "operation": "logEvent",
+     "args": {
+      "mode": "omitted",
+      "replayable": false
+     },
+     "key": "logEvent||af63bd4c8601b7df",
+     "occurrence": 0
+    }
+   },
+   {
+    "seq": 8,
+    "t": 900,
+    "type": "native.cancel",
+    "data": {
+     "dep": "auth",
+     "sub": "n1"
+    }
+   },
+   {
+    "seq": 9,
+    "t": 4200,
+    "type": "failure",
+    "data": {
+     "kind": "exception",
+     "signature": "exception:StateError:Bad state: Quote went stale (#)",
+     "type": "StateError",
+     "message": "Bad state: Quote went stale (3)",
+     "assertionId": null,
+     "t": 4200
+    }
+   }
+  ]
+ }
+}

@@ -10,13 +10,17 @@ public enum CapsuleLimits {
     public static let maxRedactionKeys = 500
     public static let maxCapabilities = 200
     public static let maxFrameworks = 20
+    public static let maxDependencies = 100
+    public static let maxDependencyItems = 100
+    public static let maxTested = 20
     /// JSON values in the whole document, counted before parsing.
     public static let maxJSONValues = 4_000_000
 }
 
-/// Structural validation of a decoded capsule document, the same rules as
-/// the Dart reader and the backend. Returns `nil` when valid, otherwise
-/// `<json path> <reason>`.
+/// Structural validation of a decoded capsule document (spec v1 and v2), the
+/// same rules as the Dart reader and the backend. Returns `nil` when valid,
+/// otherwise `<json path> <reason>`. Does not check `specVersion` against
+/// the reader's version (the codec does that, with its own message).
 public func validateCapsuleDocument(_ doc: JSONValue) -> String? {
     do {
         try CapsuleValidator.validate(doc)
@@ -141,7 +145,7 @@ enum CapsuleValidator {
         let doc = try object(root, "$")
         try depth(root)
         if doc["format"] != .string("bugcapsule.capsule") { throw fail("$.format", "must be \"bugcapsule.capsule\"") }
-        try int(doc, "specVersion", "$", min: 1)
+        let specVersion = try int(doc, "specVersion", "$", min: 1)
 
         let mp = "$.manifest"
         let m = try object(doc["manifest"], mp)
@@ -252,13 +256,28 @@ enum CapsuleValidator {
             }
         }
 
+        // v1 extension (monitoring-v1 §4.3): the linked monitoring event.
+        if let monitoring = try optObject(m, "monitoring", mp) {
+            try string(monitoring, "eventId", "\(mp).monitoring", max: 100)
+            try optString(monitoring, "traceId", "\(mp).monitoring", max: 32)
+            try optString(monitoring, "release", "\(mp).monitoring", max: 200)
+            try optString(monitoring, "environment", "\(mp).monitoring", max: 64)
+        }
+
+        // capsule-v2 §2: required interaction dependencies.
+        var dependencies: Set<String>?
+        if specVersion >= 2 { dependencies = try validateDependencies(m["dependencies"], "\(mp).dependencies") }
+
         let cp = "$.checkpoint"
         let checkpoint = try object(doc["checkpoint"], cp)
         try oneOf(checkpoint, "kind", cp, ["launch", "periodic"])
         try int(checkpoint, "t", cp)
         try int(checkpoint, "wallClockMs", cp)
         try optInt(checkpoint, "afterSeq", cp, min: 0)
-        _ = try optObject(checkpoint, "data", cp)
+        let checkpointData = try optObject(checkpoint, "data", cp)
+        if dependencies != nil, let checkpointData {
+            try validateOpenInteractions(checkpointData, "\(cp).data")
+        }
 
         let events = try array(doc["events"], "$.events", CapsuleLimits.maxEvents)
         var lastSeq: Int?
@@ -272,6 +291,7 @@ enum CapsuleValidator {
             let type = try string(e, "type", path, max: 100)
             let data = try optObject(e, "data", path) ?? JSONObject()
             try validateEventData(type, data, "\(path).data")
+            if let dependencies { try validateInteraction(type, data, "\(path).data", dependencies) }
         }
     }
 
@@ -313,6 +333,129 @@ enum CapsuleValidator {
             try optString(d, "value", path, max: 100_000)
         case "lifecycle":
             try string(d, "state", path, max: 20)
+        default:
+            break
+        }
+    }
+
+    // MARK: capsule-v2
+
+    static func validateDependencies(_ value: JSONValue?, _ path: String) throws -> Set<String> {
+        let list = try array(value, path, CapsuleLimits.maxDependencies)
+        var ids = Set<String>()
+        for (i, item) in list.enumerated() {
+            let p = "\(path)[\(i)]"
+            let d = try object(item, p)
+            let id = try string(d, "id", p, max: 100)
+            if !ids.insert(id).inserted { throw fail("\(p).id", "must be unique") }
+            try string(d, "kind", p, max: 50)
+            try string(d, "adapter", p, max: 200)
+            try string(d, "adapterVersion", p, max: 100)
+            try int(d, "schema", p, min: 1)
+            guard case .bool? = d["required"] else { throw fail("\(p).required", "must be a boolean") }
+            try oneOf(d, "coverage", p, ["complete", "partial", "diagnostic"])
+            if let v = d["operations"], !v.isNull {
+                let ops = try array(v, "\(p).operations", CapsuleLimits.maxDependencyItems)
+                for (j, op) in ops.enumerated() {
+                    guard case .string(let s) = op, !s.isEmpty, s.dartLength <= 200 else {
+                        throw fail("\(p).operations[\(j)]", "must be a non-empty string")
+                    }
+                }
+            }
+            if let v = d["tested"], !v.isNull {
+                let tested = try array(v, "\(p).tested", CapsuleLimits.maxTested)
+                for (j, t) in tested.enumerated() {
+                    let o = try object(t, "\(p).tested[\(j)]")
+                    try string(o, "package", "\(p).tested[\(j)]", max: 200)
+                    try string(o, "version", "\(p).tested[\(j)]", max: 100)
+                }
+            }
+            if let v = d["gaps"], !v.isNull {
+                let gaps = try array(v, "\(p).gaps", CapsuleLimits.maxDependencyItems)
+                for (j, g) in gaps.enumerated() {
+                    let o = try object(g, "\(p).gaps[\(j)]")
+                    try string(o, "code", "\(p).gaps[\(j)]", max: 100)
+                    try optInt(o, "count", "\(p).gaps[\(j)]", min: 0)
+                    try optString(o, "detail", "\(p).gaps[\(j)]", max: 2000)
+                }
+            }
+            if let stats = try optObject(d, "stats", p) {
+                for k in ["events", "payloadBytes", "dropped", "truncated"] { try optInt(stats, k, "\(p).stats", min: 0) }
+            }
+        }
+        return ids
+    }
+
+    static func validateOpenInteractions(_ data: JSONObject, _ path: String) throws {
+        guard let interactions = try optObject(data, "interactions", path),
+            let openV = interactions["open"], !openV.isNull
+        else { return }
+        let open = try array(openV, "\(path).interactions.open", CapsuleLimits.maxDependencyItems * 10)
+        for (i, item) in open.enumerated() {
+            let p = "\(path).interactions.open[\(i)]"
+            let o = try object(item, p)
+            try string(o, "dep", p, max: 100)
+            try string(o, "type", p, max: 50)
+            try string(o, "id", p, max: 200)
+            try optBool(o, "restorable", p)
+        }
+    }
+
+    static let payloadModes = ["full", "redacted", "metadata", "omitted", "truncated"]
+
+    static func payload(_ d: JSONObject, _ key: String, _ path: String) throws {
+        guard let v = d[key], !v.isNull else { return }
+        let p = try object(v, "\(path).\(key)")
+        try oneOf(p, "mode", "\(path).\(key)", payloadModes)
+        guard case .bool? = p["replayable"] else { throw fail("\(path).\(key).replayable", "must be a boolean") }
+        try optInt(p, "bytes", "\(path).\(key)", min: 0)
+        try optString(p, "kind", "\(path).\(key)", max: 20)
+    }
+
+    /// capsule-v2 §9: fields replay reads from interaction events.
+    static func validateInteraction(_ type: String, _ d: JSONObject, _ path: String, _ dependencies: Set<String>) throws {
+        guard InteractionTypes.isInteraction(type) else { return }
+        let dep = try string(d, "dep", path, max: 100)
+        if !dependencies.contains(dep) { throw fail("\(path).dep", "must name a declared dependency") }
+        for field in ["payload", "args", "value", "details"] { try payload(d, field, path) }
+        func keyed() throws {
+            try string(d, "key", path, max: 10000)
+            try int(d, "occurrence", path, min: 0)
+        }
+        if type.hasPrefix("ws.") { try string(d, "conn", path, max: 200) }
+        switch type {
+        case "ws.connect":
+            try keyed()
+        case "ws.send", "ws.message":
+            try int(d, "index", path, min: 0)
+        case "ws.close":
+            try oneOf(d, "initiator", path, ["client", "server", "unknown"])
+            try optInt(d, "code", path)
+        case "platform.call":
+            try string(d, "channel", path, max: 1000)
+            try string(d, "call", path, max: 200)
+            try oneOf(d, "dir", path, ["dart", "platform"])
+            try keyed()
+        case "platform.result", "platform.error":
+            try string(d, "channel", path, max: 1000)
+            try string(d, "call", path, max: 200)
+        case "platform.listen":
+            try string(d, "channel", path, max: 1000)
+            try string(d, "sub", path, max: 200)
+            try keyed()
+        case "platform.event", "platform.cancel", "platform.done":
+            try string(d, "channel", path, max: 1000)
+            try string(d, "sub", path, max: 200)
+        case "native.call":
+            try string(d, "op", path, max: 200)
+            try keyed()
+        case "native.result":
+            try string(d, "op", path, max: 200)
+        case "native.subscribe":
+            try string(d, "sub", path, max: 200)
+            try keyed()
+        case "native.event", "native.cancel", "native.done":
+            try string(d, "sub", path, max: 200)
         default:
             break
         }

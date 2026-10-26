@@ -6,7 +6,9 @@ public struct CapsuleFormatError: Error, CustomStringConvertible, Equatable, Sen
     public var description: String { "CapsuleFormatError: \(message)" }
 }
 
-/// Reads and writes `.bugcapsule` files (gzip-compressed UTF-8 JSON, spec v1).
+/// Reads and writes `.bugcapsule` files (gzip-compressed UTF-8 JSON). Reads
+/// spec v1 and v2; writes v2 only when the capsule has interaction
+/// dependencies (capsule-v2 §1), v1 otherwise.
 ///
 /// Decoding is bounded at every step: gzip output is capped while it is
 /// inflated, JSON values are counted before parsing (4,000,000), parsing
@@ -14,14 +16,18 @@ public struct CapsuleFormatError: Error, CustomStringConvertible, Equatable, Sen
 /// model is built.
 public enum CapsuleCodec {
     public static let format = "bugcapsule.capsule"
-    public static let specVersion = 1
+    /// The newest spec version this reader implements.
+    public static let specVersion = 2
     /// Same ceiling as the Dart reader (above the backend's 64 MB upload limit).
     public static let maxDecompressedBytes = 200 * 1024 * 1024
+
+    /// The version a capsule is written as: 2 with dependencies, else 1.
+    public static func writeVersion(_ capsule: Capsule) -> Int { capsule.manifest.dependencies.isEmpty ? 1 : 2 }
 
     public static func toJSON(_ capsule: Capsule) -> JSONValue {
         [
             "format": .string(format),
-            "specVersion": .int(specVersion),
+            "specVersion": .int(writeVersion(capsule)),
             "manifest": capsule.manifest.json,
             "checkpoint": capsule.checkpoint.json,
             "events": .array(capsule.events.map(\.json)),
@@ -82,7 +88,7 @@ public enum CapsuleCodec {
             throw CapsuleFormatError("malformed capsule: \(problem)")
         }
         return Capsule(
-            manifest: CapsuleManifest(json: json["manifest"]!.objectValue!),
+            manifest: CapsuleManifest(json: json["manifest"]!.objectValue!, specVersion: version),
             checkpoint: Checkpoint(json: json["checkpoint"]!.objectValue!),
             events: (json["events"]!.arrayValue!).map { BugCapsuleEvent(json: $0.objectValue!) })
     }

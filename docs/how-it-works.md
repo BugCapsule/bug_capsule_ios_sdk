@@ -35,6 +35,9 @@ at [docs.bugcapsule.com/capsule-format](https://docs.bugcapsule.com/capsule-form
 | `BugCapsule.observe(_:)`, `BugCapsuleNavigation.shared.setRoute`, `.bugCapsuleRoute(_:)`, `BugCapsuleRouteNaming` | Navigation. |
 | `BugCapsule.registerState(_:snapshot:restore:)`, `stateChanged` | App state in checkpoints (`state`). |
 | `BugCapsuleWindow`, `BugCapsule.recordTouches(_:in:)` | Explicit pointer capture. |
+| `BugCapsuleWebSockets`, `BugCapsuleWebSocket` | WebSocket capture/replay (see [Interaction dependencies](#interaction-dependencies-websockets-and-native-adapters)). |
+| `BugCapsuleNativeAdapter`, `BugCapsuleNativeIntegration`, `BugCapsuleNativeBridge` | Adapters for third-party SDKs. |
+| `BugCapsuleAdapterConformance.run` | Offline conformance run for an adapter. |
 | `BugCapsuleIntegration` | Write your own integration (name, snapshot, restore, eligibility). |
 
 Integrations and their checkpoint keys: `urlsession` (events only),
@@ -59,6 +62,8 @@ Frameworks seen are listed in `manifest.runtime.frameworks` (`uikit`,
 | `navigation.uikit`, `navigation.explicit` | explicit | Through `observe` / `setRoute`. |
 | `clock.virtual`, `random.seeded` | explicit | Only through `BugCapsule.now()` / `BugCapsule.random`. |
 | `crash.uncaught` | partial | NSException only, best effort, uploaded next launch. |
+| `interaction.websocket` | supported | Through `BugCapsuleWebSocket` (adapter `bugcapsule-ios.urlsession-websocket`). |
+| `interaction.native.<adapter>` | supported | One per installed native adapter. |
 
 ## Failure capture boundaries
 
@@ -431,6 +436,99 @@ the explicit pair wins over the token.
 `project.yml` with XcodeGen (`xcodegen generate`); the generated project is
 checked in.
 
+## Interaction dependencies: WebSockets and native adapters
+
+Capsules that recorded a WebSocket or a native adapter are written as capsule
+spec v2: `manifest.dependencies` lists each dependency (adapter id, version,
+payload schema, coverage, gaps, stats) and the interaction events carry
+`data.dep`. Capsules without one stay spec v1. The SDK reads both and rejects
+newer versions.
+
+**Payloads.** Every message body, argument and result is a payload object
+(`mode`: `full`, `redacted`, `metadata`, `omitted`, `truncated`;
+`replayable`). Values are typed: integers beyond 2^53, integral doubles, NaN
+and -0.0, `Data`, `[Int32]`/`[Int64]`/`[Float]`/`[Double]` and maps with
+non-string keys (`TypedMap`) survive the round trip (`TypedValue`). The SDK
+redactor runs first; a redacted payload is replayable only when the adapter
+declares it (`redactedReplayable`). Bounds: 64 KiB per payload (larger:
+`truncated`), 1 MiB of payloads per recorder window across adapters (later
+ones: `metadata`), 32 captured connections and subscriptions at a time
+(further ones run uncaptured with a `connections.limit` gap). Each gap makes
+the dependency `partial` and adds a `dependency.<id>` eligibility entry.
+
+**WebSocket** (`BugCapsuleWebSockets`, dependency `ws`, schema 1). Events:
+`ws.connect` (connection id, redacted URL, match key = redacted URL without
+ignored query parameters, occurrence of that key, reconnect attempt,
+subprotocols), `ws.open`, `ws.send` / `ws.message` (index per connection,
+text or binary payload), `ws.error` (`connect`, `send` with the index,
+`stream`), `ws.close` (`client` for the app's close, then `server`, or
+`unknown` for a dropped connection, with code and reason). The wrapper keeps
+the socket alive until the task completes, as URLSession keeps the task, so
+the close is recorded even when the app dropped its reference. Its open,
+close and completion callbacks reach `delegate`, `onOpen` / `onClose` and the
+session's own delegate.
+
+**Replay.** The SDK checks every required dependency before the app starts:
+an adapter with the same id must be installed and support the schema, and a
+periodic checkpoint must not have a connection open; otherwise the attempt
+ends `incompatible` with `dependency.unsupported`, `dependency.schema` or
+`dependency.unrestorable`. Connects are matched by key and occurrence, so
+identical concurrent connections pair up in invocation order; sends and the
+app's close are matched in order and compared. Inbound events are delivered
+at their recorded offset from the operation that preceded them, never before
+an earlier one of the same connection, on the replay clock: idle compression
+does not skip past a due delivery, and an open socket with nothing due does
+not keep replay busy. Divergences (all material except `*.unusedAfterFailure`):
+
+| Divergence | Meaning |
+|---|---|
+| `ws.unrecorded`, `native.unrecorded` | The app connected, sent, closed or called something not recorded. The operation fails with `BugCapsuleReplayError` (`bugcapsule.unrecorded`); the network or SDK is never reached. |
+| `ws.mismatch`, `native.mismatch` | Matched in order but the frame (or close code) differs; arguments differ from every remaining recorded call. |
+| `ws.noPayload`, `native.noPayload` | A recorded message or result is not replayable (binary metadata, truncated, dropped, redacted). It is not delivered. |
+| `ws.unused`, `native.unused` | Recorded at or before the failure and never matched or delivered. |
+| `ws.unusedAfterFailure`, `native.unusedAfterFailure` | The same after the failure (expected). |
+| `ws.undelivered`, `native.undelivered` | A delivery waited more than 5 s for its handler. |
+
+Verdict reasons carry the matching reason codes (`interaction.unexpected`,
+`interaction.mismatch`, `interaction.incomplete`, `interaction.missing`,
+`dependency.unsupported`).
+
+**Native adapters.** An adapter declares a `BugCapsuleAdapterDescriptor`
+(dependency id, adapter id, version, schema and the schemas it replays,
+operations, tested packages, payload policy, nondeterministic argument fields
+left out of match keys) and routes its SDK through the bridge:
+`call(_:args:live:)` records `native.call` → `native.result` /
+`native.error`; `subscribe(_:args:onEvent:live:)` records
+`native.subscribe` → `native.event`… → `native.done` / `native.error` and
+`native.cancel`. Match keys are
+`<operation>[@<instance>]||<hash of the redacted args>` plus the occurrence,
+so calls are matched within their adapter instance. Replay hands the adapter
+decoded typed values and never calls the SDK: also not when the capsule has
+no recording for the adapter, for capture-only (`required: false`)
+adapters, or when the adapter is not installed (`native.unrecorded`). Operations not in the descriptor run live with an
+`operation.unsupported` gap and fail as unrecorded in replay.
+`snapshot` / `canRestore` / `restore` let an adapter restore open
+subscriptions from a periodic checkpoint (default: not restorable).
+`BugCapsuleLocationAdapter` wraps a `BugCapsuleLocationProvider` as an
+example.
+
+```swift
+func testMyAdapterIsConformant() async throws {
+    let report = try await BugCapsuleAdapterConformance.run(
+        makeAdapter: { replaying in MyAdapter(sdk: replaying ? FailingSDK() : FakeSDK()) }
+    ) { adapter, log in
+        log.append("value: \(try await (adapter as! MyAdapter).get("carts/1"))")
+    }
+    XCTAssertTrue(report.isClean, report.problems.joined(separator: "\n"))
+}
+```
+
+**Data controls.** Adapters follow the session's capture settings (enabled,
+sampling, kill switch, redaction). The project's capture settings can switch
+off a single adapter by id (`bugcapsule-ios.urlsession-websocket`): its
+buffered events are dropped and it stops recording, while HTTP capture goes
+on.
+
 ## Limitations
 
 * **Pointer replay is not implemented** (`input.pointer.replay: unsupported`).
@@ -449,8 +547,14 @@ checked in.
 * URLSession: redirects are followed inside the SDK's protocol (the final
   response is recorded and served; app redirect delegates are not consulted);
   authentication challenges use default handling; `httpBodyStream` bodies are
-  keyed without a body hash and not recorded; WebSocket/stream tasks are not
-  captured. When several instrumented configurations carry different custom
+  keyed without a body hash and not recorded; stream tasks are not captured.
+* WebSockets: only through `BugCapsuleWebSocket` (a directly created
+  `URLSessionWebSocketTask` is neither recorded nor blocked in replay); ping
+  and pong are not recorded (`sendPing` succeeds at once in replay); binary
+  frames are size-only unless `captureBinary`; a recorded message that isn't
+  replayable is not delivered (`ws.noPayload`); open connections are not
+  restored from periodic checkpoints. Native adapters cover the operations
+  they declare; nothing is recorded below them. When several instrumented configurations carry different custom
   protocols, the SDK's downstream session uses all of them.
 * Only allowlisted UserDefaults keys of the listed types are captured;
   Keychain, Core Data, files and SQLite are not (write an integration).

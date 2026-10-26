@@ -88,6 +88,9 @@ public final class BugCapsuleSession: @unchecked Sendable {
     private var remoteDisabled = false
     private var firstEventAcceptedAt: Date?
     private var firstCapsuleAcceptedAt: Date?
+    /// Interaction dependencies (capsule-v2): installed adapters, capture
+    /// bookkeeping and, in replay, the scheduler.
+    let interactions: InteractionRuntime
 
     init(config input: BugCapsuleConfig, integrations: [BugCapsuleIntegration], overrides: BugCapsuleTestOverrides?) {
         let (config, source, tokenError) = Self.resolveConnection(input)
@@ -101,6 +104,16 @@ public final class BugCapsuleSession: @unchecked Sendable {
         gitDirty = config.resolvedGitDirty
         _random = BugCapsuleRandom(seed: seed)
         if let r = overrides?.random { samplingRandom = r } else { samplingRandom = { Double.random(in: 0..<1) } }
+        let box = WeakSession()
+        interactions = InteractionRuntime(
+            limits: InteractionLimits(windowMs: Int(config.window * 1000)),
+            record: { type, data in box.value?.record(type, data) }, now: { box.value?.now() ?? 0 },
+            redactor: { box.value?.redactor ?? Redactor() }, recording: { box.value?.isRecording ?? false })
+        box.value = self
+    }
+
+    private final class WeakSession: @unchecked Sendable {
+        weak var value: BugCapsuleSession?
     }
 
     /// Turns `token` into `backend` (connection token v1). An explicit
@@ -192,6 +205,22 @@ public final class BugCapsuleSession: @unchecked Sendable {
                 if out["requestEncoding"] == .string("base64") { out["requestBody"] = data["requestBody"] }
             }
             if type == EventTypes.failure, case .string? = data["signature"] { out["signature"] = data["signature"] }
+            if InteractionTypes.isInteraction(type) {
+                // Match keys and payload objects were built from redacted
+                // values by the adapter; mode and replayable must stay true.
+                for k in ["key"] + InteractionTypes.payloadFields { if let v = data[k] { out[k] = v } }
+                // Body capture off (local or remote) omits interaction
+                // payloads too (capsule-v2 §7); sizes are kept.
+                if !captureBodies {
+                    for k in InteractionTypes.payloadFields {
+                        guard case .object(var payload)? = out[k] else { continue }
+                        payload["mode"] = .string("omitted")
+                        payload["replayable"] = .bool(false)
+                        payload["value"] = nil
+                        out[k] = .object(payload)
+                    }
+                }
+            }
         }
         guard hook, let before = config.beforeRecord else { return out }
         do {
@@ -338,6 +367,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
             _redactor = baseRedactor(remote: cached?.redactKeys ?? [])
             remoteDisabled = cached?.enabled == false
             captureBodies = config.captureNetworkBodies && (cached?.captureNetworkBodies ?? true)
+            interactions.setDisabledAdapters(Set(cached?.disabledAdapters ?? []))
             maxCapsuleBytes = cached?.maxCapsuleBytes ?? maxCapsuleBytes
             recording = decideRecording(cached)
         }
@@ -410,6 +440,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
             }
             if let clean { data[integration.name] = clean }
         }
+        if kind == .periodic, let open = interactions.checkpointData() { data["interactions"] = open }
         return data
     }
 
@@ -610,6 +641,8 @@ public final class BugCapsuleSession: @unchecked Sendable {
         for integration in integrations {
             integration.describeEligibility(eligibility, window: window)
         }
+        let dependencies = interactions.manifestDependencies(
+            events: windowEvents, checkpoint: window.checkpoint, eligibility: eligibility)
         var capabilities: [(String, String)] = [
             ("input.pointer.capture", "explicit"),
             ("input.pointer.replay", "unsupported"),
@@ -646,7 +679,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
                 droppedEvents: window.droppedEvents, checkpointKind: window.checkpoint.kind, labels: labelPairs,
                 redactionKeys: redactor.extraKeys, redactionHeaders: redactor.extraHeaders,
                 runtime: RuntimeInfo(name: "ios", version: platform.osVersion, language: "swift", frameworks: frameworks),
-                capabilities: capabilities, monitoring: link),
+                capabilities: capabilities, monitoring: link, dependencies: dependencies),
             checkpoint: window.checkpoint.shifted(anchor),
             events: events)
         let problem = validateCapsuleDocument(CapsuleCodec.toJSON(capsule))
@@ -801,6 +834,14 @@ public final class BugCapsuleSession: @unchecked Sendable {
         defer { lock.unlock() }
         remoteDisabled = !next.enabled
         maxCapsuleBytes = next.maxCapsuleBytes
+        let switchedOff = interactions.setDisabledAdapters(Set(next.disabledAdapters))
+        if !switchedOff.isEmpty {
+            // Kill switch of single adapters: their buffered events go too.
+            recorder?.rewrite(event: { e in
+                guard InteractionTypes.isInteraction(e.type), let dep = e.data["dep"]?.stringValue else { return e }
+                return switchedOff.contains(dep) ? nil : e
+            })
+        }
         if !next.enabled {
             disableCaptureLocked()
             return
@@ -833,6 +874,14 @@ public final class BugCapsuleSession: @unchecked Sendable {
             recorder?.rewrite(
                 event: { e in
                     if e.type == EventTypes.http { return nil }
+                    if InteractionTypes.isInteraction(e.type) {
+                        // Match keys were computed with the old rules too.
+                        if let dep = e.data["dep"]?.stringValue {
+                            self.interactions.recorder(forDependency: dep)?.gap(
+                                DependencyGaps.eventsDropped, "dropped when redaction rules changed")
+                        }
+                        return nil
+                    }
                     guard let d = self.sanitize(e.type, e.data, redactor: redactor, captureBodies: bodies, hook: false) else {
                         return nil
                     }
@@ -977,14 +1026,20 @@ public final class BugCapsuleSession: @unchecked Sendable {
 
     /// Replay without the CLI channel (tests): restores and returns the engine; call `run()`.
     @MainActor
-    func startReplayForTesting(capsule: Capsule, settings: ReplaySettings) -> ReplayEngine? {
+    func startReplayForTesting(
+        capsule: Capsule, settings: ReplaySettings, onReport: (@Sendable (ReplayReport) -> Void)? = nil
+    ) -> ReplayEngine? {
         BugCapsuleSession.current = self
-        return setUpReplay(capsule: capsule, settings: settings, channel: nil)
+        return setUpReplay(capsule: capsule, settings: settings, channel: nil, onReport: onReport)
     }
 
     @MainActor
-    private func setUpReplay(capsule: Capsule, settings: ReplaySettings, channel: ReplayChannel?) -> ReplayEngine? {
+    private func setUpReplay(
+        capsule: Capsule, settings: ReplaySettings, channel: ReplayChannel?,
+        onReport: (@Sendable (ReplayReport) -> Void)? = nil
+    ) -> ReplayEngine? {
         let replay = ReplayEngine(capsule: capsule, settings: settings, buildGitSha: gitSha, channel: channel, session: self)
+        replay.onReport = onReport
         lock.locked {
             _engine = replay
             _random = BugCapsuleRandom(seed: capsule.manifest.session.seed)
@@ -1006,8 +1061,17 @@ public final class BugCapsuleSession: @unchecked Sendable {
         for name in capsule.manifest.integrations where !names.contains(name) {
             replay.diverge("integration.missing", "\(name) was used when capturing but is not set up")
         }
+        interactions.replay = replay.interactions
         for integration in integrations { integration.setUp(self) }
-        for name in capsule.checkpoint.data.keys where !names.contains(name) {
+        // capsule-v2 §2 preflight: every required dependency's adapter is
+        // installed, supports its schema and can restore what was open.
+        if let problem = interactions.preflight(capsule) {
+            replay.finishIncompatible(problem)
+            lock.locked { _engine = nil }
+            interactions.replay = nil
+            return nil
+        }
+        for name in capsule.checkpoint.data.keys where !names.contains(name) && name != "interactions" {
             replay.diverge("restore.missingIntegration", name)
         }
         for integration in integrations {
