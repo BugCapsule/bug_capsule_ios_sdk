@@ -23,7 +23,9 @@ The demo project is generated from `Examples/Demo/project.yml` with XcodeGen
 `tool/sync_spec.sh` in
 [bug_capsule_flutter_sdk](https://github.com/BugCapsule/bug_capsule_flutter_sdk),
 with both repositories checked out side by side. `FixtureTests` fails when the
-copy differs from a sibling checkout.
+copy differs from a sibling checkout. `capsule-v2/` (interaction
+dependencies) is part of the copy; until `sync_spec.sh` copies it for iOS,
+copy `spec/fixtures/capsule-v2` by hand.
 
 ## Release procedure
 
