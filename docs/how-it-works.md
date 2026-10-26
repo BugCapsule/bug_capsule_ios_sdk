@@ -80,18 +80,24 @@ Captured automatically:
   (nothing after the crash point exists). This is best effort: the process is
   terminating.
 
-**No capsule** (but a monitoring event, see below), and never claimed:
+**A capsule on the next launch** ([crash capsules](#crash-capsules)), when
+the session that crashed was recording and monitoring's crash handler ran:
 
 * Swift runtime traps (`fatalError`, `precondition`, force-unwrapping `nil`,
   array index out of range, integer overflow, `try!`), POSIX signals
   (`SIGSEGV`, `SIGBUS`, `SIGABRT` from `abort()`, ...) and Mach exceptions.
-  Building a capsule is not async-signal-safe, so for these only the
-  monitoring crash writer runs: the next launch sends a `fatal` event with
-  the crashing thread's stack and every other thread's, and the session is
-  marked `crashed`.
-* Out-of-memory (jetsam) terminations, watchdog kills, the user force-quitting
-  the app in the foreground: no code runs. The next launch reports the
-  session as `abnormal` (no event).
+  Building a capsule is not async-signal-safe, so the crash writer only
+  writes its report; the next launch sends a `fatal` event with the crashing
+  thread's stack and every other thread's, marks the session `crashed`, and
+  builds the capsule from the crash journal.
+* Watchdog kills and crashes the handler missed, when iOS delivers a
+  MetricKit crash diagnostic naming the process (iOS 17+) within 7 days.
+
+**No capsule** (but a monitoring event or session status), and never claimed:
+
+* Out-of-memory (jetsam) terminations and the user force-quitting the app in
+  the foreground: no code runs and MetricKit sends no crash diagnostic. The
+  next launch reports the session as `abnormal` (no event).
 * C++ exceptions are reported as the `SIGABRT` that follows them, without the
   C++ type.
 
@@ -267,12 +273,93 @@ switch. Automatic redaction is best effort: it does not find secrets in URL
 path segments, personal data that is not a credential (names, emails,
 addresses), secrets under innocuous key names, or binary bodies.
 
+## Crash capsules
+
+A crash that ends the process leaves no time to write a capsule (the
+crash-capsules contract, `docs/crash-capsules.md` in the backend repository).
+While a session records, a **crash journal** mirrors the flight recorder on
+disk, and the next launch builds the capsule from it.
+
+**The journal** (`journal/<pid>/`, protected until first unlock, excluded
+from backup with the rest):
+
+| File | Content |
+|---|---|
+| `header.json` | The manifest fields known while running (`mode`, `app`, `source`, `sdk`, `platform`, `session`, `integrations`, `redaction`, `labels`, `dependencies`, `runtime`, `capabilities`), plus `pid`, `release`, `environment`, `writtenAt`, `anchorT` and `wallClockAtStartMs`. Rewritten when the anchor is set, at periodic checkpoints and when redaction changes. |
+| `checkpoints/<afterSeq>.json` | The launch checkpoint while nothing was evicted, and the newest periodic one. |
+| `events/<afterSeq + 1>.jsonl` | One file per checkpoint, one already-redacted event per line. |
+
+* Event and checkpoint `t` are on the recorder's clock (ms since
+  `BugCapsule.start`); `anchorT` (null until the first window) places the
+  anchor on it, so a crash before the first window still has a journal.
+* The app's threads only hand events to a serial background queue, which
+  writes once per file per flush: at least every 250 ms, at once on a
+  checkpoint, a recorded failure and going to the background.
+* Eviction mirrors the recorder: once it evicts its first event, the launch
+  checkpoint and the files before the newest periodic checkpoint go. Above
+  `2 × maxCapsuleBytes` the oldest events file goes, and the launch
+  checkpoint with it.
+* A session that doesn't record keeps no journal; stopping recording (lower
+  sample rate) deletes it, the kill switch deletes every journal. After the
+  synchronous NSException capsule the process's journal is deleted.
+
+**Next launch**: monitoring reads the previous run's crash report; when a
+journal of that `pid` exists, a background queue builds the capsule before
+sending the `fatal` event (crash-capsules §2):
+
+* checkpoint: the launch one when every event after it is still journaled,
+  else the newest periodic one (also when the capsule is over
+  `maxCapsuleBytes`; still too big: no capsule);
+* `failure`: kind `crash`, `type` the signal (`SIGSEGV`), Mach exception
+  (`EXC_BAD_ACCESS`), NSException name (MetricKit) or
+  `ApplicationNotResponding` (a MetricKit watchdog kill), signature
+  `crash:<type>`, `crash.mechanism` (`signal`, `mach_exception`,
+  `metrickit`), `crash.signal` / `crash.exception`, `crash.inAppFrame` when
+  this build can name the in-app frame closest to the crash;
+* `monitoring`: the event's id, release and environment; the event gets
+  `capsuleId`;
+* eligibility: the usual checks plus the non-blocking `crash.native` gap
+  (so `partial` at best); `labels.source: "crash_journal"`,
+  `labels["crash.mechanism"]`; `stats.journalGapMs` (crash time minus the
+  last journaled event, with the report's millisecond time);
+* spec v2 always; not counted against `maxCapsulesPerSession`; saved and
+  written to the outbox before the event is sent; the journal is deleted
+  afterwards.
+
+Every other journal of an earlier process is deleted on launch, except
+one whose process ended in the foreground (its last lifecycle event is not
+`paused`) while MetricKit runs: it is claimed for up to 7 days, and a
+MetricKit crash diagnostic of that `pid` gets its capsule when it arrives.
+
+**Replay** (crash-capsules §4) re-runs the steps; the attempt is judged on
+how the app ends:
+
+| What happens | Reported by | `outcome` | `reasonCodes` |
+|---|---|---|---|
+| The app dies with the same signal, Mach exception or uncaught NSException | `BugCapsuleXCTest`, from the crash report | `reproduced` | `failure.different_frame` when `crash.inAppFrame` names another function |
+| `ApplicationNotResponding`: the main thread blocked past 2 s | the app (watchdog thread) | `reproduced` | |
+| The app dies of another crash type | `BugCapsuleXCTest` (or the app for an NSException) | `inconclusive` | `failure.different` |
+| The window replays to the end with the app alive | the app | `not_reproduced` | |
+
+The runner fetches the attempt's settings and capsule from the CLI's
+replay server before launching the app. When `XCUIApplication.state` is no
+longer running, it reads the newest `.ips` crash report of this simulator
+since the launch from `$SIMULATOR_HOST_HOME/Library/Logs/DiagnosticReports`
+(waiting up to 20 s) and prints `BUGCAPSULE_RESULT::{json}`, the report the
+CLI reads: `outcome`, `reasonCodes`, `observed` (kind `crash`, `type`,
+`signature`, `message` with the report's summary, `crash.signal`,
+`crash.exception`, `crash.inAppFrame`), `expectedSignature`, `attempt`,
+`attemptId`, `durationMs`, `strategy`, `runtime: "ios"`. A CLI that doesn't
+know `inconclusive` reads it as `error`, which is inconclusive too. Without a
+crash report (the app exited, or reported itself) it prints nothing.
+
 ## Storage, uploads and backend connectivity
 
 * Files live in `Application Support/bugcapsule` (excluded from iCloud/iTunes
   backup): `captures/` (newest 20), `outbox/`
   (`<enqueuedAtMs>_<capsuleId>.bugcapsule`), `envelopes/` (monitoring),
-  `monitoring/` (open session, install id, crash report), `remote_config.json`. Writes are
+  `monitoring/` (open session, install id, crash report), `journal/` (crash
+  journals, [above](#crash-capsules)), `remote_config.json`. Writes are
   atomic (temp + rename); temp files are removed at start; corrupt files are
   dropped; a full disk drops the capsule. No SDK error reaches the app.
 * Uploads: capsules are gzipped and sent to the token's address (or the
@@ -565,6 +652,12 @@ on.
 * Navigation is restored from periodic checkpoints only through an app-provided
   `BugCapsuleNavigation.shared.restorer`.
 * Cross-runtime replay is not supported (spec §12).
+* Crash capsules: the last ≤ 250 ms before a crash may be missing from the
+  journal (`stats.journalGapMs` says how long). Crash reports are read on
+  the simulator only (the CLI replays on simulators); a death without a
+  report prints no result. MetricKit capsules need the diagnostic's `pid`
+  (iOS 17+). The `crash.inAppFrame` check needs the build that crashed to
+  have symbols on device. OOM kills give no capsule.
 * Monitoring: native crash reports carry no registers, and threads other
   than the crashing one are best effort (at most 100; 40 frames each in the
   event, trimmed to 448 KiB); the walk relies on frame pointers (always on for

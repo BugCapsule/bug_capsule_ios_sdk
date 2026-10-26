@@ -12,6 +12,8 @@ struct NativeCrashReport: Equatable {
     var exceptionCode: UInt64
     var exceptionSubcode: UInt64
     var time: Date
+    /// Milliseconds since 1970 (nil in reports of older SDKs).
+    var timeMs: Int?
     /// Of the process that crashed (nil in reports of older SDKs).
     var pid: Int?
     /// The uncaught-exception handler already queued the event.
@@ -61,6 +63,7 @@ struct NativeCrashReport: Equatable {
             case "exceptionCode": r.exceptionCode = parseHex(value) ?? 0
             case "exceptionSubcode": r.exceptionSubcode = parseHex(value) ?? 0
             case "time": r.time = Date(timeIntervalSince1970: TimeInterval(Int(value) ?? 0))
+            case "timems": r.timeMs = Int(value)
             case "pid": r.pid = Int(value)
             case "suppressed": r.suppressed = value == "1"
             case "frame": if let a = parseHex(value) { r.frames.append(a) }
@@ -100,6 +103,9 @@ struct NativeCrashReport: Equatable {
     ]
 
     var isMach: Bool { kind == "mach" }
+
+    /// The crash time to the millisecond when the report has it.
+    var preciseTime: Date { timeMs.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000) } ?? time }
 
     /// `type` / `value` / mechanism of the exception value.
     var description: (type: String, value: String, mechanism: String, data: JSONObject) {

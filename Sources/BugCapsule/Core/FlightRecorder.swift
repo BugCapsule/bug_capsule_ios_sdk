@@ -94,6 +94,13 @@ public final class FlightRecorder: @unchecked Sendable {
             checkpoint: chosen!, events: retained.filter { $0.seq > from }, droppedEvents: dropped, hasGap: hasGap)
     }
 
+    /// What the crash journal mirrors (crash-capsules §1): the launch
+    /// checkpoint (it covers the events while nothing was evicted), the
+    /// newest periodic checkpoint and the retained events.
+    func journalState() -> (launch: Checkpoint, launchCovers: Bool, periodic: Checkpoint?, events: [BugCapsuleEvent]) {
+        (launch, launchCoversWindow, periodic.last, Array(events[head...]))
+    }
+
     private func evict(now: Int) {
         while head < events.count && (events.count - head > maxEvents || events[head].t < now - windowMs) {
             lastEvictedSeq = events[head].seq

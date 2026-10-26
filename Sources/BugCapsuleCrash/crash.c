@@ -2,7 +2,7 @@
 //
 // Rules for everything reachable from `bc_signal_handler` and the Mach
 // exception thread after a crash: no malloc, no locks, no Objective-C or
-// Swift, no stdio. Only open/write/close, time, nanosleep, sigaction, raise,
+// Swift, no stdio. Only open/write/close, time, clock_gettime, nanosleep, sigaction, raise,
 // vm_read_overwrite and Mach thread calls (task_threads, thread_suspend,
 // thread_resume, thread_get_state, thread_info, mach_msg), on buffers
 // allocated before the crash.
@@ -384,6 +384,10 @@ static void bc_write_report(const char *kind, int sig, int code, uintptr_t addr,
     bc_write_hex(fd, (uint64_t)exc_subcode);
     bc_write_str(fd, "\n");
     bc_write_line(fd, "time", (int64_t)time(NULL));
+    struct timespec now;
+    if (clock_gettime(CLOCK_REALTIME, &now) == 0) {
+        bc_write_line(fd, "timems", (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000);
+    }
     bc_write_line(fd, "pid", (int64_t)getpid());
     bc_write_line(fd, "suppressed", __atomic_load_n(&g_suppress, __ATOMIC_ACQUIRE));
     for (int i = 0; i < count; i++) {
