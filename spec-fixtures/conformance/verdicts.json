@@ -5,8 +5,11 @@
   "description": "Attempt classification and batch verdicts (lib/src/core/verdict.dart evaluateRun). Divergence types not listed in \"expectedDivergences\" are material.",
   "expectedDivergences": [
     "build.gitSha",
+    "native.unusedAfterFailure",
     "network.unused",
-    "screen.size"
+    "platform.unusedAfterFailure",
+    "screen.size",
+    "ws.unusedAfterFailure"
   ],
   "cases": [
     {
@@ -35,7 +38,8 @@
         "reproduced",
         "reproduced",
         "reproduced"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "replay never reproduced, all clean",
@@ -64,7 +68,8 @@
       "attemptStatuses": [
         "clean",
         "clean"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "replay flaky",
@@ -95,7 +100,8 @@
         "reproduced",
         "clean",
         "reproduced"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "replay with an error is inconclusive",
@@ -119,7 +125,8 @@
       "attemptStatuses": [
         "reproduced",
         "invalid"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "replay missing attempt",
@@ -142,7 +149,8 @@
       "attemptStatuses": [
         "reproduced",
         "reproduced"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "verify fixed",
@@ -179,7 +187,8 @@
         "clean",
         "clean",
         "clean"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "verify still failing",
@@ -202,7 +211,8 @@
       "attemptStatuses": [
         "reproduced",
         "reproduced"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "verify flaky",
@@ -228,7 +238,8 @@
       "attemptStatuses": [
         "reproduced",
         "clean"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "verify one clean plus error is inconclusive",
@@ -255,7 +266,8 @@
       "attemptStatuses": [
         "clean",
         "invalid"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "verify fewer attempts than requested",
@@ -284,7 +296,8 @@
       "attemptStatuses": [
         "clean",
         "clean"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "verify with material divergence is not fixed",
@@ -315,7 +328,8 @@
       "attemptStatuses": [
         "clean",
         "invalid"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "expected divergences keep an attempt clean",
@@ -340,7 +354,8 @@
       "validAttempts": 1,
       "attemptStatuses": [
         "clean"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "unknown divergence types are material",
@@ -363,7 +378,8 @@
       "validAttempts": 0,
       "attemptStatuses": [
         "invalid"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "restore failure is material",
@@ -386,7 +402,8 @@
       "validAttempts": 0,
       "attemptStatuses": [
         "invalid"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "incomplete input dispatch is not clean",
@@ -407,7 +424,8 @@
       "validAttempts": 0,
       "attemptStatuses": [
         "invalid"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "unexpected failure is not clean",
@@ -431,7 +449,8 @@
       "validAttempts": 0,
       "attemptStatuses": [
         "invalid"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "redacted text replay is material",
@@ -454,7 +473,8 @@
       "validAttempts": 0,
       "attemptStatuses": [
         "invalid"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "incompatible wins",
@@ -477,7 +497,8 @@
       "attemptStatuses": [
         "reproduced",
         "invalid"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "no assertion is inconclusive",
@@ -494,7 +515,8 @@
       "validAttempts": 0,
       "attemptStatuses": [
         "invalid"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "reproduction without expected signature is invalid",
@@ -511,7 +533,8 @@
       "validAttempts": 0,
       "attemptStatuses": [
         "invalid"
-      ]
+      ],
+      "reasonCodes": []
     },
     {
       "name": "zero requested attempts",
@@ -522,7 +545,8 @@
       "wire": "inconclusive",
       "exitCode": 3,
       "validAttempts": 0,
-      "attemptStatuses": []
+      "attemptStatuses": [],
+      "reasonCodes": []
     },
     {
       "name": "more reports than requested",
@@ -551,6 +575,155 @@
       "attemptStatuses": [
         "clean",
         "clean"
+      ],
+      "reasonCodes": []
+    },
+    {
+      "name": "interactions recorded after the failure may go unused",
+      "kind": "verify",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": [
+            "ws.unusedAfterFailure",
+            "platform.unusedAfterFailure",
+            "native.unusedAfterFailure"
+          ]
+        }
+      ],
+      "verdict": "fixed",
+      "wire": "not_reproduced",
+      "exitCode": 0,
+      "validAttempts": 1,
+      "attemptStatuses": [
+        "clean"
+      ],
+      "reasonCodes": []
+    },
+    {
+      "name": "a missing interaction prevents fixed",
+      "kind": "verify",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": [
+            "ws.unused"
+          ]
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 0,
+      "attemptStatuses": [
+        "invalid"
+      ],
+      "reasonCodes": [
+        "interaction.missing"
+      ]
+    },
+    {
+      "name": "unexpected, mismatched and incomplete interactions are material",
+      "kind": "verify",
+      "requested": 3,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": [
+            "platform.unrecorded"
+          ]
+        },
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": [
+            "native.mismatch"
+          ]
+        },
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": [
+            "ws.noPayload"
+          ]
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 0,
+      "attemptStatuses": [
+        "invalid",
+        "invalid",
+        "invalid"
+      ],
+      "reasonCodes": [
+        "interaction.incomplete",
+        "interaction.mismatch",
+        "interaction.unexpected"
+      ]
+    },
+    {
+      "name": "a live dependency contact prevents fixed",
+      "kind": "verify",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "eventsDispatched": 3,
+          "eventsExpected": 3,
+          "divergences": [
+            "dependency.live"
+          ]
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 0,
+      "attemptStatuses": [
+        "invalid"
+      ],
+      "reasonCodes": [
+        "interaction.live"
+      ]
+    },
+    {
+      "name": "an unsupported required dependency is incompatible",
+      "kind": "verify",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "incompatible",
+          "expectedSignature": "exception:StateError:Bad state: Cart total is negative (#)",
+          "message": "dependency.unsupported: bug_capsule.web_socket_channel schema 1"
+        }
+      ],
+      "verdict": "incompatible",
+      "wire": "incompatible",
+      "exitCode": 3,
+      "validAttempts": 0,
+      "attemptStatuses": [
+        "invalid"
+      ],
+      "reasonCodes": [
+        "dependency.unsupported"
       ]
     }
   ]
