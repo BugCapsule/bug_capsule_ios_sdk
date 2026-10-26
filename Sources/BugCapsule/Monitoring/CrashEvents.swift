@@ -5,21 +5,34 @@ import Foundation
 /// `BugCapsuleCrashBridge`.
 enum CrashEvents {
     static let maxThreads = 100
-    static let maxThreadFrames = 100
-    /// The backend accepts up to 512 KiB of `threads` JSON.
+    /// The crashed (or hung) thread keeps as many frames as an exception.
+    static let maxCrashedFrames = 250
+    static let maxThreadFrames = 40
+    static let maxTotalFrames = 1_500
+    /// The backend rejects the whole event above 512 KiB of `threads`.
     static let maxThreadsBytes = 448 * 1024
 
-    /// `threads` for [samples] (frames oldest first, as in `exception`) and
-    /// the images their frames use. Main is named `main` when unnamed.
+    /// `threads` for [samples]: the crashed (or hung) thread first, then
+    /// main, then the others in task order; frames oldest first, as in
+    /// `exception`; within the limits of `fit`. Also the images their frames
+    /// use. Main is named `main` when unnamed.
     static func threads(
         _ samples: [ThreadSample], stack: StackBuilder, resolve: (UInt64) -> DebugImage?,
         symbol: (UInt64, DebugImage) -> String? = { a, _ in Symbolicator.function(at: a) }
     ) -> (threads: [JSONValue], images: [DebugImage]) {
+        let ordered = samples.enumerated().sorted { a, b in
+            func rank(_ s: ThreadSample) -> Int { s.crashed ? 0 : s.isMain ? 1 : 2 }
+            return (rank(a.element), a.offset) < (rank(b.element), b.offset)
+        }.map(\.element)
         var out: [JSONValue] = []
         var used: [String: DebugImage] = [:]
-        for sample in samples.prefix(maxThreads) {
+        var budget = maxTotalFrames
+        for sample in ordered.prefix(maxThreads) {
+            // Innermost first here: the prefix keeps the newest frames.
+            let take = min(sample.frames.count, sample.crashed ? maxCrashedFrames : maxThreadFrames, max(budget, 0))
+            budget -= take
             let (frames, images) = stack.frames(
-                Array(sample.frames.prefix(maxThreadFrames)), firstIsPC: true, resolve: resolve, symbol: symbol)
+                Array(sample.frames.prefix(take)), firstIsPC: true, resolve: resolve, symbol: symbol)
             for image in images { used[image.debugId] = image }
             var t: JSONObject = [
                 "id": .int(sample.index), "crashed": .bool(sample.crashed), "current": .bool(sample.current),
@@ -31,29 +44,29 @@ enum CrashEvents {
         return (fit(out), used.values.sorted { $0.loadAddress < $1.loadAddress })
     }
 
-    /// Keeps [threads] under [maxBytes]: other threads lose their oldest
-    /// frames first, then the last of them are dropped; the crashed or
-    /// current thread is cut last.
+    /// Keeps any `threads` list within the backend's limits: at most
+    /// `maxThreads`, the newest `maxCrashedFrames` frames of a crashed
+    /// thread and `maxThreadFrames` of the others, `maxTotalFrames` in all
+    /// (crashed threads served first), then the last threads other than the
+    /// crashed one go until the JSON fits `maxBytes`.
     static func fit(_ threads: [JSONValue], maxBytes: Int = maxThreadsBytes) -> [JSONValue] {
-        func size(_ t: [JSONValue]) -> Int { JSON.encodeData(.array(t)).count }
-        func isKey(_ t: JSONValue) -> Bool { t["crashed"]?.boolValue == true || t["current"]?.boolValue == true }
-        func keepingInnermost(_ t: JSONValue, _ n: Int) -> JSONValue {
-            guard var o = t.objectValue, let frames = o["stacktrace"]?["frames"]?.arrayValue, frames.count > n else { return t }
-            o["stacktrace"] = StackBuilder.stacktrace(Array(frames.suffix(n)))
-            return .object(o)
+        var out = Array(threads.prefix(maxThreads))
+        var budget = maxTotalFrames
+        let order = out.indices.sorted { (out[$0]["crashed"]?.boolValue == true ? 0 : 1, $0) < (out[$1]["crashed"]?.boolValue == true ? 0 : 1, $1) }
+        for i in order {
+            guard var o = out[i].objectValue, let frames = o["stacktrace"]?["frames"]?.arrayValue else { continue }
+            let cap = o["crashed"]?.boolValue == true ? maxCrashedFrames : maxThreadFrames
+            let keep = min(frames.count, cap, max(budget, 0))
+            budget -= keep
+            // Oldest first: keep the newest.
+            if keep < frames.count {
+                o["stacktrace"] = StackBuilder.stacktrace(Array(frames.suffix(keep)))
+                out[i] = .object(o)
+            }
         }
-        var out = threads
-        guard size(out) > maxBytes else { return out }
-        var limit = maxThreadFrames / 2
-        while size(out) > maxBytes && limit >= 8 {
-            out = out.map { isKey($0) ? $0 : keepingInnermost($0, limit) }
-            limit /= 2
-        }
-        while size(out) > maxBytes, let i = out.lastIndex(where: { !isKey($0) }) { out.remove(at: i) }
-        limit = maxThreadFrames / 2
-        while size(out) > maxBytes && limit >= 1 {
-            out = out.map { keepingInnermost($0, limit) }
-            limit /= 2
+        // The last other thread goes first; a crashed thread only when nothing else is left.
+        while out.count > 1 && JSON.encodeData(.array(out)).count > maxBytes {
+            out.remove(at: out.lastIndex { $0["crashed"]?.boolValue != true } ?? out.count - 1)
         }
         return out
     }
@@ -78,9 +91,15 @@ enum CrashEvents {
         draft.template = template
         draft.hint = EventHint(fromPreviousLaunch: true)
         if r.threads.isEmpty {
-            draft.threads = [["id": 0, "crashed": true, "current": true, "stacktrace": StackBuilder.stacktrace(frames)]]
+            draft.threads = fit([["id": 0, "crashed": true, "current": true, "stacktrace": StackBuilder.stacktrace(frames)]])
         } else {
-            let (threads, threadImages) = Self.threads(r.threads, stack: stack, resolve: resolve, symbol: symbol)
+            // The crashed thread with the full exception stack (the threads section keeps 100 frames).
+            let samples = r.threads.map { t -> ThreadSample in
+                var t = t
+                if t.crashed && !r.frames.isEmpty { t.frames = r.frames }
+                return t
+            }
+            let (threads, threadImages) = Self.threads(samples, stack: stack, resolve: resolve, symbol: symbol)
             draft.threads = threads
             draft.images = merge(images, threadImages)
         }
@@ -88,10 +107,15 @@ enum CrashEvents {
     }
 
     /// The `error` event for an app hang: the main thread's stack as the
-    /// exception, main first among the threads.
+    /// exception; main is the hung (`crashed`) thread, listed first (the
+    /// watchdog that sampled it is not listed).
     static func hangDraft(_ samples: [ThreadSample], threshold: TimeInterval, stack: StackBuilder) -> EventDraft {
-        var ordered = samples.filter(\.isMain) + samples.filter { !$0.isMain }
-        if !ordered.isEmpty && ordered[0].isMain { ordered[0].current = true }
+        let ordered = samples.map { s -> ThreadSample in
+            var s = s
+            s.crashed = s.isMain
+            s.current = false
+            return s
+        }
         let resolve: (UInt64) -> DebugImage? = { DebugImageCache.shared.image(containing: $0) }
         let main = ordered.first { $0.isMain }?.frames ?? []
         let (frames, images) = stack.frames(main, firstIsPC: true, resolve: resolve)

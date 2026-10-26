@@ -116,10 +116,11 @@ final class ReleaseHealth: @unchecked Sendable {
     }
 
     /// The previous launch's open session, closed as `crashed`, `abnormal`
-    /// or `exited`. Returns its final update (or nil).
-    func recoverPrevious(crashedAt: Date?) -> JSONObject? {
+    /// or `exited`. Returns its final update (or nil). [discard] false: the
+    /// file stays until `discardPrevious()` (once the update is persisted).
+    func recoverPrevious(crashedAt: Date?, discard: Bool = true) -> JSONObject? {
         guard let file, let data = try? Data(contentsOf: file) else { return nil }
-        FileIO.deleteQuietly(file)
+        if discard { FileIO.deleteQuietly(file) }
         guard let json = try? JSON.parse(data), var s = State(json: json), s.status == "ok" || s.status == "crashed"
         else { return nil }
         let end: Date
@@ -137,6 +138,10 @@ final class ReleaseHealth: @unchecked Sendable {
             end = s.backgroundAt ?? s.updated
         }
         return lock.locked { updateLocked(&s, at: end) }
+    }
+
+    func discardPrevious() {
+        lock.locked { if state == nil, let file { FileIO.deleteQuietly(file) } }
     }
 
     /// Starts a new session (ending the running one as `exited`).

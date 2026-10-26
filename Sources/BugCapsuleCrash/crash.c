@@ -384,6 +384,7 @@ static void bc_write_report(const char *kind, int sig, int code, uintptr_t addr,
     bc_write_hex(fd, (uint64_t)exc_subcode);
     bc_write_str(fd, "\n");
     bc_write_line(fd, "time", (int64_t)time(NULL));
+    bc_write_line(fd, "pid", (int64_t)getpid());
     bc_write_line(fd, "suppressed", __atomic_load_n(&g_suppress, __ATOMIC_ACQUIRE));
     for (int i = 0; i < count; i++) {
         bc_write_str(fd, "frame ");

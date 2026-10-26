@@ -12,6 +12,8 @@ struct NativeCrashReport: Equatable {
     var exceptionCode: UInt64
     var exceptionSubcode: UInt64
     var time: Date
+    /// Of the process that crashed (nil in reports of older SDKs).
+    var pid: Int?
     /// The uncaught-exception handler already queued the event.
     var suppressed: Bool
     /// Innermost first.
@@ -59,6 +61,7 @@ struct NativeCrashReport: Equatable {
             case "exceptionCode": r.exceptionCode = parseHex(value) ?? 0
             case "exceptionSubcode": r.exceptionSubcode = parseHex(value) ?? 0
             case "time": r.time = Date(timeIntervalSince1970: TimeInterval(Int(value) ?? 0))
+            case "pid": r.pid = Int(value)
             case "suppressed": r.suppressed = value == "1"
             case "frame": if let a = parseHex(value) { r.frames.append(a) }
             case "thread":
@@ -131,13 +134,15 @@ struct NativeCrashReport: Equatable {
 enum NativeCrashHandler {
     static func reportFile(in directory: URL) -> URL { directory.appendingPathComponent("crash.report") }
 
-    /// The previous launch's report (removed from disk).
-    static func takePendingReport(in directory: URL) -> NativeCrashReport? {
-        let file = reportFile(in: directory)
-        guard let data = try? Data(contentsOf: file) else { return nil }
-        FileIO.deleteQuietly(file)
+    /// The previous launch's report, left on disk: call
+    /// `discardPendingReport` once its event is persisted, so a crash
+    /// before that (a crash-on-launch loop) reports it again.
+    static func pendingReport(in directory: URL) -> NativeCrashReport? {
+        guard let data = try? Data(contentsOf: reportFile(in: directory)) else { return nil }
         return NativeCrashReport.parse(data)
     }
+
+    static func discardPendingReport(in directory: URL) { FileIO.deleteQuietly(reportFile(in: directory)) }
 
     static func install(directory: URL, mach: Bool) -> Bool {
         let path = reportFile(in: directory).path

@@ -38,7 +38,7 @@ final class Monitoring: @unchecked Sendable {
     private(set) var metricKit: MetricKitSubscriber?
     /// This instance installed the process-wide crash handlers.
     private var ownsCrashHandlers = false
-    private(set) lazy var ledger = CrashLedger(file: directory?.appendingPathComponent("crash_times.json"))
+    let ledger: CrashLedger
     private weak var session: BugCapsuleSession?
     private let appInfo: (id: String?, name: String?, version: String, build: String)
     private let random: @Sendable () -> Double
@@ -85,6 +85,7 @@ final class Monitoring: @unchecked Sendable {
         let dir = root?.appendingPathComponent("monitoring", isDirectory: true)
         if let dir { try? FileIO.ensureDirectory(dir) }
         directory = dir
+        ledger = CrashLedger(file: dir?.appendingPathComponent("crash_times.json"))
         installId = Self.loadInstallId(dir)
         tracer = Tracer(monitoring: self, random: random)
     }
@@ -149,19 +150,23 @@ final class Monitoring: @unchecked Sendable {
             lock.locked { outbox = box }
             Task { await box.open() }
         }
-        let report = directory.flatMap { NativeCrashHandler.takePendingReport(in: $0) }
+        let report = directory.flatMap { NativeCrashHandler.pendingReport(in: $0) }
         let health = ReleaseHealth(
             file: directory?.appendingPathComponent("session.json"), release: release, environment: environment,
             timeout: options.sessionTimeout,
             did: { [weak self] in self?.currentScope.user?.id ?? self?.installId ?? uuidV4() },
             emit: { [weak self] payload in self?.enqueue("session", payload) })
         lock.locked { self.health = health }
-        if let previous = health.recoverPrevious(crashedAt: report?.time) {
-            enqueue("session", previous)
+        // What the previous run left is persisted in the outbox before its
+        // files go, so a crash right after launch cannot lose it.
+        if let previous = health.recoverPrevious(crashedAt: report?.time, discard: false) {
+            enqueue("session", previous, synchronous: true)
         }
-        if let report {
-            ledger.record(report.time)
-            if !report.suppressed { _ = capture(eventFromReport(report)) }
+        health.discardPrevious()
+        if let report, let directory {
+            if !report.suppressed { _ = capture(eventFromReport(report), synchronous: true) }
+            ledger.record(.crash, at: report.time, pid: report.pid)
+            NativeCrashHandler.discardPendingReport(in: directory)
         }
         scope.onChange = { [weak self] in self?.scheduleContextSync() }
         // Uncaught NSExceptions become fatal events (chained handler).
@@ -189,7 +194,9 @@ final class Monitoring: @unchecked Sendable {
             startHangTracking(threshold: options.appHangTimeout)
         }
         if owns && options.enableMetricKit {
-            let subscriber = MetricKitSubscriber { [weak self] json, end in self?.receiveMetricKit(json, end: end) }
+            let subscriber = MetricKitSubscriber { [weak self] json, begin, end in
+                self?.receiveMetricKit(json, begin: begin, end: end)
+            }
             lock.locked { metricKit = subscriber }
             subscriber.start()
         }
@@ -482,24 +489,28 @@ final class Monitoring: @unchecked Sendable {
     func eventFromReport(_ r: NativeCrashReport) -> EventDraft { CrashEvents.draft(from: r, stack: stack) }
 
     func captureAppHang(_ samples: [ThreadSample], threshold: TimeInterval) {
+        // A later MetricKit hang diagnostic of this process is the same hang.
+        ledger.record(.hang, at: Date(), pid: Int(getpid()))
         capture(CrashEvents.hangDraft(samples, threshold: threshold, stack: stack))
     }
 
-    /// One MetricKit diagnostic payload: crashes BugCapsule already
-    /// reported (a native report within 60 s) are dropped.
-    func receiveMetricKit(_ json: JSONValue, end: Date?) {
+    /// One MetricKit diagnostic payload. Failures BugCapsule reported
+    /// itself (a crash report or a watchdog hang of the same process, or
+    /// within 60 s) are dropped; the rest are written to the outbox before
+    /// returning (MetricKit delivers each payload once).
+    func receiveMetricKit(_ json: JSONValue, begin: Date? = nil, end: Date?) {
         guard isActive else { return }
-        for d in MetricKitConverter.diagnostics(fromPayload: json, stack: stack, timestamp: end) {
-            if d.isCrash && ledger.contains(near: d.draft.timestamp) { continue }
+        for d in MetricKitConverter.diagnostics(fromPayload: json, stack: stack, timestamp: end, begin: begin) {
+            if d.isDuplicate(in: ledger) { continue }
             var draft = d.draft
             let r = MetricKitConverter.release(
                 of: d, current: release, appId: appInfo.id, appVersion: appInfo.version, appBuild: appInfo.build,
                 customRelease: options.release != nil)
-            draft.template = [
-                "release": .string(r), "environment": .string(environment),
-                "contexts": .object(lock.locked { staticContexts }),
-            ]
-            capture(draft)
+            // That run's scope is unknown: device contexts only (not this launch's `app`).
+            var contexts = lock.locked { staticContexts }
+            contexts["app"] = nil
+            draft.template = ["release": .string(r), "environment": .string(environment), "contexts": .object(contexts)]
+            capture(draft, synchronous: true)
         }
     }
 

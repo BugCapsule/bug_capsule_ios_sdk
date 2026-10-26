@@ -159,23 +159,24 @@ final class CrashReportingTests: XCTestCase {
 
         let draft = CrashEvents.draft(from: r, stack: StackBuilder(options: BugCapsuleMonitoringOptions()))
         let threads = try XCTUnwrap(draft.threads)
-        XCTAssertEqual(threads.map { $0["id"]?.intValue }, [0, 3, 7])
-        XCTAssertEqual(threads[0]["name"], "main", "unnamed main thread")
-        XCTAssertEqual(threads[0]["crashed"], false)
-        XCTAssertEqual(threads[0]["current"], false)
-        XCTAssertEqual(threads[1]["name"], "com.shop.sync")
-        XCTAssertEqual(threads[1]["crashed"], true)
-        XCTAssertEqual(threads[1]["current"], true)
+        XCTAssertEqual(threads.map { $0["id"]?.intValue }, [3, 0, 7], "crashed first, then main")
+        XCTAssertEqual(threads[0]["name"], "com.shop.sync")
+        XCTAssertEqual(threads[0]["crashed"], true)
+        XCTAssertEqual(threads[0]["current"], true)
+        XCTAssertEqual(threads[1]["name"], "main", "unnamed main thread")
+        XCTAssertEqual(threads[1]["crashed"], false)
+        XCTAssertEqual(threads[1]["current"], false)
         XCTAssertEqual(threads[2]["name"], "com.apple.uikit.eventfetch-thread")
-        let main = try XCTUnwrap(threads[0]["stacktrace"]?["frames"]?.arrayValue)
+        let main = try XCTUnwrap(threads[1]["stacktrace"]?["frames"]?.arrayValue)
         XCTAssertEqual(main.map { $0["instructionAddr"] }, ["0x1045a0dff", "0x1e8001234"], "oldest first, callers - 1")
         XCTAssertEqual(main[0]["package"], "/x/Shop.app/Shop")
         XCTAssertEqual(main[1]["package"], "/usr/lib/system/libsystem_kernel.dylib")
-        let crashed = try XCTUnwrap(threads[1]["stacktrace"]?["frames"]?.arrayValue)
+        let crashed = try XCTUnwrap(threads[0]["stacktrace"]?["frames"]?.arrayValue)
         XCTAssertEqual(crashed.last?["instructionAddr"], "0x1045a0c3c", "the pc is exact")
         XCTAssertEqual(
             Set(draft.images.map(\.debugId)), ["6a1b0c6e-0000-4000-8000-000000000001", "1e4a0c6e-0000-4000-8000-0000000000a1"])
         XCTAssertEqual(draft.exceptionValues?.first?["mechanism"]?["type"], "mach_exception")
+        assertFramesCarryTheirImage(draft)
     }
 
     func testWrittenReportHasEveryThread() throws {
@@ -203,7 +204,7 @@ final class CrashReportingTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(r.threads.count, 2)
         XCTAssertLessThanOrEqual(r.threads.count, CrashEvents.maxThreads)
         XCTAssertEqual(r.threads.filter(\.crashed).count, 1)
-        XCTAssertTrue(r.threads.allSatisfy { $0.frames.count <= CrashEvents.maxThreadFrames })
+        XCTAssertTrue(r.threads.allSatisfy { $0.frames.count <= 100 }, "the writer's per-thread buffer")
         let parked = try XCTUnwrap(r.threads.first { $0.name == "bc-test-worker" })
         XCTAssertFalse(parked.crashed)
         XCTAssertGreaterThan(parked.frames.count, 1, "the parked thread was walked")
@@ -211,24 +212,49 @@ final class CrashReportingTests: XCTestCase {
         XCTAssertEqual(r.threads.filter(\.isMain).count, 1)
     }
 
-    func testThreadsAreKeptUnderTheSizeLimit() {
+    func testThreadsAreKeptWithinTheServerLimits() {
         let frame: JSONValue = [
             "instructionAddr": "0x1045a0c3c", "imageAddr": "0x104578000", "inApp": false,
-            "package": .string("/System/Library/PrivateFrameworks/" + String(repeating: "x", count: 120)),
-            "function": .string(String(repeating: "f", count: 120)),
+            "package": .string("/System/Library/PrivateFrameworks/" + String(repeating: "x", count: 600)),
+            "function": .string(String(repeating: "f", count: 600)),
         ]
-        let threads: [JSONValue] = (0..<100).map { i in
+        func frames(_ n: Int, mark: String) -> JSONValue {
+            var list = Array(repeating: frame, count: n)
+            list[n - 1] = ["instructionAddr": .string(mark)]  // the newest frame
+            return ["frames": .array(list)]
+        }
+        let threads: [JSONValue] = (0..<120).map { i in
             [
                 "id": .int(i), "crashed": .bool(i == 42), "current": .bool(i == 42),
-                "stacktrace": ["frames": .array(Array(repeating: frame, count: 100))],
+                "stacktrace": frames(i == 42 ? 300 : 100, mark: "0x\(i)"),
             ]
         }
-        XCTAssertGreaterThan(JSON.encodeData(.array(threads)).count, CrashEvents.maxThreadsBytes)
         let fitted = CrashEvents.fit(threads)
+        XCTAssertLessThanOrEqual(fitted.count, CrashEvents.maxThreads)
         XCTAssertLessThanOrEqual(JSON.encodeData(.array(fitted)).count, CrashEvents.maxThreadsBytes)
-        let crashed = fitted.first { $0["crashed"] == true }
-        XCTAssertEqual(crashed?["stacktrace"]?["frames"]?.arrayValue?.count, 100, "the crashed thread is kept whole")
-        XCTAssertGreaterThan(fitted.count, 10)
+        let counts = fitted.map { $0["stacktrace"]?["frames"]?.arrayValue?.count ?? 0 }
+        XCTAssertLessThanOrEqual(counts.reduce(0, +), CrashEvents.maxTotalFrames)
+        let crashed = try? XCTUnwrap(fitted.first { $0["crashed"] == true })
+        XCTAssertEqual(crashed?["stacktrace"]?["frames"]?.arrayValue?.count, 250, "the crashed thread is served first")
+        XCTAssertEqual(crashed?["stacktrace"]?["frames"]?.arrayValue?.last?["instructionAddr"], "0x42", "newest frames kept")
+        for t in fitted where t["crashed"] != true {
+            let f = t["stacktrace"]?["frames"]?.arrayValue ?? []
+            XCTAssertLessThanOrEqual(f.count, 40)
+            if let last = f.last { XCTAssertEqual(last["instructionAddr"], .string("0x\(t["id"]!.intValue!)")) }
+        }
+        XCTAssertEqual(fitted.first?["id"], 0, "threads are dropped from the end")
+    }
+
+    func testThreadsListTheCrashedThreadThenMain() {
+        let samples = [
+            ThreadSample(index: 0, name: nil, crashed: false, current: false, isMain: true, frames: [0x10, 0x20]),
+            ThreadSample(index: 1, name: "a", crashed: false, current: false, isMain: false, frames: [0x10]),
+            ThreadSample(index: 5, name: "b", crashed: true, current: true, isMain: false, frames: Array(repeating: 0x10, count: 300)),
+        ]
+        let (threads, _) = CrashEvents.threads(
+            samples, stack: StackBuilder(options: BugCapsuleMonitoringOptions()), resolve: { _ in nil })
+        XCTAssertEqual(threads.map { $0["id"]?.intValue }, [5, 0, 1])
+        XCTAssertEqual(threads[0]["stacktrace"]?["frames"]?.arrayValue?.count, 250)
     }
 
     func testAppHangAttachesEveryThread() async throws {
@@ -252,8 +278,9 @@ final class CrashReportingTests: XCTestCase {
         let threads = try XCTUnwrap(hang["threads"]?.arrayValue)
         XCTAssertGreaterThan(threads.count, 1)
         XCTAssertEqual(threads[0]["name"], "main")
-        XCTAssertEqual(threads[0]["current"], true)
-        XCTAssertTrue(threads.dropFirst().allSatisfy { $0["current"] == false && $0["crashed"] == false })
+        XCTAssertEqual(threads[0]["crashed"], true, "the hung thread")
+        XCTAssertTrue(threads.allSatisfy { $0["current"] == false }, "the watchdog sampled them")
+        XCTAssertTrue(threads.dropFirst().allSatisfy { $0["crashed"] == false })
         let other = try XCTUnwrap(threads.first { $0["name"] == "bc-hang-worker" })
         XCTAssertFalse(other["stacktrace"]?["frames"]?.arrayValue?.isEmpty ?? true)
     }
@@ -319,14 +346,17 @@ final class CrashReportingTests: XCTestCase {
         XCTAssertEqual(value["mechanism"]?["type"], "metrickit")
         XCTAssertEqual(value["mechanism"]?["handled"], false)
         XCTAssertEqual(value["mechanism"]?["data"]?["signal"], 11)
+        XCTAssertEqual(value["mechanism"]?["data"]?["source"], "metrickit")
+        XCTAssertEqual(crash.pid, 3021)
+        assertFramesCarryTheirImage(crash.draft)
         let frames = try XCTUnwrap(value["stacktrace"]?["frames"]?.arrayValue)
         XCTAssertEqual(frames.map { $0["instructionAddr"] }, ["0x18a000fff", "0x1046a0cff", "0x1046a0c3c"])
         XCTAssertEqual(frames.map { $0["inApp"] }, [false, true, true])
         XCTAssertEqual(frames[2]["imageAddr"], "0x104678000")
         let threads = try XCTUnwrap(crash.draft.threads)
         XCTAssertEqual(threads.count, 2)
-        XCTAssertEqual(threads.map { $0["crashed"] }, [false, true])
-        XCTAssertEqual(threads[0]["stacktrace"]?["frames"]?.arrayValue?.map { $0["instructionAddr"] }, ["0x1f0001fff", "0x1e8001234"])
+        XCTAssertEqual(threads.map { $0["crashed"] }, [true, false], "crashed first")
+        XCTAssertEqual(threads[1]["stacktrace"]?["frames"]?.arrayValue?.map { $0["instructionAddr"] }, ["0x1f0001fff", "0x1e8001234"])
         let images = crash.draft.images.map(\.json)
         XCTAssertEqual(images.count, 4, "ShopApp, UIKitCore, libsystem_kernel, libsystem_pthread")
         let app = try XCTUnwrap(images.first { $0["codeFile"] == "ShopApp" })
@@ -350,56 +380,134 @@ final class CrashReportingTests: XCTestCase {
         XCTAssertEqual(hangValue["type"], "App Hanging")
         XCTAssertEqual(hangValue["value"], "App hanging for 3.42 sec.")
         XCTAssertEqual(hangValue["mechanism"]?["type"], "app_hang")
+        XCTAssertEqual(hangValue["mechanism"]?["data"]?["source"], "metrickit")
     }
 
-    func testMetricKitCrashIsDroppedWhenBugCapsuleReportedIt() async throws {
-        await start(testMonitoringOptions())
+    func testMetricKitCallTreesAreCapped() throws {
+        func chain(_ depth: Int) -> JSONValue {
+            var frame: JSONValue = [
+                "binaryUUID": "6A1B0C6E-0000-4000-8000-000000000001", "offsetIntoBinaryTextSegment": 4096,
+                "binaryName": "ShopApp", "address": 4_369_026_108,
+            ]
+            for _ in 1..<depth {
+                frame = [
+                    "binaryUUID": "6A1B0C6E-0000-4000-8000-000000000001", "offsetIntoBinaryTextSegment": 4096,
+                    "binaryName": "ShopApp", "address": 4_369_026_108, "subFrames": [frame],
+                ]
+            }
+            return frame
+        }
+        let stacks: [JSONValue] = (0..<120).map { i in
+            ["threadAttributed": .bool(i == 3), "callStackRootFrames": [chain(i == 3 ? 300 : 60)]]
+        }
+        let payload: JSONValue = [
+            "timeStampEnd": "2026-10-25 10:00:00",
+            "crashDiagnostics": [["diagnosticMetaData": ["signal": 11], "callStackTree": ["callStacks": .array(stacks)]]],
+        ]
+        let d = try XCTUnwrap(
+            MetricKitConverter.diagnostics(fromPayload: payload, stack: StackBuilder(options: BugCapsuleMonitoringOptions())).first)
+        XCTAssertEqual(d.draft.exceptionValues?.first?["stacktrace"]?["frames"]?.arrayValue?.count, 250)
+        let threads = try XCTUnwrap(d.draft.threads)
+        XCTAssertLessThanOrEqual(threads.count, 100)
+        XCTAssertEqual(threads[0]["crashed"], true)
+        XCTAssertEqual(threads[0]["stacktrace"]?["frames"]?.arrayValue?.count, 250)
+        XCTAssertTrue(threads.dropFirst().allSatisfy { ($0["stacktrace"]?["frames"]?.arrayValue?.count ?? 0) <= 40 })
+        XCTAssertLessThanOrEqual(
+            threads.map { $0["stacktrace"]?["frames"]?.arrayValue?.count ?? 0 }.reduce(0, +), CrashEvents.maxTotalFrames)
+    }
+
+    /// Every resolved frame names its image by `imageAddr`, and every image has a size.
+    func assertFramesCarryTheirImage(_ d: EventDraft, file: StaticString = #filePath, line: UInt = #line) {
+        let images = Dictionary(d.images.map { (hex($0.loadAddress), $0) }, uniquingKeysWith: { a, _ in a })
+        let frames =
+            (d.exceptionValues ?? []).flatMap { $0["stacktrace"]?["frames"]?.arrayValue ?? [] }
+            + (d.threads ?? []).flatMap { $0["stacktrace"]?["frames"]?.arrayValue ?? [] }
+        XCTAssertFalse(frames.isEmpty, file: file, line: line)
+        for f in frames where f["package"] != nil {
+            let image = f["imageAddr"]?.stringValue.flatMap { images[$0] }
+            XCTAssertNotNil(image, "frame \(f) has no image", file: file, line: line)
+            if let image, let addr = parseHex(f["instructionAddr"]?.stringValue) {
+                XCTAssertTrue(image.contains(addr), file: file, line: line)
+            }
+        }
+        XCTAssertTrue(d.images.allSatisfy { $0.json["imageSize"]?.intValue ?? 0 > 0 }, file: file, line: line)
+    }
+
+    func mechanisms() -> [String] {
+        StubBackend.items("event").compactMap {
+            $0["exception"]?["values"]?.arrayValue?.last?["mechanism"]?["type"]?.stringValue
+        }.sorted()
+    }
+
+    func testMetricKitDiagnosticsBugCapsuleReportedAreDropped() async throws {
         let payload = try metricKitPayload()
         let crashTime = try XCTUnwrap(MetricKitConverter.parseTime("2026-10-25 10:00:00"))
-        // The native handler reported a crash 30 s apart: same crash.
-        monitoring.ledger.record(crashTime.addingTimeInterval(30))
+        await start(testMonitoringOptions())
+        // The native handler reported a crash 30 s apart, and the watchdog this hang.
+        monitoring.ledger.record(.crash, at: crashTime.addingTimeInterval(30), pid: nil)
+        monitoring.ledger.record(.hang, at: crashTime.addingTimeInterval(-20), pid: nil)
         monitoring.receiveMetricKit(payload, end: nil)
-        await flushUntil { !StubBackend.items("event").isEmpty }
-        var mechanisms = StubBackend.items("event").compactMap {
-            $0["exception"]?["values"]?.arrayValue?.last?["mechanism"]?["type"]?.stringValue
-        }
-        XCTAssertEqual(mechanisms, ["app_hang"], "hang sent, crash deduplicated")
+        await BugCapsule.flush(timeout: 2)
+        XCTAssertEqual(StubBackend.items("event").count, 0, "both already reported")
 
-        // 2 minutes apart: another crash, sent.
-        StubBackend.reset()
-        let fresh = tempDirectory()
+        // 2 minutes apart: another crash and hang, sent.
         await BugCapsule.resetForTesting()
-        await start(testMonitoringOptions(), directory: fresh)
-        monitoring.ledger.record(crashTime.addingTimeInterval(120))
+        StubBackend.reset()
+        await start(testMonitoringOptions(), directory: tempDirectory())
+        monitoring.ledger.record(.crash, at: crashTime.addingTimeInterval(120), pid: nil)
         monitoring.receiveMetricKit(payload, end: nil)
         await flushUntil { StubBackend.items("event").count >= 2 }
-        mechanisms = StubBackend.items("event").compactMap {
-            $0["exception"]?["values"]?.arrayValue?.last?["mechanism"]?["type"]?.stringValue
-        }
-        XCTAssertEqual(Set(mechanisms), ["metrickit", "app_hang"])
+        XCTAssertEqual(mechanisms(), ["app_hang", "metrickit"])
         let crash = try XCTUnwrap(StubBackend.items("event").first { $0["level"] == "fatal" })
         XCTAssertEqual(crash["release"], "com.shop.app@1.3.0+48", "the build that crashed")
+        XCTAssertNil(crash["contexts"]?["app"], "not this launch's app context")
+        XCTAssertNotNil(crash["contexts"]?["device"])
         XCTAssertFalse(crash["debugImages"]?.arrayValue?.isEmpty ?? true)
         XCTAssertEqual(crash["threads"]?.arrayValue?.count, 2)
     }
 
-    func testCrashLedgerPersistsAcrossLaunches() {
+    func testMetricKitEventsAreInTheOutboxBeforeReturning() async throws {
+        await start(testMonitoringOptions())
+        StubBackend.envelopeResponses = []
+        monitoring.receiveMetricKit(try metricKitPayload(), end: nil)
+        let queued = UploadOutbox.entries(in: dir.appendingPathComponent("envelopes"), fileExtension: "envelope")
+        XCTAssertFalse(queued.isEmpty, "written synchronously")
+    }
+
+    func testCrashLedgerMatchesByProcessThenTime() {
         let file = dir.appendingPathComponent("crash_times.json")
         let t = Date(timeIntervalSince1970: 1_800_000_000)
-        CrashLedger(file: file).record(t)
+        CrashLedger(file: file).record(.crash, at: t, pid: 3021)
+        CrashLedger(file: file).record(.hang, at: t, pid: nil)
         let next = CrashLedger(file: file)
-        XCTAssertTrue(next.contains(near: t.addingTimeInterval(-59)))
-        XCTAssertFalse(next.contains(near: t.addingTimeInterval(61)))
+        // Same process, anywhere in the payload's window.
+        XCTAssertTrue(next.contains(.crash, pid: 3021, from: t.addingTimeInterval(-3600), to: t.addingTimeInterval(3600)))
+        // Another process at the same time is another crash.
+        XCTAssertFalse(next.contains(.crash, pid: 4000, from: t, to: t))
+        // No pid: 60 s around the diagnostic.
+        XCTAssertTrue(next.contains(.crash, pid: nil, from: t, to: t.addingTimeInterval(59)))
+        XCTAssertFalse(next.contains(.crash, pid: nil, from: t, to: t.addingTimeInterval(61)))
+        XCTAssertTrue(next.contains(.hang, pid: 1, from: t, to: t.addingTimeInterval(30)))
+        XCTAssertFalse(next.contains(.hang, pid: nil, from: t, to: t.addingTimeInterval(300)))
     }
 
     // MARK: 5. crash bridge
 
+    let noWatchers = BugCapsuleCrashBridge.Options(appHangs: nil, metricKit: false)
+
+    func install(_ release: String = "r", environment: String = "production", directory: URL? = nil) -> Bool {
+        BugCapsuleCrashBridge.installForTesting(
+            directory: directory ?? dir, release: release, environment: environment, options: noWatchers)
+    }
+
+    func pending() -> [JSONValue] {
+        BugCapsuleCrashBridge.takePendingEvents().compactMap { try? JSON.parse(Data($0.utf8)) }
+    }
+
     func testBridgeTakePendingEventsReturnsEachCrashOnce() throws {
-        XCTAssertTrue(
-            BugCapsuleCrashBridge.installForTesting(
-                directory: dir, release: "com.shop.app@1.3.0+48", environment: "qa",
-                options: .init(appHangs: nil, metricKit: false)))
+        XCTAssertTrue(install("com.shop.app@1.3.0+48", environment: "qa"))
         XCTAssertEqual(CrashOwnership.current, .bridge)
+        XCTAssertTrue(BugCapsuleCrashBridge.nativeCrashHandlerInstalled)
         XCTAssertFalse(BugCapsuleCrashBridge.lastRunCrashed)
         XCTAssertEqual(BugCapsuleCrashBridge.takePendingEvents(), [])
         BugCapsuleCrashBridge.updateScope(
@@ -407,95 +515,205 @@ final class CrashReportingTests: XCTestCase {
         XCTAssertTrue(NativeCrashHandler.writeTestReport(signal: SIGSEGV))
         // The process ends; the next one (after an update) installs again.
         BugCapsuleCrashBridge.resetForTesting()
-        XCTAssertTrue(
-            BugCapsuleCrashBridge.installForTesting(
-                directory: dir, release: "com.shop.app@1.4.0+52", environment: "production",
-                options: .init(appHangs: nil, metricKit: false)))
+        XCTAssertTrue(install("com.shop.app@1.4.0+52"))
         XCTAssertTrue(BugCapsuleCrashBridge.lastRunCrashed)
 
-        let events = BugCapsuleCrashBridge.takePendingEvents()
+        let events = pending()
         XCTAssertEqual(events.count, 1)
-        let event = try XCTUnwrap(try JSON.parse(Data(events[0].utf8)).objectValue)
+        let event = try XCTUnwrap(events.first)
         XCTAssertNotNil(UUID(uuidString: event["eventId"]?.stringValue ?? ""))
         XCTAssertEqual(event["level"], "fatal")
+        XCTAssertEqual(event["runtime"], "ios")
         XCTAssertEqual(event["release"], "com.shop.app@1.3.0+48")
         XCTAssertEqual(event["environment"], "qa")
         XCTAssertEqual(event["tags"]?["screen"], "cart")
         XCTAssertEqual(event["user"]?["id"], "u1")
         XCTAssertNil(event["ignored"])
+        XCTAssertNil(event["pid"], "process id stays in the scope mirror")
         XCTAssertEqual(event["breadcrumbs"]?.arrayValue?.first?["message"], "before the crash")
         XCTAssertEqual(event["exception"]?["values"]?.arrayValue?.last?["mechanism"]?["type"], "signal")
-        XCTAssertNotNil(event["contexts"]?["device"])
+        XCTAssertNil(event["contexts"]?["device"], "the embedding SDK adds device contexts")
         let threads = try XCTUnwrap(event["threads"]?.arrayValue)
         XCTAssertGreaterThan(threads.count, 1)
+        XCTAssertEqual(threads.first?["crashed"], true)
         XCTAssertEqual(threads.filter { $0["crashed"] == true }.count, 1)
         XCTAssertFalse(event["debugImages"]?.arrayValue?.isEmpty ?? true)
 
         XCTAssertEqual(BugCapsuleCrashBridge.takePendingEvents(), [], "deleted once returned")
-        let pending = dir.appendingPathComponent("pending")
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: pending.path), [])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("events").path), [])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("reports").path), [])
+    }
+
+    func testBridgeUsesTheReportScopeOnlyForItsOwnProcess() throws {
+        func report(contextPid: Int, pid: Int) -> String {
+            let context = #"{"pid":\#(contextPid),"release":"old@1","environment":"qa","tags":{"screen":"cart"}}"#
+            return """
+                BCCRASH 1
+                kind signal
+                signal 11
+                time 1792592590
+                pid \(pid)
+                frame 0x1045a0c3c
+                context \(context.utf8.count)
+                \(context)
+                end
+
+                """
+        }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(report(contextPid: 41, pid: 41).utf8).write(to: NativeCrashHandler.reportFile(in: dir))
+        XCTAssertTrue(install())
+        var event = try XCTUnwrap(pending().first)
+        XCTAssertEqual(event["tags"]?["screen"], "cart")
+        XCTAssertEqual(event["release"], "old@1")
+
+        BugCapsuleCrashBridge.resetForTesting()
+        try Data(report(contextPid: 7, pid: 41).utf8).write(to: NativeCrashHandler.reportFile(in: dir))
+        BugCapsuleCrashBridge.updateScope(json: #"{"tags":{"screen":"now"}}"#)
+        XCTAssertTrue(install())
+        BugCapsuleCrashBridge.updateScope(json: #"{"tags":{"screen":"now"}}"#)
+        event = try XCTUnwrap(pending().first)
+        XCTAssertNil(event["tags"], "another process's scope: none, never this one's")
+    }
+
+    func testBridgeKeepsAReportUntilItsEventIsStored() throws {
+        XCTAssertTrue(install())
+        XCTAssertTrue(NativeCrashHandler.writeTestReport(signal: SIGSEGV))
+        BugCapsuleCrashBridge.resetForTesting()
+        // The events folder can't be written (a crash-on-launch loop, a full disk).
+        let events = dir.appendingPathComponent("events")
+        try FileManager.default.removeItem(at: events)
+        try Data().write(to: events)
+        XCTAssertTrue(install())
+        XCTAssertEqual(BugCapsuleCrashBridge.takePendingEvents(), [])
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("reports").path).count, 1,
+            "kept for the next launch")
+
+        BugCapsuleCrashBridge.resetForTesting()
+        try FileManager.default.removeItem(at: events)
+        XCTAssertTrue(install())
+        XCTAssertTrue(BugCapsuleCrashBridge.lastRunCrashed)
+        XCTAssertEqual(pending().count, 1)
     }
 
     func testBridgeUncaughtExceptionIsPendingOnce() throws {
-        XCTAssertTrue(
-            BugCapsuleCrashBridge.installForTesting(
-                directory: dir, release: "r", environment: "production", options: .init(appHangs: nil, metricKit: false)))
-        let exception = NSException(name: .invalidArgumentException, reason: "bad cart token=abcdef123456", userInfo: nil)
+        XCTAssertTrue(install())
+        BugCapsuleCrashBridge.updateScope(json: #"{"tags":{"screen":"cart"}}"#)
+        let exception = NSException(name: .invalidArgumentException, reason: "bad cart", userInfo: nil)
         CrashBridgeRuntime.shared.recordUncaught(exception)
         // abort() follows: its report only marks the run crashed.
         XCTAssertTrue(NativeCrashHandler.writeTestReport(signal: SIGABRT))
         BugCapsuleCrashBridge.resetForTesting()
-        XCTAssertTrue(
-            BugCapsuleCrashBridge.installForTesting(
-                directory: dir, release: "r", environment: "production", options: .init(appHangs: nil, metricKit: false)))
+        XCTAssertTrue(install())
         XCTAssertTrue(BugCapsuleCrashBridge.lastRunCrashed)
-        let events = BugCapsuleCrashBridge.takePendingEvents().compactMap { try? JSON.parse(Data($0.utf8)) }
+        let events = pending()
         XCTAssertEqual(events.count, 1)
         let value = events.first?["exception"]?["values"]?.arrayValue?.last
         XCTAssertEqual(value?["type"], "NSInvalidArgumentException")
-        XCTAssertEqual(value?["value"], "bad cart token=[REDACTED]")
+        XCTAssertEqual(value?["value"], "bad cart")
         XCTAssertEqual(value?["mechanism"]?["type"], "nsexception")
+        XCTAssertEqual(events.first?["tags"]?["screen"], "cart")
         let threads = try XCTUnwrap(events.first?["threads"]?.arrayValue)
+        XCTAssertEqual(threads.first?["crashed"], true)
         XCTAssertEqual(threads.filter { $0["crashed"] == true }.count, 1)
         XCTAssertGreaterThan(threads.count, 1)
     }
 
-    func testBridgeMetricKitDiagnosticsArePendingAndDeduplicated() throws {
-        XCTAssertTrue(
-            BugCapsuleCrashBridge.installForTesting(
-                directory: dir, release: "r", environment: "production", options: .init(appHangs: nil, metricKit: false)))
-        let payload = try metricKitPayload()
-        let crashTime = try XCTUnwrap(MetricKitConverter.parseTime("2026-10-25 10:00:00"))
-        CrashBridgeRuntime.shared.receiveMetricKit(payload, end: nil)
-        var events = BugCapsuleCrashBridge.takePendingEvents().compactMap { try? JSON.parse(Data($0.utf8)) }
-        XCTAssertEqual(events.compactMap { $0["level"]?.stringValue }.sorted(), ["error", "fatal"])
+    func testBridgeHangsReachTheListenerAndThePendingEvents() async throws {
+        XCTAssertTrue(install())
+        final class Sink: @unchecked Sendable {
+            let lock = NSLock()
+            var events: [String] = []
+        }
+        let sink = Sink()
+        BugCapsuleCrashBridge.setListener { json in sink.lock.locked { sink.events.append(json) } }
+        // Sampled off the main thread, as the watchdog does.
+        let samples = await Task.detached { NativeCrashHandler.sampleThreads() }.value
+        CrashBridgeRuntime.shared.recordHang(samples, threshold: 2)
+        let end = Date().addingTimeInterval(5)
+        while sink.lock.locked({ sink.events.isEmpty }) && Date() < end { try await Task.sleep(nanoseconds: 20_000_000) }
+        let heard = try XCTUnwrap(sink.lock.locked { sink.events.first })
+        let events = BugCapsuleCrashBridge.takePendingEvents()
+        XCTAssertEqual(events, [heard])
+        let hang = try JSON.parse(Data(heard.utf8))
+        XCTAssertEqual(hang["level"], "error")
+        XCTAssertEqual(hang["exception"]?["values"]?.arrayValue?.last?["mechanism"]?["type"], "app_hang")
+        XCTAssertEqual(hang["threads"]?.arrayValue?.first?["name"], "main")
+        // A later MetricKit hang diagnostic of this process is the same hang.
+        var payload = try metricKitPayload().objectValue!
+        payload["crashDiagnostics"] = .array([])
+        let now = ISODate.format(Date())
+        payload["timeStampBegin"] = .string(now)
+        payload["timeStampEnd"] = .string(now)
+        CrashBridgeRuntime.shared.receiveMetricKit(.object(payload), end: nil)
+        XCTAssertEqual(BugCapsuleCrashBridge.takePendingEvents(), [])
+    }
 
-        // A report the bridge handled at the same time: only the hang.
-        BugCapsuleCrashBridge.resetForTesting()
-        CrashLedger(file: dir.appendingPathComponent("crash_times.json")).record(crashTime)
-        XCTAssertTrue(
-            BugCapsuleCrashBridge.installForTesting(
-                directory: dir, release: "r", environment: "production", options: .init(appHangs: nil, metricKit: false)))
+    func testBridgeMetricKitDiagnosticsArePendingDeduplicatedAndScopedByProcess() throws {
+        // The process MetricKit describes (pid 3021) mirrored its scope to disk.
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"pid":3021,"release":"com.shop.app@1.3.0+48","environment":"qa","tags":{"screen":"cart"}}"#.utf8)
+            .write(to: dir.appendingPathComponent("scope.json"))
+        XCTAssertTrue(install())
+        let payload = try metricKitPayload()
         CrashBridgeRuntime.shared.receiveMetricKit(payload, end: nil)
-        events = BugCapsuleCrashBridge.takePendingEvents().compactMap { try? JSON.parse(Data($0.utf8)) }
+        var events = pending()
+        XCTAssertEqual(events.compactMap { $0["level"]?.stringValue }.sorted(), ["error", "fatal"])
+        let crash = try XCTUnwrap(events.first { $0["level"] == "fatal" })
+        XCTAssertEqual(crash["tags"]?["screen"], "cart", "scope of pid 3021")
+        XCTAssertEqual(crash["environment"], "qa")
+        let hang = try XCTUnwrap(events.first { $0["level"] == "error" })
+        XCTAssertNil(hang["tags"], "no pid on the hang diagnostic: no scope")
+
+        // The handlers reported that crash themselves: only the hang.
+        BugCapsuleCrashBridge.resetForTesting()
+        CrashLedger(file: dir.appendingPathComponent("crash_times.json"))
+            .record(.crash, at: try XCTUnwrap(MetricKitConverter.parseTime("2026-10-25 09:59:30")), pid: 3021)
+        XCTAssertTrue(install())
+        CrashBridgeRuntime.shared.receiveMetricKit(payload, end: nil)
+        events = pending()
         XCTAssertEqual(events.compactMap { $0["level"]?.stringValue }, ["error"])
     }
 
-    func testBridgeAndSDKNeverBothInstallTheHandlers() async throws {
-        // The SDK first: the bridge stays out.
+    func testBridgeScopeIsMirroredToDiskWithItsProcess() async throws {
+        XCTAssertTrue(install("com.shop.app@1.4.0+52"))
+        BugCapsuleCrashBridge.updateScope(json: #"{"tags":{"screen":"a"}}"#)
+        BugCapsuleCrashBridge.updateScope(json: #"{"tags":{"screen":"b"}}"#)
+        let file = dir.appendingPathComponent("scope.json")
+        let end = Date().addingTimeInterval(5)
+        while (try? loadJSON(file))?["tags"]?["screen"] != "b" && Date() < end {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let scope = try loadJSON(file)
+        XCTAssertEqual(scope["pid"]?.intValue, Int(getpid()))
+        XCTAssertEqual(scope["release"], "com.shop.app@1.4.0+52")
+        XCTAssertEqual(scope["tags"]?["screen"], "b")
+    }
+
+    func testBridgeInstallsOnceAndNeverNextToTheSDK() async throws {
+        XCTAssertTrue(install("first"))
+        XCTAssertTrue(install("second"), "idempotent")
+        XCTAssertTrue(NativeCrashHandler.writeTestReport(signal: SIGSEGV))
+        BugCapsuleCrashBridge.resetForTesting()
+        XCTAssertTrue(install())
+        XCTAssertEqual(pending().first?["release"], "first", "the first settings are kept")
+        BugCapsuleCrashBridge.resetForTesting()
+
+        // The SDK running (even without monitoring): the bridge stays out.
+        await start(.disabled)
+        XCTAssertFalse(install(directory: tempDirectory()))
+        XCTAssertFalse(BugCapsuleCrashBridge.nativeCrashHandlerInstalled)
+        XCTAssertEqual(BugCapsuleCrashBridge.takePendingEvents(), [])
+        await BugCapsule.resetForTesting()
         await start(testMonitoringOptions(nativeCrashes: true))
         XCTAssertEqual(CrashOwnership.current, .sdk)
-        XCTAssertFalse(
-            BugCapsuleCrashBridge.installForTesting(
-                directory: tempDirectory(), release: "r", environment: "e", options: .init(appHangs: nil, metricKit: false)))
-        XCTAssertEqual(BugCapsuleCrashBridge.takePendingEvents(), [])
+        XCTAssertFalse(install(directory: tempDirectory()))
         await BugCapsule.resetForTesting()
         XCTAssertNil(CrashOwnership.current)
 
-        // The bridge first: the SDK's monitoring skips them and leaves them installed.
-        XCTAssertTrue(
-            BugCapsuleCrashBridge.installForTesting(
-                directory: dir, release: "r", environment: "e", options: .init(appHangs: nil, metricKit: false)))
+        // The bridge first: the SDK's monitoring skips the handlers and leaves them installed.
+        XCTAssertTrue(install())
         await start(testMonitoringOptions(nativeCrashes: true), directory: tempDirectory())
         XCTAssertEqual(CrashOwnership.current, .bridge)
         await BugCapsule.resetForTesting()

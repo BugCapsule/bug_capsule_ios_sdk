@@ -18,8 +18,8 @@
 extern "C" {
 #endif
 
-/// Maximum frames written for the crashing thread.
-#define BC_CRASH_MAX_FRAMES 128
+/// Maximum frames written for the crashing thread (monitoring-v1 allows 250).
+#define BC_CRASH_MAX_FRAMES 250
 /// Maximum threads written per report (the crashed thread always is).
 #define BC_CRASH_MAX_THREADS 100
 /// Maximum frames per thread in the threads section.

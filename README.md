@@ -385,14 +385,16 @@ Crashes are written to disk by an async-signal-safe handler and sent on the
 next launch as `fatal` events:
 
 - **Signals and Mach exceptions** (`EXC_BAD_ACCESS`, Swift traps, `abort()`):
-  the crashing thread's stack plus every other thread (up to 100 threads,
-  100 frames each), with the scope, release and environment of the run that
+  the crashing thread's stack plus every other thread (crashed thread first,
+  then main; up to 100 threads, 250 frames for the crashed one and 40 for
+  the others), with the scope, release and environment of the run that
   crashed. A crash in a leaf function keeps its caller (arm64 link register).
 - **Uncaught `NSException`s**: written synchronously before the process ends.
 - **App hangs**: one `app_hang` error per hang, with every thread's stack.
-- **MetricKit** (iOS 14+): crash diagnostics BugCapsule did not see itself
-  (e.g. a crash before `start`) and hang diagnostics, delivered by iOS on a
-  later launch. Same crash within 60 s of a BugCapsule report: sent once.
+- **MetricKit** (iOS 14+): crash and hang diagnostics BugCapsule did not
+  see itself (e.g. a crash before `start`), delivered by iOS on a later
+  launch. A crash or hang BugCapsule already reported (same process, or
+  within 60 s) is sent once.
 - **Release health**: the run that crashed or died is closed on the next
   launch with its own release, also after an update.
 
@@ -412,15 +414,22 @@ the same shape as Android's `dev.bugcapsule.android.embedding.CrashBridge`:
 BugCapsuleCrashBridge.install(
     release: "com.shop.app@1.4.0+52", environment: "production",
     options: .init(nativeCrashes: true, appHangs: 2, metricKit: true, inAppIncludes: ["Runner"]))
-BugCapsuleCrashBridge.updateScope(json: scopeJSON)       // user, tags, contexts, breadcrumbs
+BugCapsuleCrashBridge.updateScope(json: scopeJSON)        // user, tags, contexts, breadcrumbs (redacted)
+BugCapsuleCrashBridge.setListener { event in send(event) } // hangs while the app runs
 let crashed = BugCapsuleCrashBridge.lastRunCrashed
-for event in BugCapsuleCrashBridge.takePendingEvents() {  // monitoring-v1 event JSON
-    send(event)                                           // returned once, then deleted
+for event in BugCapsuleCrashBridge.takePendingEvents() {   // waits up to 5 s; oldest first
+    send(event)                                            // returned once, then deleted
 }
 ```
 
-Only one of the two installs the handlers: when `BugCapsule.start` ran
-first, `install` returns false; when the bridge ran first, monitoring skips
+Events are monitoring-v1 event JSON with `runtime: "ios"`; the embedding SDK
+adds its device contexts, redacts and sends them. An earlier run's event has
+that run's scope only when it is known for that process (its crash report,
+or the `scope.json` mirror for the same pid); otherwise it has none, never
+the current one.
+
+Only one of the two installs the handlers: while `BugCapsule.start` is
+running, `install` returns false; when the bridge ran first, monitoring skips
 its own crash handlers.
 
 ### Readable stack traces: upload dSYMs

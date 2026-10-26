@@ -4,35 +4,64 @@ import Foundation
     import MetricKit
 #endif
 
-/// When BugCapsule itself reported a crash (native report times), persisted
-/// so a MetricKit crash diagnostic for the same crash is not sent twice.
+/// Crashes and hangs BugCapsule reported itself (native crash reports,
+/// the hang watchdog), with the process id, persisted so a MetricKit
+/// diagnostic of the same failure is not sent twice.
 final class CrashLedger: @unchecked Sendable {
-    /// A diagnostic this close to a recorded crash is the same crash.
+    enum Kind: String { case crash, hang }
+
+    struct Entry: Equatable {
+        var kind: Kind
+        var time: Date
+        var pid: Int?
+    }
+
+    /// A diagnostic this close to a recorded failure is the same one.
     static let window: TimeInterval = 60
-    static let maxEntries = 50
+    static let maxEntries = 100
     static let maxAge: TimeInterval = 30 * 24 * 3600
 
     private let file: URL?
     private let lock = NSLock()
-    private var times: [Date]
+    private var entries: [Entry]
 
     init(file: URL?) {
         self.file = file
         let raw = file.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSON.parse($0) }
-        times = (raw?.arrayValue ?? []).compactMap { $0.doubleValue }.map { Date(timeIntervalSince1970: $0) }
-    }
-
-    func record(_ time: Date) {
-        lock.locked {
-            let cutoff = Date().addingTimeInterval(-Self.maxAge)
-            times = Array((times.filter { $0 > cutoff } + [time]).suffix(Self.maxEntries))
-            guard let file else { return }
-            try? FileIO.writeAtomically(JSON.encodeData(.array(times.map { .double($0.timeIntervalSince1970) })), to: file)
+        entries = (raw?.arrayValue ?? []).compactMap { e in
+            guard let kind = e["kind"]?.stringValue.flatMap(Kind.init(rawValue:)), let t = e["time"]?.doubleValue else {
+                return nil
+            }
+            return Entry(kind: kind, time: Date(timeIntervalSince1970: t), pid: e["pid"]?.intValue)
         }
     }
 
-    func contains(near time: Date) -> Bool {
-        lock.locked { times.contains { abs($0.timeIntervalSince(time)) <= Self.window } }
+    func record(_ kind: Kind, at time: Date, pid: Int?) {
+        lock.locked {
+            let cutoff = Date().addingTimeInterval(-Self.maxAge)
+            entries = Array((entries.filter { $0.time > cutoff } + [Entry(kind: kind, time: time, pid: pid)]).suffix(Self.maxEntries))
+            guard let file else { return }
+            let json: [JSONValue] = entries.map {
+                ["kind": .string($0.kind.rawValue), "time": .double($0.time.timeIntervalSince1970), "pid": $0.pid.map { .int($0) } ?? .null]
+            }
+            try? FileIO.writeAtomically(JSON.encodeData(.array(json)), to: file)
+        }
+    }
+
+    /// Whether a [kind] failure was recorded for the diagnostic: the same
+    /// process (when both have a pid) within [from − 60 s, to + 60 s], or,
+    /// without a pid, within 60 s of [to].
+    func contains(_ kind: Kind, pid: Int?, from: Date, to: Date) -> Bool {
+        lock.locked {
+            entries.contains { e in
+                guard e.kind == kind else { return false }
+                if let pid, let ePid = e.pid {
+                    return pid == ePid && e.time >= from.addingTimeInterval(-Self.window)
+                        && e.time <= to.addingTimeInterval(Self.window)
+                }
+                return abs(e.time.timeIntervalSince(to)) <= Self.window
+            }
+        }
     }
 }
 
@@ -49,23 +78,35 @@ enum MetricKitConverter {
         var appVersion: String?
         var appBuild: String?
         var bundleId: String?
+        /// The process it describes (iOS 17+ metadata), and the payload's window.
+        var pid: Int?
+        var windowStart: Date
+        var windowEnd: Date
+
+        /// Already reported by BugCapsule itself (a crash report or the hang watchdog).
+        func isDuplicate(in ledger: CrashLedger?) -> Bool {
+            ledger?.contains(isCrash ? .crash : .hang, pid: pid, from: windowStart, to: windowEnd) ?? false
+        }
     }
 
-    static func diagnostics(fromPayload payload: JSONValue, stack: StackBuilder, timestamp: Date? = nil) -> [Diagnostic] {
+    static func diagnostics(
+        fromPayload payload: JSONValue, stack: StackBuilder, timestamp: Date? = nil, begin: Date? = nil
+    ) -> [Diagnostic] {
         let time =
             timestamp ?? parseTime(payload["timeStampEnd"]?.stringValue) ?? parseTime(payload["timeStampBegin"]?.stringValue)
             ?? Date()
+        let start = min(begin ?? parseTime(payload["timeStampBegin"]?.stringValue) ?? time, time)
         var out: [Diagnostic] = []
         for d in payload["crashDiagnostics"]?.arrayValue ?? [] {
-            if let c = convert(d, isCrash: true, time: time, stack: stack) { out.append(c) }
+            if let c = convert(d, isCrash: true, time: time, start: start, stack: stack) { out.append(c) }
         }
         for d in payload["hangDiagnostics"]?.arrayValue ?? [] {
-            if let c = convert(d, isCrash: false, time: time, stack: stack) { out.append(c) }
+            if let c = convert(d, isCrash: false, time: time, start: start, stack: stack) { out.append(c) }
         }
         return out
     }
 
-    private static func convert(_ d: JSONValue, isCrash: Bool, time: Date, stack: StackBuilder) -> Diagnostic? {
+    private static func convert(_ d: JSONValue, isCrash: Bool, time: Date, start: Date, stack: StackBuilder) -> Diagnostic? {
         let meta = d["diagnosticMetaData"] ?? .object([:])
         let stacks = (d["callStackTree"]?["callStacks"]?.arrayValue ?? []).prefix(CrashEvents.maxThreads)
         var images: [String: DebugImage] = [:]
@@ -106,7 +147,8 @@ enum MetricKitConverter {
         draft.hint = EventHint(fromPreviousLaunch: isCrash)
         return Diagnostic(
             isCrash: isCrash, draft: draft, appVersion: meta["appVersion"]?.stringValue,
-            appBuild: meta["appBuildVersion"]?.stringValue, bundleId: meta["bundleIdentifier"]?.stringValue)
+            appBuild: meta["appBuildVersion"]?.stringValue, bundleId: meta["bundleIdentifier"]?.stringValue,
+            pid: meta["pid"]?.intValue, windowStart: start, windowEnd: time)
     }
 
     /// The release of the build that produced [d]: [current] for this
@@ -121,7 +163,7 @@ enum MetricKitConverter {
     }
 
     private static func describeCrash(_ meta: JSONValue) -> (String, String, JSONObject) {
-        var data: JSONObject = [:]
+        var data: JSONObject = ["source": "metrickit"]
         let exceptionType = meta["exceptionType"]?.intValue
         let signal = meta["signal"]?.intValue
         if let exceptionType { data["exception"] = .int(exceptionType) }
@@ -193,14 +235,15 @@ enum MetricKitConverter {
 }
 
 /// Receives MetricKit diagnostic payloads (iOS 14+) and hands each one's
-/// JSON and end time to [handler] on MetricKit's background thread.
+/// JSON and time window to [handler] on MetricKit's background thread; the
+/// handler persists the events before returning.
 /// Registering happens off the main thread, so launch never waits for it.
 final class MetricKitSubscriber: NSObject, @unchecked Sendable {
-    private let handler: @Sendable (JSONValue, Date?) -> Void
+    private let handler: @Sendable (JSONValue, Date?, Date?) -> Void
     private let lock = NSLock()
     private var registered = false
 
-    init(handler: @escaping @Sendable (JSONValue, Date?) -> Void) {
+    init(handler: @escaping @Sendable (JSONValue, Date?, Date?) -> Void) {
         self.handler = handler
     }
 
@@ -224,9 +267,9 @@ final class MetricKitSubscriber: NSObject, @unchecked Sendable {
         #endif
     }
 
-    func receive(_ json: Data, end: Date?) {
+    func receive(_ json: Data, begin: Date?, end: Date?) {
         guard let value = try? JSON.parse(json) else { return }
-        handler(value, end)
+        handler(value, begin, end)
     }
 }
 
@@ -234,7 +277,7 @@ final class MetricKitSubscriber: NSObject, @unchecked Sendable {
     @available(iOS 14, *)
     extension MetricKitSubscriber: MXMetricManagerSubscriber {
         func didReceive(_ payloads: [MXDiagnosticPayload]) {
-            for p in payloads { receive(p.jsonRepresentation(), end: p.timeStampEnd) }
+            for p in payloads { receive(p.jsonRepresentation(), begin: p.timeStampBegin, end: p.timeStampEnd) }
         }
     }
 #endif
