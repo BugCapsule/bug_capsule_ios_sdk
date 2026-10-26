@@ -497,6 +497,24 @@ final class WebSocketTests: XCTestCase {
         XCTAssertThrowsError(try RemoteCaptureConfig(json: ["disabledAdapters": "all"]))
     }
 
+    func testBodyCaptureOffOmitsInteractionPayloads() throws {
+        let session = BugCapsuleSession(
+            config: BugCapsuleConfig(appVersion: "1", appBuild: "1", mode: .qa), integrations: [],
+            overrides: BugCapsuleTestOverrides(storageDirectory: tempDirectory()))
+        let data: JSONObject = [
+            "dep": .string("ws"), "conn": .string("ws1"), "index": .int(0),
+            "payload": .object(["mode": .string("full"), "replayable": .bool(true), "value": .string("hello"), "bytes": .int(5)]),
+        ]
+        let out = try XCTUnwrap(session.sanitize("ws.send", data, redactor: Redactor(), captureBodies: false, hook: false))
+        let payload = try XCTUnwrap(out["payload"]?.objectValue)
+        XCTAssertEqual(payload["mode"], .string("omitted"))
+        XCTAssertEqual(payload["replayable"], .bool(false))
+        XCTAssertNil(payload["value"])
+        XCTAssertEqual(payload["bytes"], .int(5))
+        let kept = try XCTUnwrap(session.sanitize("ws.send", data, redactor: Redactor(), captureBodies: true, hook: false))
+        XCTAssertEqual(kept["payload"]?.objectValue?["value"], .string("hello"))
+    }
+
     func testReplayWithoutTheIntegrationNeverGoesLive() async throws {
         let server = FakeWebSocketServer()
         let session = BugCapsuleSession(

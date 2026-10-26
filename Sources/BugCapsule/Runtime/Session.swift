@@ -209,6 +209,17 @@ public final class BugCapsuleSession: @unchecked Sendable {
                 // Match keys and payload objects were built from redacted
                 // values by the adapter; mode and replayable must stay true.
                 for k in ["key"] + InteractionTypes.payloadFields { if let v = data[k] { out[k] = v } }
+                // Body capture off (local or remote) omits interaction
+                // payloads too (capsule-v2 §7); sizes are kept.
+                if !captureBodies {
+                    for k in InteractionTypes.payloadFields {
+                        guard case .object(var payload)? = out[k] else { continue }
+                        payload["mode"] = .string("omitted")
+                        payload["replayable"] = .bool(false)
+                        payload["value"] = nil
+                        out[k] = .object(payload)
+                    }
+                }
             }
         }
         guard hook, let before = config.beforeRecord else { return out }
