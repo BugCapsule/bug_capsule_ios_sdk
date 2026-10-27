@@ -1,39 +1,38 @@
-# BugCapsule release candidates — 2026-10-23
+# Release validation and distribution
 
-No package has been published. Versions remain Flutter/Android/iOS 0.4.0 and Web 0.3.0. Review the readiness ledger before release: a distributable archive does not close outstanding device/feature gates.
+The release workflow builds and tests candidates before publishing. Historical
+validation evidence remains in [validation-2026-10-23.md](validation-2026-10-23.md);
+it describes that run, not the latest package versions. See the repository
+CHANGELOG and manifest for the candidate version, and the package registry or
+GitHub release for publication status.
 
-All four SDKs and both CLIs are subject to the Bug Capsule Proprietary License. Copyright 2026 Bug Capsule. All rights reserved. Use, copying, modification, and distribution require prior written permission. Third-party licenses and rights validly granted for earlier versions remain unaffected. Previously generated release candidates must be rebuilt before distribution to include the current license.
+## Standalone CLI
 
-## Flutter and multi-runtime CLI
+Install `npm install -g @bugcapsule/cli@0.4.0-beta.3`, then `bugcapsule login`.
+The CLI downloads and checks a native executable; it does not require Dart or
+Flutter. Direct macOS, Linux and Windows executables are attached to the
+Flutter repository's v0.4.1-beta.7 release. Replay needs only its app's toolchain.
 
-From `bug_capsule_flutter_sdk`, run `flutter analyze`, package tests, then `python3 tool/package_release.py`. It produces `dist/bug_capsule-0.4.0.tar.gz` and SHA-256. The candidate removes workspace-only resolution and validates outside the repository to avoid inherited ignores. Extract outside the checkout, run `flutter pub publish --dry-run`, and after reviewing release gates publish with `flutter pub publish` yourself.
+## Release checks
 
-Clean local install: depend on the extracted package using a path dependency, run `flutter pub get`, and invoke `dart run bug_capsule:bugcapsule --help` from that Flutter app. The package includes all integrations; constraints are in pubspec.yaml and a fresh consumer resolved bloc 9, Riverpod 3, Dio 5, http 1, go_router 18 and SharedPreferences 2 successfully on this host. This is not evidence for every allowed lower-bound version.
+- Flutter: `flutter pub get`, `flutter analyze`, core and native plugin tests,
+  then `python3 tool/package_release.py` (includes a pub.dev dry run).
+- Standalone CLI: `python3 tool/build_cli.py`; the GitHub Actions matrix builds
+  macOS ARM64/x64, Linux ARM64/x64 and Windows x64 and tests without Dart on PATH.
+- Android: `./gradlew test lintRelease publishAll`, native smoke test, then
+  `python3 scripts/central-bundle.py --sign-key KEY_ID`. Coordinates use
+  `io.github.bugcapsule`, including the Gradle plugin. Publish the signed bundle
+  through Maven Central and verify an independent consumer.
+- iOS: `sh scripts/package-release.sh`, release-mode replay gate, and an iOS
+  simulator build. SwiftPM distribution resolves the version tag.
+- Web: `npm ci`, `npm run build`, `npm run typecheck`, `npm test`, then
+  `npm run pack:all`. Publish the reviewed tarballs with the `beta` dist-tag.
 
-For a standalone command, `flutter pub global activate --source path /absolute/path/to/extracted/bug_capsule-0.4.0` was verified with an isolated PUB_CACHE; add that cache’s bin directory to PATH.
+Publish Android and iOS before the Flutter native plugin, which references their
+released versions. Publish the standalone executable assets before the npm CLI.
+Check all published artifacts with clean consumers; packaging alone does not
+prove publication or runtime compatibility.
 
-The multi-runtime `bugcapsule` CLI is this Dart executable. npm `@bugcapsule/cli` is the sourcemap tool; it does not supply run/verify/regress. `capture --on` enables the kill switch (capture disabled); `capture --off` resumes capture. Keep this meaning in scripts.
-
-## Android
-
-Run `./gradlew test lintRelease publishAll`. Local Maven repository: `build/repo` (including Gradle plugin `dev.bugcapsule.gradle` 0.4.0 and its marker); coordinates `dev.bugcapsule:bugcapsule-android:0.4.0` plus optional modules. A standalone API 23 consumer successfully compiled release against this repository. Lint errors fail the build.
-
-Run `python3 scripts/central-bundle.py` to produce an explicitly UNSIGNED review ZIP. POMs contain SCM, developer, URL and license metadata; source and Javadoc jars are included. To prepare an upload candidate, configure your existing GPG key and run `python3 scripts/central-bundle.py --sign-key YOUR_KEY_ID`. The script signs and adds checksums but never uploads. Confirm ownership of `dev.bugcapsule` in the Central Portal before uploading; if that namespace is not yours, decide coordinates and rebuild rather than publishing under an unauthorized namespace. Validate the signed bundle in the portal and publish manually. No signing key or registry credential was generated here.
-
-## iOS
-
-Run `sh scripts/package-release.sh`. Candidate: `dist/bugcapsule-ios-0.4.0.tar.gz` plus SHA-256. A separate SwiftPM executable built and ran using the extracted source. Actual SwiftPM distribution resolves the repository's version tag: after review, commit the candidate source, create `v0.4.0` on the intended commit and push it yourself. Consumers use the repository URL and version 0.4.0. No tag was created or pushed here.
-
-Capture/semantic replay on the tested iOS 27 simulator is separate from minimum iOS 15 and physical-device validation. Pointer replay and physical-device CLI launch are still missing features.
-
-## Web
-
-Run `npm ci`, `npx playwright install chromium firefox webkit`, `npm run typecheck`, `npm run build`, `npm test`, then `npm run pack:all`. Four candidates are in `dist-packages`. Install all local tarballs together to resolve same-version peer dependencies; add React for the React package. The clean consumer import check passed.
-
-After checking package-name ownership and release availability, publish each reviewed tarball yourself, starting with `@bugcapsule/web`, then React, web-replay and the sourcemap CLI. Do not assume these versions are currently available in the registry. SDK browser tests cover Playwright Chromium/Firefox/WebKit; the external replay launcher still supports Chromium only. WebKit is not certification of every Safari release.
-
-## Evidence limits
-
-Unit/browser/simulator tests, isolated backend E2E and artifact consumption are recorded separately in the readiness ledger. Physical-device overhead, native fatal-crash handling under real OS conditions, minimum iOS and full backend symbolication remain explicit gates. Hosted CI workflows were added but have not been executed on GitHub in this session.
-
-Detailed test results and remaining gates: [validation evidence](validation-2026-10-23.md).
+Physical-device behavior, minimum OS versions, overhead and end-to-end native
+symbolication require their own evidence. Simulator/unit checks do not replace
+those checks. Each package's LICENSE is authoritative for its license.

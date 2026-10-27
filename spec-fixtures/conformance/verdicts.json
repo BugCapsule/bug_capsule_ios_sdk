@@ -453,6 +453,54 @@
       "reasonCodes": []
     },
     {
+      "name": "crash capsule: the same crash in another in-app frame reproduces",
+      "kind": "replay",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "reproduced",
+          "expectedSignature": "crash:SIGSEGV",
+          "divergences": [
+            "failure.different_frame"
+          ]
+        }
+      ],
+      "verdict": "reproduced",
+      "wire": "reproduced",
+      "exitCode": 0,
+      "validAttempts": 1,
+      "attemptStatuses": [
+        "reproduced"
+      ],
+      "reasonCodes": [
+        "failure.different_frame"
+      ]
+    },
+    {
+      "name": "crash capsule: another crash type is inconclusive",
+      "kind": "verify",
+      "requested": 1,
+      "reports": [
+        {
+          "outcome": "not_reproduced",
+          "expectedSignature": "crash:SIGSEGV",
+          "otherFailures": [
+            "crash:SIGABRT"
+          ]
+        }
+      ],
+      "verdict": "inconclusive",
+      "wire": "inconclusive",
+      "exitCode": 3,
+      "validAttempts": 0,
+      "attemptStatuses": [
+        "invalid"
+      ],
+      "reasonCodes": [
+        "failure.different"
+      ]
+    },
+    {
       "name": "redacted text replay is material",
       "kind": "verify",
       "requested": 1,
