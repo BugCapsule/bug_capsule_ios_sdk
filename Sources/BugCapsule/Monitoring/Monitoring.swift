@@ -138,6 +138,16 @@ final class Monitoring: @unchecked Sendable {
 
     var lastEventId: String? { lock.locked { _lastEventId } }
 
+    /// MetricKit diagnostics will be received: journals of processes that
+    /// died without a crash report are kept for them.
+    var metricKitActive: Bool {
+        #if canImport(MetricKit) && os(iOS)
+            return lock.locked { metricKit != nil }
+        #else
+            return false
+        #endif
+    }
+
     // MARK: start / stop
 
     /// Starts monitoring: reports what the previous launch left (native
@@ -164,9 +174,20 @@ final class Monitoring: @unchecked Sendable {
         }
         health.discardPrevious()
         if let report, let directory {
-            if !report.suppressed { _ = capture(eventFromReport(report), synchronous: true) }
             ledger.record(.crash, at: report.time, pid: report.pid)
-            NativeCrashHandler.discardPendingReport(in: directory)
+            if !report.suppressed, let session, let pid = report.pid, let journal = session.crashJournals?.find(pid: pid) {
+                // That process kept a crash journal: its capsule is built off
+                // the main thread (crash-capsules §2). The report stays until
+                // the event is stored.
+                session.queue.async { [self] in
+                    session.captureCrash(
+                        eventFromReport(report), journal: journal, crashTime: report.preciseTime, monitoring: self)
+                    NativeCrashHandler.discardPendingReport(in: directory)
+                }
+            } else {
+                if !report.suppressed { _ = capture(eventFromReport(report), synchronous: true) }
+                NativeCrashHandler.discardPendingReport(in: directory)
+            }
         }
         scope.onChange = { [weak self] in self?.scheduleContextSync() }
         // Uncaught NSExceptions become fatal events (chained handler).
@@ -410,6 +431,13 @@ final class Monitoring: @unchecked Sendable {
     /// before returning (crash paths).
     @discardableResult
     func capture(_ draft: EventDraft, capsuleId: String? = nil, synchronous: Bool = false) -> String? {
+        guard let payload = prepare(draft, capsuleId: capsuleId) else { return nil }
+        return send(payload, draft: draft, synchronous: synchronous)
+    }
+
+    /// The payload `capture` would queue (sampled, through `beforeSend`), or
+    /// nil when it is dropped. A crash capsule is built between this and `send`.
+    func prepare(_ draft: EventDraft, capsuleId: String?) -> JSONObject? {
         guard isActive else { return nil }
         var payload = payload(for: draft, capsuleId: capsuleId)
         let level = MonitoringLevel(rawValue: payload["level"]?.stringValue ?? "") ?? .error
@@ -418,7 +446,14 @@ final class Monitoring: @unchecked Sendable {
             guard let kept = before(MonitoringEvent(payload: payload), draft.hint) else { return nil }
             payload = kept.payload
         }
+        return payload["eventId"]?.stringValue == nil ? nil : payload
+    }
+
+    /// Queues a payload from `prepare`. Returns its id.
+    @discardableResult
+    func send(_ payload: JSONObject, draft: EventDraft, synchronous: Bool) -> String? {
         guard let id = payload["eventId"]?.stringValue else { return nil }
+        let level = MonitoringLevel(rawValue: payload["level"]?.stringValue ?? "") ?? .error
         lock.locked { _lastEventId = id }
         if draft.exceptionValues != nil && (level == .error || level == .fatal) && draft.template == nil && !synchronous {
             if sessionTrackingEnabled { health?.errorCaptured() }
@@ -510,7 +545,13 @@ final class Monitoring: @unchecked Sendable {
             var contexts = lock.locked { staticContexts }
             contexts["app"] = nil
             draft.template = ["release": .string(r), "environment": .string(environment), "contexts": .object(contexts)]
-            capture(draft, synchronous: true)
+            // A crash of a process that kept a journal gets its capsule now
+            // (the journal was claimed for it on the launch after it died).
+            if d.isCrash, let pid = d.pid, let session, let journal = session.crashJournals?.find(pid: pid) {
+                session.captureCrash(draft, journal: journal, crashTime: nil, monitoring: self)
+            } else {
+                capture(draft, synchronous: true)
+            }
         }
     }
 

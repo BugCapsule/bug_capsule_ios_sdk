@@ -184,7 +184,9 @@ enum CapsuleValidator {
         try int(session, "seed", "\(mp).session")
         try int(session, "durationMs", "\(mp).session")
 
-        if let failure = try optObject(m, "failure", mp) { try validateFailure(failure, "\(mp).failure") }
+        if let failure = try optObject(m, "failure", mp) {
+            try validateFailure(failure, "\(mp).failure", specVersion: specVersion)
+        }
 
         let eligibility = try object(m["eligibility"], "\(mp).eligibility")
         try oneOf(eligibility, "status", "\(mp).eligibility", ["eligible", "partial", "ineligible"])
@@ -211,6 +213,7 @@ enum CapsuleValidator {
         if let stats = try optObject(m, "stats", mp) {
             try optInt(stats, "eventCount", "\(mp).stats", min: 0)
             try optInt(stats, "droppedEvents", "\(mp).stats", min: 0)
+            try optInt(stats, "journalGapMs", "\(mp).stats", min: 0)
             if let ck = stats["checkpointKind"], !ck.isNull {
                 try oneOf(stats, "checkpointKind", "\(mp).stats", ["launch", "periodic"])
             }
@@ -295,13 +298,21 @@ enum CapsuleValidator {
         }
     }
 
-    static func validateFailure(_ f: JSONObject, _ path: String) throws {
-        try oneOf(f, "kind", path, ["exception", "assertion", "manual"])
+    static func validateFailure(_ f: JSONObject, _ path: String, specVersion: Int) throws {
+        // `crash` is a capsule v2 kind (crash-capsules §3).
+        try oneOf(f, "kind", path, specVersion >= 2 ? ["exception", "assertion", "manual", "crash"] : ["exception", "assertion", "manual"])
         try string(f, "signature", path, max: 1000)
         try string(f, "type", path, max: 1000, min: 0)
         try optString(f, "message", path, max: 10000)
         try optString(f, "stack", path, max: 20000)
         try optString(f, "assertionId", path, max: 200)
+        // crash-capsules §3.
+        if let crash = try optObject(f, "crash", path) {
+            try optString(crash, "mechanism", "\(path).crash", max: 50)
+            try optInt(crash, "signal", "\(path).crash")
+            try optInt(crash, "exception", "\(path).crash")
+            try optString(crash, "inAppFrame", "\(path).crash", max: 1000)
+        }
         try optInt(f, "t", path)
     }
 

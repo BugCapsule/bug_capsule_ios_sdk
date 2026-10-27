@@ -346,6 +346,9 @@ public struct CapsuleManifest: Sendable, Equatable {
     /// is written as spec v2; v1 capsules have none (a v1 document's field
     /// is ignored).
     public var dependencies: [CapsuleDependency]
+    /// `stats.journalGapMs` of a crash capsule: crash time minus the last
+    /// journaled event's time (crash-capsules §2).
+    public var journalGapMs: Int?
 
     public init(
         capsuleId: String, createdAt: Date, mode: CaptureMode, app: AppInfo, gitSha: String?, dirty: Bool?,
@@ -354,7 +357,7 @@ public struct CapsuleManifest: Sendable, Equatable {
         droppedEvents: Int, checkpointKind: CheckpointKind, labels: [(String, String)] = [],
         redactionKeys: [String] = [], redactionHeaders: [String] = [], runtime: RuntimeInfo? = nil,
         capabilities: [(String, String)] = [], monitoring: CapsuleMonitoringLink? = nil,
-        dependencies: [CapsuleDependency] = []
+        dependencies: [CapsuleDependency] = [], journalGapMs: Int? = nil
     ) {
         self.capsuleId = capsuleId
         self.createdAt = createdAt
@@ -380,6 +383,7 @@ public struct CapsuleManifest: Sendable, Equatable {
         self.capabilities = capabilities
         self.monitoring = monitoring
         self.dependencies = dependencies
+        self.journalGapMs = journalGapMs
     }
 
     init(json j: JSONObject, specVersion: Int = 1) {
@@ -419,7 +423,12 @@ public struct CapsuleManifest: Sendable, Equatable {
         dependencies =
             specVersion >= 2
             ? (j["dependencies"]?.arrayValue ?? []).compactMap { $0.objectValue.map(CapsuleDependency.init(json:)) } : []
+        journalGapMs = stats["journalGapMs"]?.intValue
     }
+
+    /// Written as spec v2: with interaction dependencies, or a crash
+    /// capsule (crash-capsules §2: always v2).
+    public var isV2: Bool { !dependencies.isEmpty || failure?.kind == .crash }
 
     public func dependency(_ id: String) -> CapsuleDependency? { dependencies.first { $0.id == id } }
 
@@ -441,11 +450,13 @@ public struct CapsuleManifest: Sendable, Equatable {
             "failure": failure?.json ?? .null,
             "eligibility": eligibility.json,
             "integrations": .array(integrations.map { .string($0) }),
-            "stats": [
-                "eventCount": .int(eventCount), "droppedEvents": .int(droppedEvents),
-                "checkpointKind": .string(checkpointKind.rawValue),
-            ],
         ]
+        var stats: JSONObject = [
+            "eventCount": .int(eventCount), "droppedEvents": .int(droppedEvents),
+            "checkpointKind": .string(checkpointKind.rawValue),
+        ]
+        if let journalGapMs { stats["journalGapMs"] = .int(journalGapMs) }
+        o["stats"] = .object(stats)
         var l = JSONObject()
         for (k, v) in labels { l[k] = .string(v) }
         o["labels"] = .object(l)
@@ -462,7 +473,7 @@ public struct CapsuleManifest: Sendable, Equatable {
             o["capabilities"] = .object(c)
         }
         if let monitoring { o["monitoring"] = monitoring.json }
-        if !dependencies.isEmpty { o["dependencies"] = .array(dependencies.map(\.json)) }
+        if isV2 { o["dependencies"] = .array(dependencies.map(\.json)) }
         return .object(o)
     }
 

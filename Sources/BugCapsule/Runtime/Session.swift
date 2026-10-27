@@ -43,7 +43,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
     let gitSha: String?
     let gitDirty: Bool?
 
-    private let lock = NSRecursiveLock()
+    let lock = NSRecursiveLock()
     let queue = DispatchQueue(label: "com.bugcapsule.session", qos: .utility)
     private let startUptime = uptime()
     let sessionId = uuidV4()
@@ -57,10 +57,10 @@ public final class BugCapsuleSession: @unchecked Sendable {
     private var _redactor = Redactor()
     private var recording = false
     private var captureBodies = true
-    private var maxCapsuleBytes = 5 * 1024 * 1024
+    private(set) var maxCapsuleBytes = 5 * 1024 * 1024
     private var sessionRate = 1.0
     private var captureEpoch = 0
-    private var killed = false
+    private(set) var killed = false
     private var anchorMs: Int?
     private var wallAtAnchorMs: Int?
     private(set) var lastFailure: FailureRecord?
@@ -80,12 +80,17 @@ public final class BugCapsuleSession: @unchecked Sendable {
     private var anchorWaiters: [@MainActor () -> Void] = []
     private var _monitoring: Monitoring?
     private var lastFailureEventId: String?
+    /// This process's crash journal (crash-capsules §1), while recording.
+    private var journal: CrashJournal?
+    private var journalEvicted = false
+    /// Every process's journal under `journal/`.
+    private(set) var crashJournals: CrashJournals?
     // Connection status (`BugCapsule.status`), mirrored from the remote config
     // controller and the transport so it can be read synchronously.
     private var configFetchedAt: Date?
     private var lastConfigFailure: ConfigFetchFailure?
     private var credentialRejected = false
-    private var remoteDisabled = false
+    private(set) var remoteDisabled = false
     private var firstEventAcceptedAt: Date?
     private var firstCapsuleAcceptedAt: Date?
     /// Interaction dependencies (capsule-v2): installed adapters, capture
@@ -186,7 +191,17 @@ public final class BugCapsuleSession: @unchecked Sendable {
         let observe = type != EventTypes.pointer && (monitoring?.wantsBreadcrumbs ?? false)
         guard active || observe else { return }
         guard let clean = sanitize(type, data, redactor: redactor, captureBodies: bodies && active) else { return }
-        if active { lock.locked { if recording { recorder?.add(t: t, type: type, data: clean) } } }
+        if active {
+            lock.locked {
+                guard recording, let recorder else { return }
+                let event = recorder.add(t: t, type: type, data: clean)
+                journal?.append(event)
+                if !journalEvicted && recorder.droppedEvents > 0 {
+                    journalEvicted = true
+                    journal?.recorderEvicted()
+                }
+            }
+        }
         if observe { monitoring?.recorded(type, clean) }
     }
 
@@ -334,6 +349,10 @@ public final class BugCapsuleSession: @unchecked Sendable {
                 onEvent: { [weak self] in self?.noteAccepted(capsule: false) })
         }
         let store = try CapsuleStore(root: overrides?.storageDirectory ?? CapsuleStore.defaultRoot())
+        // Before monitoring reports what earlier processes left (crash-capsules §2).
+        let journals = CrashJournals(root: store.root.appendingPathComponent("journal", isDirectory: true))
+        journals.setAsideCurrent()
+        lock.locked { crashJournals = journals }
         var cached: RemoteCaptureConfig?
         var outbox: UploadOutbox?
         var remote: RemoteConfigController?
@@ -377,12 +396,18 @@ public final class BugCapsuleSession: @unchecked Sendable {
             lock.locked { _monitoring = m }
             m.start(outboxDirectory: transport == nil ? nil : store.root.appendingPathComponent("envelopes", isDirectory: true))
         }
+        // After the crash capsules monitoring scheduled on the same queue.
+        let claimForMetricKit = monitoring?.metricKitActive ?? false
+        queue.async { journals.cleanup(claimForMetricKit: claimForMetricKit) }
         for integration in integrations { integration.setUp(self) }
         if isRecording {
             let launch = Checkpoint(kind: .launch, t: now(), wallClockMs: epochMs(), afterSeq: 0, data: snapshot(.launch))
+            let header = journalHeader()
             lock.locked {
                 recorder = FlightRecorder(
                     launch: launch, maxEvents: config.maxEvents, windowMs: Int(config.window * 1000))
+                journal = CrashJournal(
+                    directory: journals.currentDirectory, maxBytes: 2 * maxCapsuleBytes, header: header, launch: launch)
             }
             installCapture()
         }
@@ -448,13 +473,100 @@ public final class BugCapsuleSession: @unchecked Sendable {
     func periodicCheckpoint() {
         let state: (FlightRecorder, Int, Int, Int)? = lock.locked {
             guard recording, let recorder else { return nil }
+            journal?.boundary(afterSeq: recorder.lastSeq)
             return (recorder, captureEpoch, now(), recorder.lastSeq)
         }
         guard let (recorder, epoch, t, afterSeq) = state else { return }
         let data = snapshot(.periodic)
         lock.locked {
             guard epoch == captureEpoch, recorder === self.recorder else { return }
-            recorder.addCheckpoint(Checkpoint(kind: .periodic, t: t, wallClockMs: epochMs(), afterSeq: afterSeq, data: data))
+            let checkpoint = Checkpoint(kind: .periodic, t: t, wallClockMs: epochMs(), afterSeq: afterSeq, data: data)
+            recorder.addCheckpoint(checkpoint)
+            journal?.checkpoint(checkpoint)
+        }
+        refreshJournalHeader()
+    }
+
+    /// `header.json` of the crash journal: the manifest fields known now,
+    /// plus where the anchor is on the session clock.
+    func journalHeader() -> JSONObject {
+        let m = monitoring
+        let release = m?.release ?? Monitoring.defaultRelease(config)
+        let environment = m?.environment ?? Monitoring.defaultEnvironment(mode)
+        let dependencies = interactions.allDependencies()
+        return lock.locked {
+            let startMs = Int((startedAt.timeIntervalSince1970 * 1000).rounded(.down))
+            var labels = JSONObject()
+            for (k, v) in sanitizedLabels(config.labels, redactor: _redactor) { labels[k] = .string(v) }
+            var capabilities = JSONObject()
+            for (k, v) in capabilityList { capabilities[k] = .string(v) }
+            var h: JSONObject = [
+                "mode": .string(mode.rawValue),
+                "app": appInfo.json,
+                "source": ["gitSha": gitSha.map { .string($0) } ?? .null, "dirty": gitDirty.map { .bool($0) } ?? .null],
+                "sdk": ["name": .string(sdkName), "version": .string(sdkVersion)],
+                "stateSchemaVersion": .int(config.stateSchemaVersion),
+                "platform": platform.json,
+                "session": [
+                    "id": .string(sessionId), "startedAt": .string(ISODate.format(startedAt)),
+                    "wallClockAtAnchorMs": .int(wallAtAnchorMs ?? startMs), "seed": .int(seed),
+                ],
+                "integrations": .array(integrations.map { .string($0.name) }),
+                "labels": .object(labels),
+                "dependencies": .array(dependencies.map(\.json)),
+                "runtime": RuntimeInfo(name: "ios", version: platform.osVersion, language: "swift", frameworks: frameworks).json,
+                "capabilities": .object(capabilities),
+            ]
+            if !_redactor.extraKeys.isEmpty || !_redactor.extraHeaders.isEmpty {
+                h["redaction"] = [
+                    "extraKeys": .array(_redactor.extraKeys.map { .string($0) }),
+                    "extraHeaders": .array(_redactor.extraHeaders.map { .string($0) }),
+                ]
+            }
+            h["pid"] = .int(Int(getpid()))
+            h["release"] = .string(release)
+            h["environment"] = .string(environment)
+            h["anchorT"] = anchorMs.map { .int($0) } ?? .null
+            h["wallClockAtStartMs"] = .int(startMs)
+            return h
+        }
+    }
+
+    func refreshJournalHeader() {
+        guard let journal = lock.locked({ journal }) else { return }
+        journal.updateHeader(journalHeader())
+    }
+
+    var appInfo: AppInfo {
+        AppInfo(
+            id: config.appId?.dartPrefix(200), name: config.appName?.dartPrefix(200),
+            version: config.appVersion.dartPrefix(200), build: config.appBuild.dartPrefix(200),
+            flavor: config.flavor?.dartPrefix(200))
+    }
+
+    /// `manifest.capabilities` of this runtime and its integrations.
+    var capabilityList: [(String, String)] {
+        var capabilities: [(String, String)] = [
+            ("input.pointer.capture", "explicit"),
+            ("input.pointer.replay", "unsupported"),
+            ("input.semantic.replay", "supported"),
+            ("text.replay", "supported"),
+            ("lifecycle.replay", "partial"),
+            ("clock.virtual", "explicit"),
+            ("random.seeded", "explicit"),
+            ("crash.uncaught", "partial"),
+            ("crash.native", "partial"),
+        ]
+        for i in integrations { capabilities.append(contentsOf: i.capabilities) }
+        return capabilities
+    }
+
+    /// At most 100 labels, keys cut to 100 characters, values scrubbed (or
+    /// a placeholder under a sensitive key) and cut to 2,000.
+    func sanitizedLabels(_ merged: [String: String], redactor: Redactor) -> [(String, String)] {
+        merged.keys.sorted().prefix(100).map { k in
+            let v = merged[k]!
+            return (k.dartPrefix(100), redactor.isSensitiveKey(k) ? Redactor.placeholder : redactor.scrubText(v).dartPrefix(2000))
         }
     }
 
@@ -494,6 +606,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
             return w
         }
         for w in waiters { w() }
+        refreshJournalHeader()
     }
 
     @MainActor
@@ -501,6 +614,9 @@ public final class BugCapsuleSession: @unchecked Sendable {
         // Synthetic lifecycle posted by the replay engine must not be recorded or re-dispatched.
         if isReplaying { return }
         record(EventTypes.lifecycle, ["state": .string(state)])
+        // Going to the background: the journal is written now (the process
+        // may be suspended or killed without another chance).
+        if state == "paused" { lock.locked({ journal })?.flush() }
         monitoring?.onLifecycle(state)
         guard let remote = lock.locked({ remote }) else { return }
         if state == "resumed" {
@@ -530,6 +646,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
         var dropStack = failure.json.objectValue!
         dropStack["stack"] = nil
         record(EventTypes.failure, dropStack)
+        lock.locked({ journal })?.flush()
         let shouldCapture: Bool = lock.locked {
             guard recording else { return false }
             lastFailure = failure
@@ -643,32 +760,15 @@ public final class BugCapsuleSession: @unchecked Sendable {
         }
         let dependencies = interactions.manifestDependencies(
             events: windowEvents, checkpoint: window.checkpoint, eligibility: eligibility)
-        var capabilities: [(String, String)] = [
-            ("input.pointer.capture", "explicit"),
-            ("input.pointer.replay", "unsupported"),
-            ("input.semantic.replay", "supported"),
-            ("text.replay", "supported"),
-            ("lifecycle.replay", "partial"),
-            ("clock.virtual", "explicit"),
-            ("random.seeded", "explicit"),
-            ("crash.uncaught", "partial"),
-        ]
-        for i in integrations { capabilities.append(contentsOf: i.capabilities) }
+        let capabilities = capabilityList
         let events = windowEvents.map { $0.shifted(anchor) }
-        var labelPairs: [(String, String)] = []
         var merged = config.labels
         for (k, v) in labels { merged[k] = v }
-        for k in merged.keys.sorted().prefix(100) {
-            let v = merged[k]!
-            labelPairs.append((k.dartPrefix(100), redactor.isSensitiveKey(k) ? Redactor.placeholder : redactor.scrubText(v).dartPrefix(2000)))
-        }
+        let labelPairs = sanitizedLabels(merged, redactor: redactor)
         let capsule = Capsule(
             manifest: CapsuleManifest(
                 capsuleId: capsuleId ?? uuidV4(), createdAt: Date(), mode: mode,
-                app: AppInfo(
-                    id: config.appId?.dartPrefix(200), name: config.appName?.dartPrefix(200),
-                    version: config.appVersion.dartPrefix(200), build: config.appBuild.dartPrefix(200),
-                    flavor: config.flavor?.dartPrefix(200)),
+                app: appInfo,
                 gitSha: gitSha, dirty: gitDirty, sdkName: sdkName, sdkVersion: sdkVersion,
                 stateSchemaVersion: config.stateSchemaVersion, platform: platform,
                 session: SessionInfo(
@@ -739,13 +839,20 @@ public final class BugCapsuleSession: @unchecked Sendable {
     func handleUncaughtException(_ exception: NSException) {
         let failure = Self.failure(for: exception, t: now(), redactor: redactor)
         if let engine {
-            engine.onFailure(failure)
-            engine.finishSynchronously(reason: "uncaught exception \(exception.name.rawValue)")
+            engine.uncaught(failure, reason: "uncaught exception \(exception.name.rawValue)")
             return
         }
         var data = failure.json.objectValue!
         data["stack"] = nil
         record(EventTypes.failure, data)
+        // The capsule below replaces what the journal would give next launch.
+        defer {
+            let j: CrashJournal? = lock.locked {
+                defer { journal = nil }
+                return journal
+            }
+            j?.delete()
+        }
         let ok: Bool = lock.locked {
             guard recording, capsulesWritten < config.maxCapsulesPerSession,
                 capturedSignatures.count < config.maxCapsulesPerSession,
@@ -834,8 +941,13 @@ public final class BugCapsuleSession: @unchecked Sendable {
         defer { lock.unlock() }
         remoteDisabled = !next.enabled
         maxCapsuleBytes = next.maxCapsuleBytes
+        journal?.maxBytes = 2 * next.maxCapsuleBytes
+        var rewrote = false
+        // Whatever the recorder rewrote, the journal is written again from it.
+        defer { if rewrote { resetJournalLocked() } }
         let switchedOff = interactions.setDisabledAdapters(Set(next.disabledAdapters))
         if !switchedOff.isEmpty {
+            rewrote = true
             // Kill switch of single adapters: their buffered events go too.
             recorder?.rewrite(event: { e in
                 guard InteractionTypes.isInteraction(e.type), let dep = e.data["dep"]?.stringValue else { return e }
@@ -859,6 +971,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
         }
         let bodies = config.captureNetworkBodies && next.captureNetworkBodies
         if captureBodies && !bodies {
+            rewrote = true
             recorder?.rewrite(event: { e in
                 e.type == EventTypes.http ? BugCapsuleEvent(seq: e.seq, t: e.t, type: e.type, data: Self.withoutBodies(e.data)) : e
             })
@@ -866,6 +979,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
         captureBodies = bodies
         let wanted = Redactor(extraKeys: config.redactKeys + next.redactKeys).extraKeys
         if _redactor.extraKeys != wanted {
+            rewrote = true
             _redactor = baseRedactor(remote: next.redactKeys)
             let redactor = _redactor
             // Request keys were computed with the old rules: buffered
@@ -895,12 +1009,23 @@ public final class BugCapsuleSession: @unchecked Sendable {
         }
     }
 
+    private func resetJournalLocked() {
+        guard let journal, let recorder else { return }
+        let state = recorder.journalState()
+        journal.reset(
+            header: journalHeader(), launch: state.launch, launchCovers: state.launchCovers, periodic: state.periodic,
+            events: state.events)
+    }
+
+    /// A session that does not record keeps no journal.
     private func stopRecordingLocked() {
         captureEpoch += 1
         recording = false
         recorder = nil
         checkpointTimer?.cancel()
         checkpointTimer = nil
+        journal?.delete()
+        journal = nil
     }
 
     /// Kill switch: stop recording, drop the buffer, delete queued and saved captures.
@@ -911,6 +1036,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
         if was { BugCapsuleLog.info("capture disabled by remote config") }
         if let outbox { Task { await outbox.purge() } }
         if let store { queue.async { store.clearSavedCaptures() } }
+        if let crashJournals { queue.async { FileIO.deleteQuietly(crashJournals.root) } }
     }
 
     // MARK: connection status
@@ -1113,13 +1239,18 @@ public final class BugCapsuleSession: @unchecked Sendable {
     // MARK: teardown (tests)
 
     func dispose() async {
-        let (remote, outbox, monitoring) = lock.locked { () -> (RemoteConfigController?, UploadOutbox?, Monitoring?) in
+        let (remote, outbox, monitoring, journal) = lock.locked {
+            () -> (RemoteConfigController?, UploadOutbox?, Monitoring?, CrashJournal?) in
             disposed = true
+            // Like the end of the process: the journal stays for the next launch.
+            let j = self.journal
+            self.journal = nil
             stopRecordingLocked()
             for o in observers { NotificationCenter.default.removeObserver(o) }
             observers = []
-            return (self.remote, self.outbox, _monitoring)
+            return (self.remote, self.outbox, _monitoring, j)
         }
+        journal?.close()
         monitoring?.stop()
         await remote?.dispose()
         await outbox?.close()
@@ -1129,6 +1260,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
 
     // Test helpers
     var recorderForTesting: FlightRecorder? { lock.locked { recorder } }
+    var journalForTesting: CrashJournal? { lock.locked { journal } }
     func setAnchorForTesting(_ ms: Int) { lock.locked { anchorMs = ms; wallAtAnchorMs = epochMs() } }
 }
 

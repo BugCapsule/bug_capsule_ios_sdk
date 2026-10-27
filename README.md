@@ -397,6 +397,11 @@ next launch as `fatal` events:
   within 60 s) is sent once.
 - **Release health**: the run that crashed or died is closed on the next
   launch with its own release, also after an update.
+- **Crash capsules**: when the session that crashed was recording, its
+  crash journal becomes a replayable capsule on the next launch, linked to
+  the crash event (`capsuleId`). `bugcapsule run` re-runs the steps and
+  checks the app dies of the same signal or exception. See
+  [docs/how-it-works.md](docs/how-it-works.md#crash-capsules).
 
 Turn parts off with `enableNativeCrashHandling`, `enableMachExceptionHandling`,
 `enableAppHangTracking` and `enableMetricKit` in `BugCapsuleMonitoringOptions`.
