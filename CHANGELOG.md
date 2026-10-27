@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1-beta.3 — 2026-10-27
 
 - Read capsule spec v2 (interaction dependencies) as well as v1; write v2
   only for capsules that recorded a WebSocket or a native adapter.

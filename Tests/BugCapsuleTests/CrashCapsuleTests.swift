@@ -29,7 +29,7 @@ final class CrashCapsuleTests: XCTestCase {
             "mode": "qa",
             "app": AppInfo(id: "com.shop.app", version: "1.4.0", build: "52").json,
             "source": ["gitSha": gitSha.map { .string($0) } ?? .null, "dirty": false],
-            "sdk": ["name": "bugcapsule-ios", "version": "0.4.1-beta.2"],
+            "sdk": ["name": "bugcapsule-ios", "version": "0.4.1-beta.3"],
             "stateSchemaVersion": 1,
             "platform": PlatformInfo(os: "ios", osVersion: "27.0", locale: "en_US", screenWidth: 402, screenHeight: 874, pixelRatio: 3).json,
             "session": [

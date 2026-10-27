@@ -74,7 +74,7 @@ public func assessAttempt(_ r: ReplayReport) -> AttemptAssessment {
             reasons.append("reported a reproduction without an expected failure")
             return AttemptAssessment(report: r, status: .invalid, reasons: reasons)
         }
-        return AttemptAssessment(report: r, status: .reproduced, reasons: [], reasonCodes: r.reasonCodes.sorted())
+        return AttemptAssessment(report: r, status: .reproduced, reasons: [], reasonCodes: Set(r.reasonCodes + r.divergences.filter { $0.type == "failure.different_frame" }.map { $0.type }).sorted())
     case .inconclusive:
         reasons.append("inconclusive: \(r.message ?? r.observed.map { "observed \($0.signature)" } ?? "unknown")")
         codes.formUnion(r.reasonCodes)
@@ -91,6 +91,7 @@ public func assessAttempt(_ r: ReplayReport) -> AttemptAssessment {
             reasons.append("only \(r.eventsDispatched) of \(expected) recorded inputs were replayed")
         }
         for f in r.otherFailures { reasons.append("unexpected failure: \(f.signature)") }
+        if r.otherFailures.contains(where: { $0.kind == .crash }) || (!r.otherFailures.isEmpty && r.expectedSignature?.hasPrefix("crash:") == true) { codes.insert("failure.different") }
         var material: [String] = []
         for d in r.divergences where DivergencePolicy.isMaterial(d) && !material.contains(d.type) {
             material.append(d.type)
