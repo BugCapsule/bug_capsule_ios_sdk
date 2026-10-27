@@ -12,10 +12,19 @@ struct NativeCrashReport: Equatable {
     var exceptionCode: UInt64
     var exceptionSubcode: UInt64
     var time: Date
+    /// Milliseconds since 1970 (nil in reports of older SDKs).
+    var timeMs: Int?
+    /// Of the process that crashed (nil in reports of older SDKs).
+    var pid: Int?
     /// The uncaught-exception handler already queued the event.
     var suppressed: Bool
     /// Innermost first.
     var frames: [UInt64]
+    /// Every thread the writer could walk (empty in reports of older SDKs).
+    var threads: [ThreadSample] = []
+    /// Of the process that crashed (nil in reports of older SDKs).
+    var release: String?
+    var environment: String?
     var context: JSONObject?
     var images: [DebugImage]
 
@@ -54,8 +63,21 @@ struct NativeCrashReport: Equatable {
             case "exceptionCode": r.exceptionCode = parseHex(value) ?? 0
             case "exceptionSubcode": r.exceptionSubcode = parseHex(value) ?? 0
             case "time": r.time = Date(timeIntervalSince1970: TimeInterval(Int(value) ?? 0))
+            case "timems": r.timeMs = Int(value)
+            case "pid": r.pid = Int(value)
             case "suppressed": r.suppressed = value == "1"
             case "frame": if let a = parseHex(value) { r.frames.append(a) }
+            case "thread":
+                let f = value.split(separator: " ").map { Int($0) ?? 0 }
+                guard f.count >= 4 else { break }
+                r.threads.append(
+                    ThreadSample(index: f[0], name: nil, crashed: f[1] == 1, current: f[2] == 1, isMain: f[3] == 1, frames: []))
+            case "threadname": if !r.threads.isEmpty, !value.isEmpty { r.threads[r.threads.count - 1].name = value }
+            case "tframe": if !r.threads.isEmpty, let a = parseHex(value) { r.threads[r.threads.count - 1].frames.append(a) }
+            case "release":
+                if let d = blob(Int(value) ?? -1) { r.release = String(decoding: d, as: UTF8.self) }
+            case "environment":
+                if let d = blob(Int(value) ?? -1) { r.environment = String(decoding: d, as: UTF8.self) }
             case "context":
                 if let d = blob(Int(value) ?? -1) { r.context = (try? JSON.parse(d))?.objectValue }
             case "images":
@@ -81,6 +103,9 @@ struct NativeCrashReport: Equatable {
     ]
 
     var isMach: Bool { kind == "mach" }
+
+    /// The crash time to the millisecond when the report has it.
+    var preciseTime: Date { timeMs.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000) } ?? time }
 
     /// `type` / `value` / mechanism of the exception value.
     var description: (type: String, value: String, mechanism: String, data: JSONObject) {
@@ -115,13 +140,15 @@ struct NativeCrashReport: Equatable {
 enum NativeCrashHandler {
     static func reportFile(in directory: URL) -> URL { directory.appendingPathComponent("crash.report") }
 
-    /// The previous launch's report (removed from disk).
-    static func takePendingReport(in directory: URL) -> NativeCrashReport? {
-        let file = reportFile(in: directory)
-        guard let data = try? Data(contentsOf: file) else { return nil }
-        FileIO.deleteQuietly(file)
+    /// The previous launch's report, left on disk: call
+    /// `discardPendingReport` once its event is persisted, so a crash
+    /// before that (a crash-on-launch loop) reports it again.
+    static func pendingReport(in directory: URL) -> NativeCrashReport? {
+        guard let data = try? Data(contentsOf: reportFile(in: directory)) else { return nil }
         return NativeCrashReport.parse(data)
     }
+
+    static func discardPendingReport(in directory: URL) { FileIO.deleteQuietly(reportFile(in: directory)) }
 
     static func install(directory: URL, mach: Bool) -> Bool {
         let path = reportFile(in: directory).path
@@ -135,10 +162,37 @@ enum NativeCrashHandler {
         return ok
     }
 
+    static let contextLimit = Int(BC_CRASH_CONTEXT_MAX)
+
+    /// Mirrors [context] into the crash writer's buffer. Too large for it:
+    /// the oldest breadcrumbs go first, then the extras.
     static func setContext(_ context: JSONObject) {
-        let bytes = JSON.encodeData(.object(context))
+        var c = context
+        var bytes = JSON.encodeData(.object(c))
+        while bytes.count > contextLimit, var crumbs = c["breadcrumbs"]?.arrayValue, !crumbs.isEmpty {
+            crumbs.removeFirst(max(crumbs.count / 4, 1))
+            c["breadcrumbs"] = .array(crumbs)
+            bytes = JSON.encodeData(.object(c))
+        }
+        if bytes.count > contextLimit {
+            c["extra"] = ["_truncated": true]
+            bytes = JSON.encodeData(.object(c))
+        }
         bytes.withUnsafeBytes { raw in
             bc_crash_set_context(raw.baseAddress?.assumingMemoryBound(to: CChar.self), raw.count)
+        }
+    }
+
+    /// Written with every report: the release that crashed.
+    static func setRelease(_ release: String, environment: String) {
+        let r = Data(release.replacingOccurrences(of: "\n", with: " ").utf8)
+        let e = Data(environment.replacingOccurrences(of: "\n", with: " ").utf8)
+        r.withUnsafeBytes { rr in
+            e.withUnsafeBytes { er in
+                bc_crash_set_release(
+                    rr.baseAddress?.assumingMemoryBound(to: CChar.self), rr.count,
+                    er.baseAddress?.assumingMemoryBound(to: CChar.self), er.count)
+            }
         }
     }
 
@@ -162,4 +216,54 @@ enum NativeCrashHandler {
     }
 
     static var currentThreadPort: UInt32 { bc_current_thread_port() }
+
+    static var mainThreadPort: UInt32 { bc_main_thread_port() }
+
+    /// The arm64 leaf-frame rule of the walker (`bc_insert_link_register`).
+    static func insertLinkRegister(pc: UInt64, lr: UInt64, frames: [UInt64], max: Int = 128) -> [UInt64] {
+        var buffer = frames.map { UInt($0) } + [UInt](repeating: 0, count: Swift.max(max - frames.count, 0))
+        let n = buffer.withUnsafeMutableBufferPointer {
+            bc_insert_link_register(UInt(pc), UInt(lr), $0.baseAddress, Int32(frames.count), Int32(max))
+        }
+        return buffer.prefix(Int(n)).map { UInt64($0) }
+    }
+
+    /// Every thread but the caller's, each suspended while it is walked.
+    static func sampleThreads(max: Int = Int(BC_CRASH_MAX_THREADS)) -> [ThreadSample] {
+        let buffer = UnsafeMutablePointer<bc_thread_sample>.allocate(capacity: max)
+        defer { buffer.deallocate() }
+        let n = Int(bc_sample_threads(buffer, Int32(max)))
+        return (0..<n).map { ThreadSample(buffer[$0]) }
+    }
+}
+
+/// One thread's stack from the crash writer or the hang sampler.
+struct ThreadSample: Equatable, Sendable {
+    var index: Int
+    var name: String?
+    var crashed: Bool
+    var current: Bool
+    var isMain: Bool
+    /// Innermost first; frames[0] is the pc.
+    var frames: [UInt64]
+
+    init(index: Int, name: String?, crashed: Bool, current: Bool, isMain: Bool, frames: [UInt64]) {
+        self.index = index
+        self.name = name
+        self.crashed = crashed
+        self.current = current
+        self.isMain = isMain
+        self.frames = frames
+    }
+
+    init(_ s: bc_thread_sample) {
+        var copy = s
+        let name = withUnsafeBytes(of: &copy.name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        let frames = withUnsafeBytes(of: &copy.frames) { raw in
+            Array(raw.bindMemory(to: UInt.self).prefix(Int(s.count))).map { UInt64($0) }
+        }
+        self.init(
+            index: Int(s.index), name: name.isEmpty ? nil : name, crashed: s.crashed != 0, current: s.current != 0,
+            isMain: s.main != 0, frames: frames)
+    }
 }

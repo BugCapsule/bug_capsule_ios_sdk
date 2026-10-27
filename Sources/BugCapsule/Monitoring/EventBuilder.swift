@@ -13,15 +13,20 @@ struct StackBuilder {
     }
 
     /// The main executable (also from an earlier install of the same app,
-    /// whose container path differs), or an image named in `inAppIncludes`.
+    /// whose container path differs) or, in Xcode debug builds, the
+    /// `<executable>.debug.dylib` next to it that holds the app's code; or
+    /// an image named in `inAppIncludes`.
     func isInApp(_ imagePath: String) -> Bool {
         let name = (imagePath as NSString).lastPathComponent
         if inAppExcludes.contains(where: { name.hasPrefix($0) }) { return false }
         if inAppIncludes.contains(where: { name.hasPrefix($0) }) { return true }
         guard let mainExecutable else { return false }
-        if imagePath == mainExecutable { return true }
+        if imagePath == mainExecutable || imagePath == mainExecutable + ".debug.dylib" { return true }
         let mainName = (mainExecutable as NSString).lastPathComponent
-        return name == mainName && imagePath.contains(".app/") && mainExecutable.contains(".app/")
+        let names = [mainName, mainName + ".debug.dylib"]
+        // A bare binary name (MetricKit) matches the main executable's.
+        if !imagePath.contains("/") { return names.contains(name) }
+        return names.contains(name) && imagePath.contains(".app/") && mainExecutable.contains(".app/")
     }
 
     /// Frames for return addresses (innermost first, as the runtime and the
