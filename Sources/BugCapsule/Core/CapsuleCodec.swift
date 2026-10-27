@@ -7,8 +7,8 @@ public struct CapsuleFormatError: Error, CustomStringConvertible, Equatable, Sen
 }
 
 /// Reads and writes `.bugcapsule` files (gzip-compressed UTF-8 JSON). Reads
-/// spec v1 and v2; writes v2 only when the capsule has interaction
-/// dependencies (capsule-v2 §1), v1 otherwise.
+/// spec v1 and v2; writes v2 when the capsule has interaction dependencies
+/// (capsule-v2 §1) or is a crash capsule (crash-capsules §2), v1 otherwise.
 ///
 /// Decoding is bounded at every step: gzip output is capped while it is
 /// inflated, JSON values are counted before parsing (4,000,000), parsing
@@ -21,8 +21,8 @@ public enum CapsuleCodec {
     /// Same ceiling as the Dart reader (above the backend's 64 MB upload limit).
     public static let maxDecompressedBytes = 200 * 1024 * 1024
 
-    /// The version a capsule is written as: 2 with dependencies, else 1.
-    public static func writeVersion(_ capsule: Capsule) -> Int { capsule.manifest.dependencies.isEmpty ? 1 : 2 }
+    /// The version a capsule is written as: 2 with dependencies or a crash, else 1.
+    public static func writeVersion(_ capsule: Capsule) -> Int { capsule.manifest.isV2 ? 2 : 1 }
 
     public static func toJSON(_ capsule: Capsule) -> JSONValue {
         [

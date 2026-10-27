@@ -1,0 +1,110 @@
+{
+  "timeStampBegin": "2026-10-25 09:59:00",
+  "timeStampEnd": "2026-10-25 10:00:00",
+  "crashDiagnostics": [
+    {
+      "version": "1.0.0",
+      "diagnosticMetaData": {
+        "appVersion": "1.3.0",
+        "appBuildVersion": "48",
+        "bundleIdentifier": "com.shop.app",
+        "osVersion": "iPhone OS 18.1 (22B83)",
+        "deviceType": "iPhone16,1",
+        "platformArchitecture": "arm64e",
+        "regionFormat": "US",
+        "isTestFlightApp": false,
+        "lowPowerModeEnabled": false,
+        "pid": 3021,
+        "exceptionType": 1,
+        "exceptionCode": 0,
+        "signal": 11,
+        "terminationReason": "Namespace SIGNAL, Code 11 Segmentation fault: 11",
+        "virtualMemoryRegionInfo": "0 is not in any region."
+      },
+      "callStackTree": {
+        "callStackPerThread": true,
+        "callStacks": [
+          {
+            "threadAttributed": false,
+            "callStackRootFrames": [
+              {
+                "binaryUUID": "1E4A0C6E-0000-4000-8000-0000000000A1",
+                "offsetIntoBinaryTextSegment": 4660,
+                "sampleCount": 1,
+                "binaryName": "libsystem_kernel.dylib",
+                "address": 8187286068,
+                "subFrames": [
+                  {
+                    "binaryUUID": "1E4A0C6E-0000-4000-8000-0000000000A2",
+                    "offsetIntoBinaryTextSegment": 8192,
+                    "sampleCount": 1,
+                    "binaryName": "libsystem_pthread.dylib",
+                    "address": 8321507328
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "threadAttributed": true,
+            "callStackRootFrames": [
+              {
+                "binaryUUID": "6A1B0C6E-0000-4000-8000-000000000001",
+                "offsetIntoBinaryTextSegment": 166972,
+                "sampleCount": 1,
+                "binaryName": "ShopApp",
+                "address": 4369026108,
+                "subFrames": [
+                  {
+                    "binaryUUID": "6A1B0C6E-0000-4000-8000-000000000001",
+                    "offsetIntoBinaryTextSegment": 167168,
+                    "sampleCount": 1,
+                    "binaryName": "ShopApp",
+                    "address": 4369026304,
+                    "subFrames": [
+                      {
+                        "binaryUUID": "1E4A0C6E-0000-4000-8000-0000000000A3",
+                        "offsetIntoBinaryTextSegment": 4096,
+                        "sampleCount": 1,
+                        "binaryName": "UIKitCore",
+                        "address": 6610227200
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "hangDiagnostics": [
+    {
+      "version": "1.0.0",
+      "diagnosticMetaData": {
+        "appVersion": "1.3.0",
+        "appBuildVersion": "48",
+        "bundleIdentifier": "com.shop.app",
+        "hangDuration": "3.42 sec"
+      },
+      "callStackTree": {
+        "callStackPerThread": false,
+        "callStacks": [
+          {
+            "threadAttributed": true,
+            "callStackRootFrames": [
+              {
+                "binaryUUID": "6A1B0C6E-0000-4000-8000-000000000001",
+                "offsetIntoBinaryTextSegment": 167168,
+                "sampleCount": 7,
+                "binaryName": "ShopApp",
+                "address": 4369026304
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

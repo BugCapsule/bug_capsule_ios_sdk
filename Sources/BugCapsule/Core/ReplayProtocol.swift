@@ -71,6 +71,10 @@ public enum ReplayOutcome: String, Sendable {
     case incompatible
     case noAssertion = "no_assertion"
     case error
+    /// The attempt proves nothing either way (crash-capsules §4: the app
+    /// died of another crash, reason code `failure.different`). Older CLIs
+    /// read it as `error`, which is inconclusive too.
+    case inconclusive
 }
 
 public struct Divergence: Sendable, Equatable {
@@ -109,13 +113,16 @@ public struct ReplayReport: Sendable, Equatable {
     public var message: String?
     public var attemptId: String?
     public var runtime: String?
+    /// Machine-readable reasons of the outcome: `failure.different`,
+    /// `failure.different_frame` (crash-capsules §4).
+    public var reasonCodes: [String]
 
     public init(
         outcome: ReplayOutcome, attempt: Int, durationMs: Int, strategy: ReplayStrategy,
         expectedSignature: String? = nil, observed: FailureRecord? = nil, otherFailures: [FailureRecord] = [],
         divergences: [Divergence] = [], eventsDispatched: Int = 0, eventsExpected: Int? = nil,
         fixturesServed: Int = 0, compressedMs: Int = 0, gapsCompressed: Int = 0, buildGitSha: String? = nil,
-        message: String? = nil, attemptId: String? = nil, runtime: String? = nil
+        message: String? = nil, attemptId: String? = nil, runtime: String? = nil, reasonCodes: [String] = []
     ) {
         self.outcome = outcome
         self.attempt = attempt
@@ -134,6 +141,7 @@ public struct ReplayReport: Sendable, Equatable {
         self.message = message
         self.attemptId = attemptId
         self.runtime = runtime
+        self.reasonCodes = reasonCodes
     }
 
     public init(json j: JSONObject) {
@@ -156,6 +164,7 @@ public struct ReplayReport: Sendable, Equatable {
         message = j["message"]?.stringValue
         attemptId = j["attemptId"]?.stringValue
         runtime = j["runtime"]?.stringValue
+        reasonCodes = (j["reasonCodes"]?.arrayValue ?? []).compactMap(\.stringValue)
     }
 
     public var json: JSONValue {
@@ -178,6 +187,7 @@ public struct ReplayReport: Sendable, Equatable {
         ]
         if let attemptId { o["attemptId"] = .string(attemptId) }
         if let runtime { o["runtime"] = .string(runtime) }
+        if !reasonCodes.isEmpty { o["reasonCodes"] = .array(reasonCodes.map { .string($0) }) }
         return .object(o)
     }
 }

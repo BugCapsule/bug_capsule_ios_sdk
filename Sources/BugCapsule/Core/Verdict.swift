@@ -74,7 +74,10 @@ public func assessAttempt(_ r: ReplayReport) -> AttemptAssessment {
             reasons.append("reported a reproduction without an expected failure")
             return AttemptAssessment(report: r, status: .invalid, reasons: reasons)
         }
-        return AttemptAssessment(report: r, status: .reproduced, reasons: [])
+        return AttemptAssessment(report: r, status: .reproduced, reasons: [], reasonCodes: r.reasonCodes.sorted())
+    case .inconclusive:
+        reasons.append("inconclusive: \(r.message ?? r.observed.map { "observed \($0.signature)" } ?? "unknown")")
+        codes.formUnion(r.reasonCodes)
     case .incompatible:
         reasons.append("incompatible: \(r.message ?? "capsule cannot run against this build")")
         if r.message?.hasPrefix("dependency.") == true { codes.insert("dependency.unsupported") }

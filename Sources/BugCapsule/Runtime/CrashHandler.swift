@@ -18,6 +18,14 @@ enum CrashHandler {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var installed = false
     nonisolated(unsafe) private static var previous: (@convention(c) (NSException) -> Void)?
+    nonisolated(unsafe) private static var _bridge: (@Sendable (NSException) -> Void)?
+
+    /// Set while `BugCapsuleCrashBridge` owns the crash handlers: it records
+    /// the exception instead of the session.
+    static var bridge: (@Sendable (NSException) -> Void)? {
+        get { lock.locked { _bridge } }
+        set { lock.locked { _bridge = newValue } }
+    }
 
     static func install() {
         lock.lock()
@@ -31,7 +39,11 @@ enum CrashHandler {
     }
 
     static func handle(_ exception: NSException) {
-        BugCapsuleSession.current?.handleUncaughtException(exception)
+        if let bridge {
+            bridge(exception)
+        } else {
+            BugCapsuleSession.current?.handleUncaughtException(exception)
+        }
         previous?(exception)
     }
 }

@@ -358,7 +358,7 @@ Monitoring is on by default once a token (or backend) is set:
 
 | Signal | What you get |
 |---|---|
-| Errors | `captureException`, `report(error:)`, `check`/`fail`, uncaught `NSException`s, **native crashes** (signals and Mach exceptions) and **app hangs** (main thread blocked 2 s) |
+| Errors | `captureException`, `report(error:)`, `check`/`fail`, uncaught `NSException`s, **native crashes** (signals and Mach exceptions, with every thread's stack), **app hangs** (main thread blocked 2 s) and **MetricKit** crash and hang diagnostics |
 | Release health | One session per foreground run; `crashed` and `abnormal` (OOM, watchdog, force-quit) sessions |
 | Performance | Cold and warm app start, screen loads (TTID / TTFD), slow and frozen frames, URLSession spans, Core Data spans |
 | User feedback | A UIKit form, a SwiftUI form or sheet, shake to report |
@@ -378,6 +378,64 @@ BugCapsule.start(config, integrations: [BugCapsuleURLSession(), BugCapsuleNaviga
 
 `monitoring: .disabled` turns monitoring off; capsules keep working. Full API
 and behaviour: [docs/how-it-works.md](docs/how-it-works.md#monitoring).
+
+### Crash reporting
+
+Crashes are written to disk by an async-signal-safe handler and sent on the
+next launch as `fatal` events:
+
+- **Signals and Mach exceptions** (`EXC_BAD_ACCESS`, Swift traps, `abort()`):
+  the crashing thread's stack plus every other thread (crashed thread first,
+  then main; up to 100 threads, 250 frames for the crashed one and 40 for
+  the others), with the scope, release and environment of the run that
+  crashed. A crash in a leaf function keeps its caller (arm64 link register).
+- **Uncaught `NSException`s**: written synchronously before the process ends.
+- **App hangs**: one `app_hang` error per hang, with every thread's stack.
+- **MetricKit** (iOS 14+): crash and hang diagnostics BugCapsule did not
+  see itself (e.g. a crash before `start`), delivered by iOS on a later
+  launch. A crash or hang BugCapsule already reported (same process, or
+  within 60 s) is sent once.
+- **Release health**: the run that crashed or died is closed on the next
+  launch with its own release, also after an update.
+- **Crash capsules**: when the session that crashed was recording, its
+  crash journal becomes a replayable capsule on the next launch, linked to
+  the crash event (`capsuleId`). `bugcapsule run` re-runs the steps and
+  checks the app dies of the same signal or exception. See
+  [docs/how-it-works.md](docs/how-it-works.md#crash-capsules).
+
+Turn parts off with `enableNativeCrashHandling`, `enableMachExceptionHandling`,
+`enableAppHangTracking` and `enableMetricKit` in `BugCapsuleMonitoringOptions`.
+Upload dSYMs (below) to get file and line for app frames.
+
+#### For SDK authors: `BugCapsuleCrashBridge` (embedding only)
+
+Apps don't need this: `BugCapsule.start` already does all of the above.
+`BugCapsuleCrashBridge` is for an SDK that embeds this one and sends events
+itself (the BugCapsule Flutter SDK's iOS plugin). It runs the crash handlers,
+hang watchdog and MetricKit without this SDK's sessions or outbox, and has
+the same shape as Android's `dev.bugcapsule.android.embedding.CrashBridge`:
+
+```swift
+BugCapsuleCrashBridge.install(
+    release: "com.shop.app@1.4.0+52", environment: "production",
+    options: .init(nativeCrashes: true, appHangs: 2, metricKit: true, inAppIncludes: ["Runner"]))
+BugCapsuleCrashBridge.updateScope(json: scopeJSON)        // user, tags, contexts, breadcrumbs (redacted)
+BugCapsuleCrashBridge.setListener { event in send(event) } // hangs while the app runs
+let crashed = BugCapsuleCrashBridge.lastRunCrashed
+for event in BugCapsuleCrashBridge.takePendingEvents() {   // waits up to 5 s; oldest first
+    send(event)                                            // returned once, then deleted
+}
+```
+
+Events are monitoring-v1 event JSON with `runtime: "ios"`; the embedding SDK
+adds its device contexts, redacts and sends them. An earlier run's event has
+that run's scope only when it is known for that process (its crash report,
+or the `scope.json` mirror for the same pid); otherwise it has none, never
+the current one.
+
+Only one of the two installs the handlers: while `BugCapsule.start` is
+running, `install` returns false; when the bridge ran first, monitoring skips
+its own crash handlers.
 
 ### Readable stack traces: upload dSYMs
 

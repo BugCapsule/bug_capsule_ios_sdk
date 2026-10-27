@@ -1,7 +1,8 @@
 import Foundation
 
 public enum FailureKind: String, Sendable {
-    case exception, assertion, manual
+    /// `crash`: the process died (crash-capsules §3), built on the next launch.
+    case exception, assertion, manual, crash
 }
 
 /// A machine-checkable failure: what replay and verify compare against.
@@ -12,11 +13,14 @@ public struct FailureRecord: Sendable, Equatable {
     public var message: String
     public var stack: String?
     public var assertionId: String?
+    /// `failure.crash` of a `crash` failure: `mechanism`, `signal` /
+    /// `exception`, `inAppFrame`.
+    public var crash: JSONObject?
     public var t: Int
 
     public init(
         kind: FailureKind, signature: String, type: String, message: String, stack: String? = nil,
-        assertionId: String? = nil, t: Int
+        assertionId: String? = nil, crash: JSONObject? = nil, t: Int
     ) {
         self.kind = kind
         self.signature = signature
@@ -24,6 +28,7 @@ public struct FailureRecord: Sendable, Equatable {
         self.message = message
         self.stack = stack
         self.assertionId = assertionId
+        self.crash = crash
         self.t = t
     }
 
@@ -57,6 +62,16 @@ public struct FailureRecord: Sendable, Equatable {
             t: t)
     }
 
+    /// A crash of an earlier process (crash-capsules §3): the signature is
+    /// `crash:<type>` only, since addresses and lines differ between builds.
+    public static func crash(
+        type: String, message: String, stack: String?, crash: JSONObject, t: Int, scrub: (String) -> String = { $0 }
+    ) -> FailureRecord {
+        FailureRecord(
+            kind: .crash, signature: "crash:\(type.dartPrefix(200))", type: type.dartPrefix(1000),
+            message: truncate(scrub(message), 2000), stack: stack.map { scrub(truncate($0, 8000)) }, crash: crash, t: t)
+    }
+
     init(json: JSONObject) {
         kind = FailureKind(rawValue: json["kind"]?.stringValue ?? "") ?? .exception
         signature = json["signature"]?.stringValue ?? ""
@@ -64,6 +79,7 @@ public struct FailureRecord: Sendable, Equatable {
         message = json["message"]?.stringValue ?? ""
         stack = json["stack"]?.stringValue
         assertionId = json["assertionId"]?.stringValue
+        crash = json["crash"]?.objectValue
         t = json["t"]?.intValue ?? 0
     }
 
@@ -74,15 +90,17 @@ public struct FailureRecord: Sendable, Equatable {
     }
 
     public var json: JSONValue {
-        [
+        var o: JSONObject = [
             "kind": .string(kind.rawValue),
             "signature": .string(signature),
             "type": .string(type),
             "message": .string(message),
             "stack": stack.map { .string($0) } ?? .null,
             "assertionId": assertionId.map { .string($0) } ?? .null,
-            "t": .int(t),
         ]
+        if let crash { o["crash"] = .object(crash) }
+        o["t"] = .int(t)
+        return .object(o)
     }
 
     static func truncate(_ s: String, _ max: Int) -> String {

@@ -204,6 +204,10 @@ public struct BugCapsuleMonitoringOptions: @unchecked Sendable {
     /// Mach exception server in addition to signal handlers (skipped while a
     /// debugger is attached).
     public var enableMachExceptionHandling: Bool
+    /// MetricKit crash and hang diagnostics (iOS 14+). A crash diagnostic is
+    /// sent only when BugCapsule did not report the same crash itself
+    /// (no native report within 60 s of it).
+    public var enableMetricKit: Bool
     public var enableUserInteractionTracing: Bool
     public var enableAppStartTracking: Bool
     public var enableFramesTracking: Bool
@@ -232,7 +236,7 @@ public struct BugCapsuleMonitoringOptions: @unchecked Sendable {
         beforeBreadcrumb: (@Sendable (Breadcrumb) -> Breadcrumb?)? = nil, inAppIncludes: [String] = [],
         inAppExcludes: [String] = [], attachStacktrace: Bool = true, sendDefaultPii: Bool = false,
         enableAppHangTracking: Bool = true, appHangTimeout: TimeInterval = 2, enableNativeCrashHandling: Bool = true,
-        enableMachExceptionHandling: Bool = true, enableUserInteractionTracing: Bool = true,
+        enableMachExceptionHandling: Bool = true, enableMetricKit: Bool = true, enableUserInteractionTracing: Bool = true,
         enableAppStartTracking: Bool = true, enableFramesTracking: Bool = true, enableScreenTracing: Bool = true,
         enableTimeToFullDisplayTracing: Bool = false, enableNetworkTracing: Bool = true,
         enableShakeToReport: Bool = false, captureCapsuleWithFeedback: Bool? = nil,
@@ -260,6 +264,7 @@ public struct BugCapsuleMonitoringOptions: @unchecked Sendable {
         self.appHangTimeout = appHangTimeout
         self.enableNativeCrashHandling = enableNativeCrashHandling
         self.enableMachExceptionHandling = enableMachExceptionHandling
+        self.enableMetricKit = enableMetricKit
         self.enableUserInteractionTracing = enableUserInteractionTracing
         self.enableAppStartTracking = enableAppStartTracking
         self.enableFramesTracking = enableFramesTracking

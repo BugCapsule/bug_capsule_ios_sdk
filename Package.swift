@@ -32,6 +32,7 @@ let package = Package(
         ),
         .target(
             name: "BugCapsuleXCTest",
+            dependencies: ["BugCapsule"],
             path: "Sources/BugCapsuleXCTest",
             swiftSettings: [.swiftLanguageMode(.v6)],
             linkerSettings: [.linkedFramework("XCTest")]

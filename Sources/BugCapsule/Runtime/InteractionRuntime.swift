@@ -277,30 +277,49 @@ final class InteractionRuntime: @unchecked Sendable {
     func manifestDependencies(
         events: [BugCapsuleEvent], checkpoint: Checkpoint, eligibility: EligibilityBuilder
     ) -> [CapsuleDependency] {
+        Self.selectDependencies(allDependencies(), events: events, checkpoint: checkpoint, eligibility: eligibility)
+    }
+
+    /// Every installed dependency with its gaps so far, in installation
+    /// order (the crash journal's header keeps them for the next launch).
+    func allDependencies() -> [CapsuleDependency] {
+        let list = lock.locked { recorderOrder.compactMap { recorders[$0] } }
+        return list.map { r in
+            let d = r.descriptor
+            let gaps = r.stats.gaps
+            let coverage: DependencyCoverage = !d.required ? .diagnostic : gaps.isEmpty ? .complete : .partial
+            return CapsuleDependency(
+                id: r.id, kind: d.kind, adapter: d.adapter, adapterVersion: d.adapterVersion, schema: d.schema,
+                required: d.required, coverage: coverage, operations: Array(d.operations.prefix(100)),
+                tested: d.tested.prefix(20).map { (package: $0.package, version: $0.version) },
+                gaps: Array(gaps.prefix(100)), stats: r.stats.json)
+        }
+    }
+
+    /// The dependencies of [all] that [events] or the checkpoint's open
+    /// interactions use, with their event counts; adds their gaps to
+    /// [eligibility].
+    static func selectDependencies(
+        _ all: [CapsuleDependency], events: [BugCapsuleEvent], checkpoint: Checkpoint, eligibility: EligibilityBuilder
+    ) -> [CapsuleDependency] {
         var counts: [String: Int] = [:]
         for e in events where InteractionTypes.isInteraction(e.type) {
             if let dep = e.data["dep"]?.stringValue { counts[dep, default: 0] += 1 }
         }
         let open = (checkpoint.data["interactions"]?["open"]?.arrayValue ?? []).compactMap(BugCapsuleOpenInteraction.init(json:))
         let used = Set(counts.keys).union(open.map(\.dep))
-        let list = lock.locked { recorderOrder.compactMap { recorders[$0] } }
         var out: [CapsuleDependency] = []
-        for r in list where used.contains(r.id) {
-            let d = r.descriptor
-            let gaps = r.stats.gaps
-            let coverage: DependencyCoverage = !d.required ? .diagnostic : gaps.isEmpty ? .complete : .partial
-            var stats = r.stats.json
-            stats[0] = ("events", counts[r.id] ?? 0)
-            out.append(
-                CapsuleDependency(
-                    id: r.id, kind: d.kind, adapter: d.adapter, adapterVersion: d.adapterVersion, schema: d.schema,
-                    required: d.required, coverage: coverage, operations: Array(d.operations.prefix(100)),
-                    tested: d.tested.prefix(20).map { (package: $0.package, version: $0.version) },
-                    gaps: Array(gaps.prefix(100)), stats: stats))
-            if !gaps.isEmpty {
+        for var d in all where used.contains(d.id) {
+            if let i = d.stats.firstIndex(where: { $0.0 == "events" }) {
+                d.stats[i] = ("events", counts[d.id] ?? 0)
+            } else {
+                d.stats.insert(("events", counts[d.id] ?? 0), at: 0)
+            }
+            out.append(d)
+            if !d.gaps.isEmpty {
                 eligibility.missing(
-                    "dependency.\(r.id)",
-                    "\(d.adapter) recorded partially: " + gaps.map { "\($0.code)×\($0.count ?? 1)" }.joined(separator: ", "))
+                    "dependency.\(d.id)",
+                    "\(d.adapter) recorded partially: " + d.gaps.map { "\($0.code)×\($0.count ?? 1)" }.joined(separator: ", "))
             }
         }
         if checkpoint.kind == .periodic, open.contains(where: { !$0.restorable }) {

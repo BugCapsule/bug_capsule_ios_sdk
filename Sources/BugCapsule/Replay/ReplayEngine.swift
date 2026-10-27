@@ -17,6 +17,13 @@ import Foundation
 ///   served by `interactions` on the same clock: a delivery that is due
 ///   limits a skip to its deadline; an idle open connection does not keep
 ///   replay busy.
+/// * Crash capsules (crash-capsules §4): the death of the process is judged
+///   by `BugCapsuleXCTest` from the crash report. In the app, an
+///   `ApplicationNotResponding` capsule is reproduced when the main thread
+///   stays blocked past 2 s (reported from a background thread), and an
+///   uncaught NSException reproduces only a crash of the same type
+///   (otherwise `inconclusive`, `failure.different`). A replay that ends
+///   with the app alive is `not_reproduced` as usual.
 public final class ReplayEngine: ReplayContext, @unchecked Sendable {
     public let capsule: Capsule
     public let settings: ReplaySettings
@@ -29,6 +36,8 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
     private var divergences: [Divergence] = []
     private var otherFailures: [FailureRecord] = []
     private var reproduced: FailureRecord?
+    /// A crash capsule's replay died of another failure (`failure.different`).
+    private var differentCrash: FailureRecord?
     private var fixturesServedCount = 0
     private var dispatched = 0
     private var expected = 0
@@ -133,6 +142,77 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
     }
 
     private var isReproduced: Bool { lock.locked { reproduced != nil } }
+    private var isFinished: Bool { lock.locked { finished } }
+
+    /// The capsule replays a crash (failure kind `crash`).
+    var expectsCrash: Bool { capsule.manifest.failure?.kind == .crash }
+
+    static let anrType = CrashVerdict.anrType
+    /// iOS's app hang threshold for ANR crash capsules (crash-capsules §4).
+    static let hangThreshold: TimeInterval = 2
+
+    /// Uncaught NSException: reports synchronously before the process
+    /// terminates. For a crash capsule it reproduces only a crash of the
+    /// same type (`crash:<exception name>`).
+    func uncaught(_ failure: FailureRecord, reason: String) {
+        if expectsCrash, let expected = capsule.manifest.failure {
+            let observed = FailureRecord.crash(
+                type: failure.type, message: failure.message, stack: failure.stack, crash: ["mechanism": "nsexception"],
+                t: lock.locked { runStart } == nil ? 0 : elapsed())
+            lock.locked {
+                if observed.signature == expected.signature {
+                    if reproduced == nil { reproduced = observed }
+                } else if reproduced == nil {
+                    differentCrash = observed
+                }
+            }
+        } else {
+            onFailure(failure)
+        }
+        finishSynchronously(reason: reason)
+    }
+
+    /// ANR capsules: a watchdog thread pings the main thread; no answer
+    /// within [threshold] is the reproduction, reported from that thread
+    /// (the main thread may never come back).
+    private func watchMainThread(threshold: TimeInterval) {
+        let thread = Thread { [weak self] in
+            while let engine = self, !engine.isFinished {
+                let answered = Flag()
+                let sent = uptime()
+                DispatchQueue.main.async { _ = answered.set() }
+                while !answered.isSet && uptime() - sent < threshold && !engine.isFinished { usleep(20_000) }
+                if engine.isFinished { return }
+                if !answered.isSet {
+                    engine.mainThreadHung(for: uptime() - sent)
+                    return
+                }
+                usleep(100_000)
+            }
+        }
+        thread.name = "BugCapsule replay hang watch"
+        thread.start()
+    }
+
+    private func mainThreadHung(for seconds: TimeInterval) {
+        let observed = FailureRecord.crash(
+            type: Self.anrType, message: "the main thread was blocked for \(Int(seconds * 1000)) ms during replay",
+            stack: nil, crash: ["mechanism": "app_hang"], t: elapsed())
+        let report: ReplayReport? = lock.locked {
+            guard !finished, reproduced == nil else { return nil }
+            reproduced = observed
+            // Built here: finish hooks and fixtures may need the main thread.
+            return ReplayReport(
+                outcome: .reproduced, attempt: settings.attempt,
+                durationMs: runStart.map { Int((uptime() - $0) * 1000) } ?? 0, strategy: strategy,
+                expectedSignature: capsule.manifest.failure?.signature, observed: observed, otherFailures: otherFailures,
+                divergences: divergences, eventsDispatched: dispatched, eventsExpected: expected,
+                fixturesServed: fixturesServedCount, compressedMs: skippedMs, gapsCompressed: gapsCompressed,
+                buildGitSha: buildGitSha, message: "app hang past \(Int(Self.hangThreshold)) s", attemptId: settings.attemptId,
+                runtime: "ios")
+        }
+        if let report { complete(report) }
+    }
 
     func precheck() {
         let m = capsule.manifest
@@ -184,6 +264,9 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
         interactions?.runStarted(at: interactionClock())
         strategy = chooseStrategy()
         let expectedFailure = capsule.manifest.failure
+        if expectedFailure?.kind == .crash && expectedFailure?.type == Self.anrType {
+            watchMainThread(threshold: Self.hangThreshold)
+        }
         let base = self.base
         let toDispatch = capsule.events.filter { shouldDispatch($0.type) && $0.t >= base }
         lock.locked { expected = toDispatch.count }
@@ -243,9 +326,16 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
         for key in fixtures.unusedKeys() { diverge("network.unused", key) }
         let expectedFailure = capsule.manifest.failure
         for (type, detail) in interactions?.finish(failureT: expectedFailure?.t) ?? [] { diverge(type, detail) }
-        let observed = lock.locked { reproduced }
-        let outcome: ReplayOutcome =
+        let (reproducedFailure, different) = lock.locked { (reproduced, differentCrash) }
+        var observed = reproducedFailure
+        var outcome: ReplayOutcome =
             expectedFailure == nil ? .noAssertion : observed != nil ? .reproduced : .notReproduced
+        var codes: [String] = []
+        if observed == nil, let different {
+            outcome = .inconclusive
+            observed = different
+            codes = ["failure.different"]
+        }
         return lock.locked {
             ReplayReport(
                 outcome: outcome, attempt: settings.attempt, durationMs: runStart.map { Int((uptime() - $0) * 1000) } ?? 0,
@@ -253,7 +343,7 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
                 otherFailures: otherFailures, divergences: divergences, eventsDispatched: dispatched,
                 eventsExpected: expected, fixturesServed: fixturesServedCount, compressedMs: skippedMs,
                 gapsCompressed: gapsCompressed, buildGitSha: buildGitSha, message: message,
-                attemptId: settings.attemptId, runtime: "ios")
+                attemptId: settings.attemptId, runtime: "ios", reasonCodes: codes)
         }
     }
 
@@ -336,6 +426,7 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
 final class Flag: @unchecked Sendable {
     private let lock = NSLock()
     private var value = false
+    var isSet: Bool { lock.locked { value } }
     /// True the first time.
     func set() -> Bool {
         lock.locked {

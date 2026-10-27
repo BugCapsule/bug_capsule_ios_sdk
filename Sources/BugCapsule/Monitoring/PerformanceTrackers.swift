@@ -112,19 +112,19 @@ final class FramesTracker: @unchecked Sendable {
 
 /// App hang watchdog (monitoring-v1 §11, 2 s on iOS): pings the main queue
 /// from a background thread; when the ping waits longer than the threshold
-/// while in the foreground, the main thread's stack is sampled and reported
-/// once per hang.
+/// while in the foreground, every thread's stack is sampled (main first)
+/// and reported once per hang.
 final class AppHangTracker: @unchecked Sendable {
     let threshold: TimeInterval
     private let mainThread: UInt32
     private let isForeground: @Sendable () -> Bool
-    private let onHang: @Sendable ([UInt64]) -> Void
+    private let onHang: @Sendable ([ThreadSample]) -> Void
     private let lock = NSLock()
     private var running = false
 
     init(
         threshold: TimeInterval, mainThread: UInt32, isForeground: @escaping @Sendable () -> Bool,
-        onHang: @escaping @Sendable ([UInt64]) -> Void
+        onHang: @escaping @Sendable ([ThreadSample]) -> Void
     ) {
         self.threshold = threshold
         self.mainThread = mainThread
@@ -144,6 +144,18 @@ final class AppHangTracker: @unchecked Sendable {
 
     func stop() { lock.locked { running = false } }
 
+    /// All threads; main sampled on its own when the sampler missed it.
+    private func sample() -> [ThreadSample] {
+        var samples = NativeCrashHandler.sampleThreads()
+        if !samples.contains(where: { $0.isMain }) {
+            samples.insert(
+                ThreadSample(
+                    index: 0, name: "main", crashed: false, current: true, isMain: true,
+                    frames: NativeCrashHandler.backtrace(ofThread: mainThread)), at: 0)
+        }
+        return samples
+    }
+
     private func loop() {
         while isRunning {
             if !isForeground() {
@@ -154,7 +166,7 @@ final class AppHangTracker: @unchecked Sendable {
             DispatchQueue.main.async { responded.signal() }
             if responded.wait(timeout: .now() + threshold) == .timedOut {
                 if isRunning && isForeground() {
-                    onHang(NativeCrashHandler.backtrace(ofThread: mainThread))
+                    onHang(sample())
                 }
                 // One report per hang: wait for the main thread to come back.
                 responded.wait()
