@@ -382,6 +382,26 @@ final class CrashCapsuleTests: XCTestCase {
         XCTAssertEqual(decoded.manifest.journalGapMs, 400)
     }
 
+    func testFullSetOfAppLabelsLeavesRoomForTheCrashLabels() throws {
+        var h = header()
+        var appLabels = JSONObject()
+        for i in 0..<CapsuleLimits.maxLabels { appLabels["k\(i)"] = .string("v\(i)") }
+        h["labels"] = .object(appLabels)
+        let j = journal(header: h)
+        j.append(action(1, t: 1000))
+        j.close()
+        let c = try XCTUnwrap(CrashJournalContents.load(j.directory))
+        let crashAt = Date(timeIntervalSince1970: Double(Self.wallAtStart + 1_400) / 1000)
+        let (capsule, _) = try XCTUnwrap(
+            bareSession().buildCrashCapsule(c, draft: try segvDraft(), crashTime: crashAt, link: link, capsuleId: "cap-1", maxBytes: 5_000_000))
+        let labels = Dictionary(uniqueKeysWithValues: capsule.manifest.labels)
+        XCTAssertEqual(labels.count, CapsuleLimits.maxLabels)
+        XCTAssertEqual(labels["source"], "crash_journal")
+        XCTAssertEqual(labels["crash.mechanism"], "signal")
+        XCTAssertEqual(labels["k97"], "v97")
+        XCTAssertNil(labels["k98"])
+    }
+
     func testCrashCapsuleFromThePeriodicCheckpointAfterEviction() throws {
         let j = journal()
         for i in 1...3 { j.append(action(i, t: 1000 * i)) }

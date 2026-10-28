@@ -143,8 +143,10 @@ extension BugCapsuleSession {
         session["durationMs"] = .int(max(t, lastShifted, 0))
         m["session"] = .object(session)
         var manifest = CapsuleManifest(json: m, specVersion: 2)
-        var labels = (h["labels"]?.objectValue ?? JSONObject()).compactMap { k, v in v.stringValue.map { (k, $0) } }
+        // The app's labels give up two slots for the crash labels, so the capsule stays within maxLabels.
+        var labels = Array((h["labels"]?.objectValue ?? JSONObject()).compactMap { k, v in v.stringValue.map { (k, $0) } }
             .filter { $0.0 != "source" && $0.0 != "crash.mechanism" }
+            .prefix(CapsuleLimits.maxLabels - 2))
         labels.append(("source", "crash_journal"))
         labels.append(("crash.mechanism", failure.crash?["mechanism"]?.stringValue ?? "signal"))
         manifest.capsuleId = capsuleId

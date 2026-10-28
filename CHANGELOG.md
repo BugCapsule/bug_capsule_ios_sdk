@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Apply the project's `maxInteractionPayloadBytes` capture setting to every interaction adapter (`RemoteCaptureConfig.maxInteractionPayloadBytes`).
+- Crash capsules keep at most 98 app labels, so the two crash labels fit and an app with 99 or more labels no longer loses its crash capsule to validation.
+
 ## 0.4.1-beta.3 — 2026-10-27
 
 - Read capsule spec v2 (interaction dependencies) as well as v1; write v2
