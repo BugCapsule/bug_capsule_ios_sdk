@@ -388,6 +388,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
             remoteDisabled = cached?.enabled == false
             captureBodies = config.captureNetworkBodies && (cached?.captureNetworkBodies ?? true)
             interactions.setDisabledAdapters(Set(cached?.disabledAdapters ?? []))
+            interactions.setMaxPayloadBytes(cached?.maxInteractionPayloadBytes)
             maxCapsuleBytes = cached?.maxCapsuleBytes ?? maxCapsuleBytes
             recording = decideRecording(cached)
         }
@@ -947,6 +948,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
         // Whatever the recorder rewrote, the journal is written again from it.
         defer { if rewrote { resetJournalLocked() } }
         let switchedOff = interactions.setDisabledAdapters(Set(next.disabledAdapters))
+        interactions.setMaxPayloadBytes(next.maxInteractionPayloadBytes)
         if !switchedOff.isEmpty {
             rewrote = true
             // Kill switch of single adapters: their buffered events go too.

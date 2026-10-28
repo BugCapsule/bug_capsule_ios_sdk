@@ -186,6 +186,7 @@ final class InteractionRuntime: @unchecked Sendable {
         recording: @escaping @Sendable () -> Bool
     ) {
         budget = PayloadBudget(limits)
+        baseLimits = limits
         self.record = record
         self.now = now
         self.redactor = redactor
@@ -193,6 +194,13 @@ final class InteractionRuntime: @unchecked Sendable {
     }
 
     var limits: InteractionLimits { budget.limits }
+    private let baseLimits: InteractionLimits
+
+    /// Remote config `maxInteractionPayloadBytes` (capsule-v2 §7): lowers the
+    /// per-payload limit of every adapter; nil restores the session's own.
+    func setMaxPayloadBytes(_ remote: Int?) {
+        budget.limits = baseLimits.lowered(maxPayloadBytes: remote)
+    }
 
     // MARK: adapters
 
