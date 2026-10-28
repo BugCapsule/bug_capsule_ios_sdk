@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- URLSession (security): every instrumented configuration gets its own
+  downstream session, built from a copy of that configuration. Requests
+  were re-issued with the configuration passed to `instrument(_:)` last,
+  so one session's `httpAdditionalHeaders` (e.g. `Authorization`) went out
+  on another session's requests, an ephemeral session's cookies were stored
+  in `HTTPCookieStorage.shared`, and the original session's cache policy,
+  TLS, proxy and timeout settings were not applied. `URLSession.shared`
+  (`instrumentSharedSession()`) uses `URLSessionConfiguration.default`.
+  `instrument(_:)` now inserts a `BugCapsuleURLProtocol` subclass created
+  for that configuration, so `protocolClasses.first` is no longer
+  `BugCapsuleURLProtocol.self` itself; custom protocol classes of one
+  configuration no longer run for another's requests.
 - URLSession: a response is always delivered to the request that made it.
   Requests on two instrumented sessions in flight at the same time could
   get each other's response, and one of them then never completed.

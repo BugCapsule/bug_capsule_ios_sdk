@@ -14,13 +14,13 @@ final class DownstreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sen
     private let lock = NSLock()
     // The session keeps a running task alive until `didCompleteWithError`,
     // which removes its entry, so an identifier is never reused while registered.
-    private var handlers: [ObjectIdentifier: BugCapsuleURLProtocol] = [:]
+    private var handlers: [ObjectIdentifier: (handler: BugCapsuleURLProtocol, session: DownstreamSession)] = [:]
 
-    func register(_ task: URLSessionTask, _ handler: BugCapsuleURLProtocol) {
-        lock.locked { handlers[ObjectIdentifier(task)] = handler }
+    func register(_ task: URLSessionTask, _ handler: BugCapsuleURLProtocol, on session: DownstreamSession) {
+        lock.locked { handlers[ObjectIdentifier(task)] = (handler, session) }
     }
 
-    private func handler(_ task: URLSessionTask) -> BugCapsuleURLProtocol? { lock.locked { handlers[ObjectIdentifier(task)] } }
+    private func handler(_ task: URLSessionTask) -> BugCapsuleURLProtocol? { lock.locked { handlers[ObjectIdentifier(task)]?.handler } }
 
     func urlSession(
         _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
@@ -36,7 +36,8 @@ final class DownstreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sen
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         let h = lock.locked { handlers.removeValue(forKey: ObjectIdentifier(task)) }
-        h?.downstreamComplete(error)
+        h?.handler.downstreamComplete(error)
+        h?.session.taskEnded()
     }
 
     func urlSession(
@@ -48,7 +49,8 @@ final class DownstreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sen
 }
 
 /// The SDK's URL protocol: records exchanges while capturing and serves
-/// fixtures while replaying. Inserted by `BugCapsule.instrument(_:)`.
+/// fixtures while replaying. `BugCapsule.instrument(_:)` inserts a subclass
+/// of it per configuration, which picks the downstream session.
 public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
     static let handledKey = "com.bugcapsule.handled"
 
@@ -227,12 +229,14 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
         var inner = original
         if let body, inner.httpBody == nil, inner.httpBodyStream == nil { inner.httpBody = body }
         BugCapsuleURLProtocol.markInternal(&inner)
-        let task = BugCapsuleURLSession.downstream().dataTask(with: inner)
+        // The class `instrument(_:)` created for the app's configuration.
+        let downstream = BugCapsuleURLSession.downstream(for: object_getClass(self) ?? BugCapsuleURLProtocol.self)
+        let task = downstream.dataTask(with: inner)
         lock.locked {
             capturing = record
             innerTask = task
         }
-        DownstreamDelegate.shared.register(task, self)
+        DownstreamDelegate.shared.register(task, self, on: downstream)
         task.resume()
     }
 

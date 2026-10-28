@@ -45,6 +45,21 @@ Integrations and their checkpoint keys: `urlsession` (events only),
 `string`, `stringArray`, `data` base64, `date` epoch ms), `navigation`
 (`{route, backStack}`, periodic checkpoints), `state` (`{key: <JSON>}`).
 
+### URLSession interception
+
+`BugCapsule.instrument(config)` puts a `BugCapsuleURLProtocol` subclass
+created for that configuration first in its `protocolClasses`. The protocol
+re-issues each request on a downstream session built from a copy of the
+configuration as it was when `instrument` ran, minus the SDK's protocol:
+`httpAdditionalHeaders`, cookie storage, cache policy, credential storage, TLS,
+proxy and timeout settings and its own protocol classes apply to that
+configuration's requests only, never to another session's. Finish setting up
+a configuration before instrumenting it. Requests reached through
+`instrumentSharedSession()` use `URLSessionConfiguration.default`, as
+`URLSession.shared` does. A downstream session is closed after 60 s without
+requests and re-created when needed. Requests the SDK re-issues are marked
+and never intercepted again.
+
 ## Supported frameworks and capabilities
 
 Frameworks seen are listed in `manifest.runtime.frameworks` (`uikit`,
@@ -645,8 +660,7 @@ on.
   frames are size-only unless `captureBinary`; a recorded message that isn't
   replayable is not delivered (`ws.noPayload`); open connections are not
   restored from periodic checkpoints. Native adapters cover the operations
-  they declare; nothing is recorded below them. When several instrumented configurations carry different custom
-  protocols, the SDK's downstream session uses all of them.
+  they declare; nothing is recorded below them.
 * Only allowlisted UserDefaults keys of the listed types are captured;
   Keychain, Core Data, files and SQLite are not (write an integration).
 * Navigation is restored from periodic checkpoints only through an app-provided

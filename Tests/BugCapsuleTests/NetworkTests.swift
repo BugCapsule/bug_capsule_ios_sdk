@@ -20,7 +20,7 @@ final class NetworkCaptureTests: XCTestCase {
         let c = URLSessionConfiguration.ephemeral
         c.protocolClasses = [FakeServerProtocol.self]
         BugCapsule.instrument(c)
-        XCTAssertTrue(c.protocolClasses!.first == BugCapsuleURLProtocol.self)
+        XCTAssertTrue(BugCapsuleURLSession.isSDKProtocol(c.protocolClasses!.first!))
         urlSession = URLSession(configuration: c)
     }
 
