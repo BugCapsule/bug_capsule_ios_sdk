@@ -497,6 +497,32 @@ final class WebSocketTests: XCTestCase {
         XCTAssertThrowsError(try RemoteCaptureConfig(json: ["disabledAdapters": "all"]))
     }
 
+    func testRemoteMaxInteractionPayloadBytesLowersThePerFrameLimit() async throws {
+        let server = quotesServer()
+        let log = SeenLog()
+        quotesApp(server, log)
+        startCapture()
+        let session = BugCapsuleSession.current!
+        session.applyRemote(nil, RemoteCaptureConfig(fetchedAtMs: epochMs(), maxInteractionPayloadBytes: 16))
+        _ = ActionRegistry.shared.invoke("quotes.open", payload: nil)
+        await expectEventually { log.lines.contains("done") }
+        let capsule = try await capsule()
+        let frames = capsule.events(ofType: "ws.send") + capsule.events(ofType: "ws.message")
+        XCTAssertFalse(frames.isEmpty)
+        for f in frames { XCTAssertEqual(f.data["payload"]?["mode"], "truncated") }
+        XCTAssertTrue(capsule.manifest.dependency("ws")!.gaps.contains { $0.code == "payload.truncated" })
+
+        // Without the setting the session's own limit applies again.
+        session.applyRemote(nil, RemoteCaptureConfig(fetchedAtMs: epochMs()))
+        XCTAssertEqual(session.interactions.limits.maxPayloadBytes, 64 * 1024)
+
+        let parsed = try RemoteCaptureConfig(json: ["maxInteractionPayloadBytes": 1_000_000])
+        XCTAssertEqual(parsed.maxInteractionPayloadBytes, 64 * 1024)
+        XCTAssertEqual(try RemoteCaptureConfig(json: parsed.json.objectValue!).maxInteractionPayloadBytes, 64 * 1024)
+        XCTAssertNil(try RemoteCaptureConfig(json: [:]).maxInteractionPayloadBytes)
+        XCTAssertThrowsError(try RemoteCaptureConfig(json: ["maxInteractionPayloadBytes": "small"]))
+    }
+
     func testBodyCaptureOffOmitsInteractionPayloads() throws {
         let session = BugCapsuleSession(
             config: BugCapsuleConfig(appVersion: "1", appBuild: "1", mode: .qa), integrations: [],
