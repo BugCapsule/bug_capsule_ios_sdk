@@ -1,7 +1,8 @@
 import Foundation
 
 /// Routes downstream URLSession callbacks to the protocol instance that
-/// started each task.
+/// started each task. Keyed by task object: every downstream session numbers
+/// its tasks from 1, so task identifiers repeat across sessions.
 final class DownstreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     static let shared = DownstreamDelegate()
     let queue: OperationQueue = {
@@ -11,13 +12,15 @@ final class DownstreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sen
         return q
     }()
     private let lock = NSLock()
-    private var handlers: [Int: BugCapsuleURLProtocol] = [:]
+    // The session keeps a running task alive until `didCompleteWithError`,
+    // which removes its entry, so an identifier is never reused while registered.
+    private var handlers: [ObjectIdentifier: BugCapsuleURLProtocol] = [:]
 
     func register(_ task: URLSessionTask, _ handler: BugCapsuleURLProtocol) {
-        lock.locked { handlers[task.taskIdentifier] = handler }
+        lock.locked { handlers[ObjectIdentifier(task)] = handler }
     }
 
-    private func handler(_ task: URLSessionTask) -> BugCapsuleURLProtocol? { lock.locked { handlers[task.taskIdentifier] } }
+    private func handler(_ task: URLSessionTask) -> BugCapsuleURLProtocol? { lock.locked { handlers[ObjectIdentifier(task)] } }
 
     func urlSession(
         _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
@@ -32,7 +35,7 @@ final class DownstreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sen
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        let h = lock.locked { handlers.removeValue(forKey: task.taskIdentifier) }
+        let h = lock.locked { handlers.removeValue(forKey: ObjectIdentifier(task)) }
         h?.downstreamComplete(error)
     }
 

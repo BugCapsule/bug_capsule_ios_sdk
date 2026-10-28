@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- URLSession: a response is always delivered to the request that made it.
+  Requests on two instrumented sessions in flight at the same time could
+  get each other's response, and one of them then never completed.
+
 ## 0.4.1-beta.4 — 2026-10-28
 
 - Apply the project's `maxInteractionPayloadBytes` capture setting to every interaction adapter (`RemoteCaptureConfig.maxInteractionPayloadBytes`).
