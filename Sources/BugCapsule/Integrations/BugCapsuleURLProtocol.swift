@@ -34,6 +34,27 @@ final class DownstreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sen
         handler(dataTask)?.downstreamData(data)
     }
 
+    // Only the task-level method is implemented, so session-wide challenges
+    // (server trust, client certificates) arrive here too, with their task.
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        guard let h = handler(task) else { return completionHandler(.performDefaultHandling, nil) }
+        h.downstreamChallenge(challenge, completionHandler)
+    }
+
+    /// The app's session decides: the downstream task doesn't follow, the
+    /// protocol reports the redirect and still delivers the 3xx response,
+    /// which the loading system uses only if the app refuses the redirect.
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        handler(task)?.downstreamRedirect(response, to: request)
+        completionHandler(nil)
+    }
+
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         let h = lock.locked { handlers.removeValue(forKey: ObjectIdentifier(task)) }
         h?.handler.downstreamComplete(error)
@@ -46,6 +67,32 @@ final class DownstreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sen
     ) {
         completionHandler(nil)
     }
+}
+
+/// Completes a downstream authentication challenge, once, with the answer of
+/// the app's session (its delegate, or default handling) to the challenge the
+/// protocol forwarded to its client.
+final class DownstreamChallengeSender: NSObject, URLAuthenticationChallengeSender, @unchecked Sendable {
+    private let lock = NSLock()
+    private var completion: (@Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void)?
+
+    init(_ completion: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        self.completion = completion
+    }
+
+    func complete(_ disposition: URLSession.AuthChallengeDisposition, _ credential: URLCredential?) {
+        let c = lock.locked { () -> (@Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void)? in
+            defer { completion = nil }
+            return completion
+        }
+        c?(disposition, credential)
+    }
+
+    func use(_ credential: URLCredential, for challenge: URLAuthenticationChallenge) { complete(.useCredential, credential) }
+    func continueWithoutCredential(for challenge: URLAuthenticationChallenge) { complete(.useCredential, nil) }
+    func cancel(_ challenge: URLAuthenticationChallenge) { complete(.cancelAuthenticationChallenge, nil) }
+    func performDefaultHandling(for challenge: URLAuthenticationChallenge) { complete(.performDefaultHandling, nil) }
+    func rejectProtectionSpaceAndContinue(with challenge: URLAuthenticationChallenge) { complete(.rejectProtectionSpace, nil) }
 }
 
 /// The SDK's URL protocol: records exchanges while capturing and serves
@@ -79,6 +126,9 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
     private var runLoopModes: [String] = [RunLoop.Mode.default.rawValue]
     private var stopped = false
     private var innerTask: URLSessionDataTask?
+    private var pendingChallenge: DownstreamChallengeSender?
+    /// Headers tracing set on the forwarded copy, with the app's own values.
+    private var tracedHeaders: [(name: String, original: String?)] = []
 
     // capture state
     private var capturing = false
@@ -155,6 +205,8 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
         lock.locked { httpSpan = http.span }
         var out = request
         for (k, v) in http.headers { out.setValue(v, forHTTPHeaderField: k) }
+        let traced = http.headers.keys.map { (name: $0, original: request.value(forHTTPHeaderField: $0)) }
+        lock.locked { tracedHeaders = traced }
         return out
     }
 
@@ -193,12 +245,16 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     public override func stopLoading() {
-        let (task, wasCapturing, timer, end) = lock.locked { () -> (URLSessionDataTask?, Bool, DispatchSourceTimer?, (@Sendable () -> Void)?) in
+        let (task, wasCapturing, timer, end, challenge) = lock.locked {
+            () -> (URLSessionDataTask?, Bool, DispatchSourceTimer?, (@Sendable () -> Void)?, DownstreamChallengeSender?) in
             stopped = true
             let e = endWork
             endWork = nil
-            return (innerTask, capturing && !finishedDownstream, waitTimer, e)
+            let c = pendingChallenge
+            pendingChallenge = nil
+            return (innerTask, capturing && !finishedDownstream, waitTimer, e, c)
         }
+        challenge?.complete(.cancelAuthenticationChallenge, nil)
         timer?.cancel()
         end?()
         if lock.locked({ !finishedDownstream }) {
@@ -350,26 +406,33 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
         ]
     }
 
+    /// The recorded exchange up to the response head.
+    private func head(for http: HTTPURLResponse, redactor: Redactor) -> JSONObject {
+        var head = lock.locked { base }
+        head["status"] = .int(http.statusCode)
+        head["statusMessage"] = .string(HTTPURLResponse.localizedString(forStatusCode: http.statusCode))
+        let excluded = lock.locked { self.excluded }
+        if !excluded {
+            let headers = http.allHeaderFields.compactMap { k, v -> (String, String)? in
+                guard let k = k as? String else { return nil }
+                return (k, "\(v)")
+            }.sorted { $0.0.lowercased() < $1.0.lowercased() }
+            head["responseHeaders"] = .object(redactor.redactHeaders(headers))
+        }
+        return head
+    }
+
     func downstreamResponse(_ response: URLResponse) {
         if isStopped { return }
         if let http = response as? HTTPURLResponse { lock.locked { statusCode = http.statusCode } }
-        let capturing = lock.locked { self.capturing }
+        // A redirect was recorded when it was reported.
+        let capturing = lock.locked { self.capturing && !recorded }
         if capturing, let http = response as? HTTPURLResponse {
             let session = BugCapsuleSession.current
             let net = BugCapsuleURLSession.active
             let redactor = session?.redactor ?? Redactor()
             let contentType = http.value(forHTTPHeaderField: "Content-Type")
-            var head = lock.locked { base }
-            head["status"] = .int(http.statusCode)
-            head["statusMessage"] = .string(HTTPURLResponse.localizedString(forStatusCode: http.statusCode))
-            let excluded = lock.locked { self.excluded }
-            if !excluded {
-                let headers = http.allHeaderFields.compactMap { k, v -> (String, String)? in
-                    guard let k = k as? String else { return nil }
-                    return (k, "\(v)")
-                }.sorted { $0.0.lowercased() < $1.0.lowercased() }
-                head["responseHeaders"] = .object(redactor.redactHeaders(headers))
-            }
+            let head = head(for: http, redactor: redactor)
             let sse = (contentType ?? "").lowercased().contains("event-stream")
             let bodies = lock.locked { captureBodies }
             lock.locked {
@@ -395,6 +458,65 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
         onClient { [weak self] in
             guard let self, !self.isStopped else { return }
             self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        }
+    }
+
+    /// Forwards a downstream challenge to the app's session (its delegate:
+    /// certificate pinning, client certificates, HTTP auth) through the client.
+    func downstreamChallenge(
+        _ challenge: URLAuthenticationChallenge,
+        _ completion: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        let sender = DownstreamChallengeSender(completion)
+        let stopped = lock.locked { () -> Bool in
+            if !self.stopped { pendingChallenge = sender }
+            return self.stopped
+        }
+        if stopped { return sender.complete(.cancelAuthenticationChallenge, nil) }
+        // Without `failureResponse`: URLSession drops the app's answer to a
+        // forwarded challenge that carries one (it never reaches the sender).
+        // `error` is left out for the same reason (compared the same way).
+        let forwarded = URLAuthenticationChallenge(
+            protectionSpace: challenge.protectionSpace, proposedCredential: challenge.proposedCredential,
+            previousFailureCount: challenge.previousFailureCount, failureResponse: nil, error: nil, sender: sender)
+        onClient { [weak self] in
+            guard let self, !self.isStopped, let client = self.client else {
+                return sender.complete(.cancelAuthenticationChallenge, nil)
+            }
+            client.urlProtocol(self, didReceive: forwarded)
+        }
+    }
+
+    /// Reports a downstream redirect to the app's session, which applies its
+    /// delegate and redirect policy: it re-issues the new request (through
+    /// this protocol again, recorded as its own exchange) or keeps the 3xx
+    /// response, which the downstream task still delivers.
+    func downstreamRedirect(_ response: HTTPURLResponse, to newRequest: URLRequest) {
+        if isStopped { return }
+        let (traced, capturing) = lock.locked { () -> ([(name: String, original: String?)], Bool) in
+            statusCode = response.statusCode
+            return (tracedHeaders, self.capturing && !recorded)
+        }
+        // As the app would have sent it: without the downstream mark (so it
+        // is intercepted) and with the app's own values for traced headers.
+        let m = (newRequest as NSURLRequest).mutableCopy() as! NSMutableURLRequest
+        URLProtocol.removeProperty(forKey: Self.handledKey, in: m)
+        for h in traced { m.setValue(h.original, forHTTPHeaderField: h.name) }
+        let next = m as URLRequest
+        if capturing {
+            // The redirect body is not kept: the app gets the target's response,
+            // or (refusing the redirect) the 3xx response.
+            let head = head(for: response, redactor: BugCapsuleSession.current?.redactor ?? Redactor())
+            lock.locked {
+                responseHead = head
+                self.response = response
+            }
+            finishRecording(["responseBody": .null, "bodyEncoding": "json"])
+        }
+        finishMonitoring(error: nil)
+        onClient { [weak self] in
+            guard let self, !self.isStopped else { return }
+            self.client?.urlProtocol(self, wasRedirectedTo: next, redirectResponse: response)
         }
     }
 
@@ -533,12 +655,36 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
         let body = BugCapsuleURLSession.encodeBody(fixture.responseBody, encoding: fixture.bodyEncoding)
         let url = request.url ?? URL(string: "http://localhost/")!
         let response = HTTPURLResponse(url: url, statusCode: fixture.status, httpVersion: "HTTP/1.1", headerFields: headers)!
+        let redirect = redirectRequest(for: response)
         onClient { [weak self] in
             guard let self, !self.isStopped else { return }
+            // As captured: the app's session decides, and its new request is
+            // served from its own fixture.
+            if let redirect { self.client?.urlProtocol(self, wasRedirectedTo: redirect, redirectResponse: response) }
             self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             if !body.isEmpty { self.client?.urlProtocol(self, didLoad: body) }
             self.client?.urlProtocolDidFinishLoading(self)
             replay.activity()
         }
+    }
+
+    /// The request a recorded redirect leads to, built as URLSession does:
+    /// 303 (and 301/302 after a POST) become a GET without a body.
+    private func redirectRequest(for response: HTTPURLResponse) -> URLRequest? {
+        let status = response.statusCode
+        guard [301, 302, 303, 307, 308].contains(status), let location = response.value(forHTTPHeaderField: "Location"),
+            let url = URL(string: location, relativeTo: request.url)?.absoluteURL
+        else { return nil }
+        var next = request
+        next.url = url
+        let method = (request.httpMethod ?? "GET").uppercased()
+        if (status == 303 && method != "GET" && method != "HEAD") || ((status == 301 || status == 302) && method == "POST") {
+            next.httpMethod = "GET"
+            next.httpBody = nil
+            next.httpBodyStream = nil
+            next.setValue(nil, forHTTPHeaderField: "Content-Type")
+            next.setValue(nil, forHTTPHeaderField: "Content-Length")
+        }
+        return next
     }
 }

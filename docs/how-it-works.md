@@ -60,6 +60,22 @@ a configuration before instrumenting it. Requests reached through
 requests and re-created when needed. Requests the SDK re-issues are marked
 and never intercepted again.
 
+The app's session delegate works for instrumented sessions as without the SDK:
+
+* Authentication challenges (server trust for certificate pinning, client
+  certificates for mTLS, HTTP authentication) are forwarded to the app's
+  session, which asks its delegate (or applies default handling), and its
+  answer completes the challenge below the SDK. Pinning that rejects a
+  certificate fails the request as it does without the SDK. The forwarded
+  challenge has no `failureResponse` or `error`: URLSession drops the answer
+  to a forwarded challenge that carries a failure response.
+* Redirects are not followed below the SDK. The app's session gets
+  `willPerformHTTPRedirection` and its redirect policy decides; a followed
+  redirect goes through the SDK's protocol again. Capture records each hop
+  as its own exchange (the 3xx with its `Location` and an empty body, then
+  the target), and replay serves the 3xx as a redirect, so the app's
+  session follows it to the next fixture.
+
 ## Supported frameworks and capabilities
 
 Frameworks seen are listed in `manifest.runtime.frameworks` (`uikit`,
@@ -650,10 +666,11 @@ on.
   equivalent (`lifecycle.unsupported`).
 * `BugCapsule.now()` / `BugCapsule.random` are the only virtualized clock and
   randomness; `Date()` and `Int.random` in app code are not.
-* URLSession: redirects are followed inside the SDK's protocol (the final
-  response is recorded and served; app redirect delegates are not consulted);
-  authentication challenges use default handling; `httpBodyStream` bodies are
-  keyed without a body hash and not recorded; stream tasks are not captured.
+* URLSession: `httpBodyStream` bodies are keyed without a body hash and not
+  recorded; stream tasks are not captured. Challenges reach the app's
+  delegate without `failureResponse` or `error`, and the body of a redirect
+  response is not recorded (replay serves it empty when the app refuses the
+  redirect).
 * WebSockets: only through `BugCapsuleWebSocket` (a directly created
   `URLSessionWebSocketTask` is neither recorded nor blocked in replay); ping
   and pong are not recorded (`sendPing` succeeds at once in replay); binary

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- URLSession (security): the app's session delegate works for instrumented
+  sessions. Authentication challenges (certificate pinning, mTLS client
+  certificates, HTTP auth) were answered with default handling below the
+  SDK and never reached the delegate; they are now forwarded to the app's
+  session. Redirects were followed below the SDK without asking the
+  delegate or applying its redirect policy; the app's session now decides
+  and a followed redirect is re-issued through it. Capture records each
+  redirect hop as its own exchange (the 3xx without its body, then the
+  target) and replay serves recorded redirects as redirects. Capsules
+  recorded before replay as before.
 - URLSession (security): every instrumented configuration gets its own
   downstream session, built from a copy of that configuration. Requests
   were re-issued with the configuration passed to `instrument(_:)` last,
