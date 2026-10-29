@@ -183,6 +183,7 @@ POST {api}/v1/apps/{application_id}/emergency/receipts
 
 `errorCode` takes one of the verification or acceptance reasons in lower case
 (`bad_signature`, `stale_revision`, …), matching `^[a-z][a-z0-9_]{0,63}$`.
+A third status, `RUNTIME`, carries adapter state and is described in §7.6.
 
 ### 7.4 Failure modes
 
@@ -221,6 +222,102 @@ It also offers a way to observe snapshot changes. Observers are called after
 the swap, off any lock, and the platform-appropriate thread rule applies (for
 example the main thread for UI listeners). Failures inside observers never
 affect the client.
+
+### 7.6 Runtime reports
+
+A client with a hotfix or update adapter (§7.7) reports what that adapter
+knows. The backend uses the reports to check that a recovery can reach the
+installed builds, and to follow a recovery once it ships. Reports are
+optional; a client without adapters never sends one.
+
+A report is a receipt (§7.3) with status `RUNTIME`, the highest accepted
+revision (`0` before any), `errorCode: null`, and a `runtime` object:
+
+```
+{"environment":"production","platform":"FLUTTER_ANDROID","installationId":"…","appVersion":"2.4.1+42","sdkVersion":"0.6.0",
+ "revision":42,"status":"RUNTIME","errorCode":null,
+ "runtime":{
+   "hotfix":{"provider":"shorebird","available":true,"releaseVersion":"2.4.1+42","currentPatch":3,"nextPatch":4,"state":"restart_required"},
+   "update":{"provider":"google_play","flow":"flexible","state":"downloaded","availableVersion":"2.4.2","requiredVersion":"2.4.2"}}}
+→ 204
+```
+
+| Field | Rule |
+|---|---|
+| `hotfix.provider`, `update.provider` | `^[a-z][a-z0-9_]{0,31}$`. Shipped adapters use `shorebird`, `google_play`, `app_store`. |
+| `hotfix.available` | The installed build carries the provider's patch runtime. A build made without it reports `false`. |
+| `hotfix.releaseVersion` | The release patches apply to, or null. At most 64 characters. |
+| `hotfix.currentPatch` | The patch the running process uses; null on the base release. |
+| `hotfix.nextPatch` | The patch that becomes active on the next start, when it differs from `currentPatch`; otherwise null. |
+| `hotfix.state` | `up_to_date`, `outdated`, `downloading`, `restart_required`, `unavailable`, `failed`. |
+| `update.flow` | `immediate`, `flexible`, `store_page`, `custom`. |
+| `update.state` | `not_available`, `available`, `in_progress`, `downloaded`, `declined`, `failed`, `opened_store`. |
+| `update.availableVersion`, `update.requiredVersion` | Strings of at most 64 characters, or null. |
+
+Patch numbers are integers from 1 to 2³¹−1. Either of `hotfix` and `update`
+may be left out, and `runtime` must not carry other fields.
+
+* A client sends a report when its runtime object changes. It never sends
+  the same object twice in a row, and it sends at most one report every 60 s.
+  When the object changes again within that interval, the client sends only
+  the latest one when the interval ends. Reports are fire-and-forget, like
+  every receipt.
+* `RUNTIME` receipts are exempt from the once-per-`(revision, status,
+  errorCode)` rule of §7.3. A client may send several of them for one
+  revision.
+* When `hotfix.state` is `failed` or `unavailable`, null patch numbers mean
+  "unknown". They do not mean the base release.
+* `APPLIED` and `FAILED` receipts may also carry the latest `runtime`.
+* No adapter can observe that an update was installed, because the process
+  that started it is gone by then. An installed update shows up as the new
+  `appVersion` in that installation's next receipt.
+* In replay mode (§7.4) nothing is reported.
+
+### 7.7 Recovery adapters
+
+The adapters help an app pick up a fix. A fix still arrives only through a
+mechanism the platform allows. No adapter downloads native code, installs a
+package by itself, or restarts the app.
+
+**Hotfix adapter (Flutter only).** It has three operations:
+`checkAvailability`, `downloadAvailablePatch` and `getStatus`. It reports
+whether a patch was downloaded, and it never reports a downloaded patch as
+active. A downloaded patch becomes active on the next start. The adapter
+reports `restart_required` and leaves the timing to the app.
+
+* The shipped adapter is for Shorebird, in a separate package. It works only in
+  builds created with `shorebird release`. Any other build reports
+  `available: false`; such a build can only be fixed by a store release.
+* Code push delivers Dart code only. Changes to native code or plugins need a
+  store release.
+
+**Update adapter (Android and iOS).** It covers an app that has to move to a
+newer store build, usually because a decision says `REQUIRE_UPDATE` with a
+`required_version`. An update is available only when the store's version is
+at least `required_version`, compared by the version rules in §6.
+
+* **Google Play:** the adapter uses the Play In-App Updates API.
+  * It uses the flexible flow by default.
+  * It uses the immediate flow only when all three hold: the app opted in, the
+    decision is `REQUIRE_UPDATE` with severity `P0` or `P1`, and Play allows an
+    immediate update for that update.
+  * After a flexible download, the app decides when to call complete. Complete
+    restarts the app.
+  * Play reports version codes, not version names. The adapter turns
+    `required_version` into a version code in one of two ways:
+    * the build number, so `2.4.2+57` becomes 57;
+    * a mapping the app supplies.
+
+    Without either, any Play update newer than the installed version code
+    counts as available.
+  * Apps distributed outside Google Play implement the same adapter
+    interface themselves. The SDK never installs a package.
+* **App Store:** iOS has no in-app install flow. The adapter does three things:
+  * It finds the listed version through the public iTunes lookup API, using
+    the bundle id and the storefront country.
+  * It shows the App Store product page.
+  * It reports `opened_store`. Whether the user then updates shows up later, as
+    the new `appVersion` in that installation's next receipt (§7.6).
 
 ## 8. Server enforcement
 

@@ -23,13 +23,17 @@ public struct EmergencyConfiguration: Sendable {
     /// Version policies are targeted against. Nil: the version given to
     /// `BugCapsule.start`, else `CFBundleShortVersionString`.
     public var appVersion: String?
+    /// The update adapter behind `BugCapsule.emergency.updates`
+    /// (`AppStoreUpdateProvider()` for the App Store). Nil: no update
+    /// adapter and no runtime reports.
+    public var updateProvider: (any EmergencyUpdateProvider)?
 
     var testHooks: EmergencyTestHooks?
 
     public init(
         trustAnchor: String, environment: String = "production", refreshInterval: TimeInterval = 60,
         failureModes: [String: EmergencyFailureMode] = [:], token: String? = nil, backend: BugCapsuleBackendConfig? = nil,
-        appVersion: String? = nil
+        appVersion: String? = nil, updateProvider: (any EmergencyUpdateProvider)? = nil
     ) {
         self.trustAnchor = trustAnchor
         self.environment = environment
@@ -38,6 +42,7 @@ public struct EmergencyConfiguration: Sendable {
         self.token = token
         self.backend = backend
         self.appVersion = appVersion
+        self.updateProvider = updateProvider
     }
 }
 
@@ -169,9 +174,19 @@ public final class BugCapsuleEmergency: NSObject, @unchecked Sendable {
     private var continuations: [UUID: AsyncStream<EmergencySnapshot>.Continuation] = [:]
     private var warnedUninitialized = false
 
-    override init() {}
+    /// The update adapter configured with `updateProvider`: availability
+    /// checks, the store page, and their runtime reports (§7.6, §7.7).
+    @objc public let updates = EmergencyUpdates()
+
+    override init() {
+        super.init()
+        updates.emergency = self
+    }
 
     private var current: EmergencyRuntime? { lock.locked { runtime } }
+
+    /// The update adapter of the initialized client.
+    var updateCoordinator: EmergencyUpdateCoordinator? { current?.updates }
 
     // MARK: setup
 
@@ -385,6 +400,8 @@ public final class EmergencyConfigurationObject: NSObject, @unchecked Sendable {
     @objc public var backendURL: String?
     @objc public var ingestKey: String?
     @objc public var appVersion: String?
+    /// The App Store update adapter; nil: none.
+    @objc public var updateProvider: AppStoreUpdateProvider?
     private var modes: [String: EmergencyFailureMode] = [:]
 
     @objc(initWithTrustAnchor:)
@@ -403,7 +420,7 @@ public final class EmergencyConfigurationObject: NSObject, @unchecked Sendable {
         if let backendURL, let ingestKey { backend = BugCapsuleBackendConfig(url: backendURL, ingestKey: ingestKey) }
         return EmergencyConfiguration(
             trustAnchor: trustAnchor, environment: environment, refreshInterval: refreshInterval, failureModes: modes,
-            token: token, backend: backend, appVersion: appVersion)
+            token: token, backend: backend, appVersion: appVersion, updateProvider: updateProvider)
     }
 }
 
