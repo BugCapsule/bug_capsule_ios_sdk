@@ -18,6 +18,8 @@ final class TestHTTPServer: @unchecked Sendable {
         var status: Int
         var headers: [String: String] = [:]
         var body: Data = Data()
+        /// Seconds before the response is sent (other connections keep being served).
+        var delay: TimeInterval = 0
     }
 
     private let listener: NWListener
@@ -61,7 +63,9 @@ final class TestHTTPServer: @unchecked Sendable {
                     var head = "HTTP/1.1 \(res.status) X\r\nContent-Length: \(res.body.count)\r\nConnection: close\r\n"
                     for (k, v) in res.headers { head += "\(k): \(v)\r\n" }
                     head += "\r\n"
-                    conn.send(content: Data(head.utf8) + res.body, completion: .contentProcessed { _ in conn.cancel() })
+                    self.queue.asyncAfter(deadline: .now() + res.delay) {
+                        conn.send(content: Data(head.utf8) + res.body, completion: .contentProcessed { _ in conn.cancel() })
+                    }
                     return
                 }
                 if done || error != nil {

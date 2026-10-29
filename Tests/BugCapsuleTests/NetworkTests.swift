@@ -20,7 +20,7 @@ final class NetworkCaptureTests: XCTestCase {
         let c = URLSessionConfiguration.ephemeral
         c.protocolClasses = [FakeServerProtocol.self]
         BugCapsule.instrument(c)
-        XCTAssertTrue(c.protocolClasses!.first == BugCapsuleURLProtocol.self)
+        XCTAssertTrue(BugCapsuleURLSession.isSDKProtocol(c.protocolClasses!.first!))
         urlSession = URLSession(configuration: c)
     }
 
@@ -310,6 +310,32 @@ final class NetworkReplayTests: XCTestCase {
         XCTAssertEqual(report.fixturesServed, 1)
         XCTAssertFalse(report.divergences.contains { $0.type.hasPrefix("network.") && $0.type != "network.unused" })
         task.cancel()
+    }
+
+    private func redirectFixtures() -> [BugCapsuleEvent] {
+        var hop = httpEvent(seq: 1, t: 10, key: "GET shop.test/old", status: 302, body: .null, durationMs: 5)
+        hop.data["responseHeaders"] = ["location": "/new"]
+        return [hop, httpEvent(seq: 2, t: 20, key: "GET shop.test/new", body: ["moved": true], durationMs: 5)]
+    }
+
+    func testRecordedRedirectIsFollowedThroughTheAppsSession() async throws {
+        startReplay(redirectFixtures())
+        let delegate = AppSessionDelegate()
+        let session = URLSession(configuration: urlSession.configuration, delegate: delegate, delegateQueue: nil)
+        let (data, response) = try await session.data(from: URL(string: "https://shop.test/old")!)
+        XCTAssertEqual(try JSON.parse(data), ["moved": true])
+        XCTAssertEqual(response.url, URL(string: "https://shop.test/new"))
+        XCTAssertEqual(delegate.redirects.map(\.url), [URL(string: "https://shop.test/new")])
+        XCTAssertFalse(engine.buildReport().divergences.contains { $0.type.hasPrefix("network.") })
+    }
+
+    func testAppRefusingARecordedRedirectGetsTheRedirectResponse() async throws {
+        startReplay(redirectFixtures())
+        let session = URLSession(
+            configuration: urlSession.configuration, delegate: AppSessionDelegate(followRedirects: false), delegateQueue: nil)
+        let (_, response) = try await session.data(from: URL(string: "https://shop.test/old")!)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 302)
+        XCTAssertTrue(engine.buildReport().divergences.contains { $0.type == "network.unused" && $0.detail == "GET shop.test/new" })
     }
 
     func testFixtureWithoutBodyReportsNoBody() async throws {

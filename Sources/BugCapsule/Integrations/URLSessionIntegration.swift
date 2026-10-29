@@ -5,7 +5,7 @@ import Foundation
 ///
 /// ```swift
 /// let config = URLSessionConfiguration.default
-/// BugCapsule.instrument(config)              // inserts BugCapsuleURLProtocol first
+/// BugCapsule.instrument(config)              // inserts the SDK's URL protocol first
 /// let session = URLSession(configuration: config)
 /// // URLSession.shared: BugCapsule.instrumentSharedSession() (URLProtocol.registerClass)
 /// ```
@@ -193,58 +193,132 @@ public final class BugCapsuleURLSession: BugCapsuleIntegration, @unchecked Senda
         return keys.key(method: request.httpMethod ?? "GET", uri: uri, body: keyBody)
     }
 
-    // MARK: downstream configuration
+    // MARK: downstream sessions
 
     private static let downstreamLock = NSLock()
-    nonisolated(unsafe) private static var downstreamConfig: URLSessionConfiguration?
-    nonisolated(unsafe) private static var downstreamSession: URLSession?
-    nonisolated(unsafe) private static var downstreamProtocols: [AnyClass] = []
+    // By the protocol class `instrument(_:)` put in the configuration; the
+    // base class (shared session, global registry) maps to `.default`.
+    nonisolated(unsafe) private static var downstreams: [ObjectIdentifier: DownstreamSession] = [:]
+    nonisolated(unsafe) private static var protocolClassCount = 0
 
-    static func registerDownstream(from config: URLSessionConfiguration) {
+    /// `BugCapsuleURLProtocol` or one of the subclasses `instrument(_:)` creates.
+    static func isSDKProtocol(_ c: AnyClass) -> Bool {
+        (c as? NSObject.Type)?.isSubclass(of: BugCapsuleURLProtocol.self) ?? false
+    }
+
+    /// A new `BugCapsuleURLProtocol` subclass whose requests are re-issued on
+    /// a session built from [config] (its own headers, cookie storage, cache
+    /// policy, TLS and proxy settings, and protocol classes), so nothing of one
+    /// configuration reaches another session's requests.
+    static func registerDownstream(from config: URLSessionConfiguration) -> AnyClass {
         downstreamLock.locked {
-            let copy = config.copy() as! URLSessionConfiguration
-            var protocols = downstreamProtocols
-            for p in copy.protocolClasses ?? [] where p != BugCapsuleURLProtocol.self {
-                if !protocols.contains(where: { $0 == p }) { protocols.append(p) }
+            let downstream = DownstreamSession(downstreamConfiguration(config))
+            for _ in 0..<8 {
+                protocolClassCount += 1
+                let name = "BugCapsuleURLProtocol_\(protocolClassCount)_\(UInt32.random(in: 0...UInt32.max))"
+                guard let c = objc_allocateClassPair(BugCapsuleURLProtocol.self, name, 0) else { continue }
+                objc_registerClassPair(c)
+                downstreams[ObjectIdentifier(c)] = downstream
+                return c
             }
-            downstreamProtocols = protocols
-            let system = URLSessionConfiguration.default.protocolClasses ?? []
-            copy.protocolClasses = protocols + system.filter { s in !protocols.contains { $0 == s } && s != BugCapsuleURLProtocol.self }
-            downstreamConfig = copy
-            downstreamSession = nil
+            // Not expected (the names are unique): fall back to what the
+            // shared session uses rather than to another session's configuration.
+            BugCapsuleLog.warn("could not tag an instrumented URLSessionConfiguration; its requests use URLSessionConfiguration.default")
+            return BugCapsuleURLProtocol.self
         }
     }
 
-    /// The session that performs real requests below the SDK's protocol
-    /// (the instrumented configuration minus `BugCapsuleURLProtocol`, keeping
-    /// app protocols registered after it).
-    static func downstream() -> URLSession {
+    /// The downstream session for requests intercepted by [protocolClass].
+    static func downstream(for protocolClass: AnyClass) -> DownstreamSession {
         downstreamLock.locked {
-            if let s = downstreamSession { return s }
-            let config = downstreamConfig ?? URLSessionConfiguration.default
-            let s = URLSession(configuration: config, delegate: DownstreamDelegate.shared, delegateQueue: DownstreamDelegate.shared.queue)
-            downstreamSession = s
-            return s
+            if let d = downstreams[ObjectIdentifier(protocolClass)] { return d }
+            // Not set up by `instrument(_:)` (`instrumentSharedSession()`, or the
+            // class added by hand): what `URLSession.shared` uses.
+            let key = ObjectIdentifier(BugCapsuleURLProtocol.self)
+            if let d = downstreams[key] { return d }
+            let d = DownstreamSession(downstreamConfiguration(.default))
+            downstreams[key] = d
+            return d
+        }
+    }
+
+    /// A copy of [config] minus the SDK's protocol, keeping its own protocol
+    /// classes first and the system's after them.
+    private static func downstreamConfiguration(_ config: URLSessionConfiguration) -> URLSessionConfiguration {
+        let copy = config.copy() as! URLSessionConfiguration
+        let protocols = (copy.protocolClasses ?? []).filter { !isSDKProtocol($0) }
+        let system = URLSessionConfiguration.default.protocolClasses ?? []
+        copy.protocolClasses = protocols + system.filter { s in !protocols.contains { $0 == s } && !isSDKProtocol(s) }
+        return copy
+    }
+}
+
+/// The session that performs real requests below the SDK's protocol for one
+/// instrumented configuration. Created on demand and invalidated after
+/// `idleTimeout` without tasks, so configurations instrumented once and no
+/// longer used don't keep a session open.
+final class DownstreamSession: @unchecked Sendable {
+    /// Changed by tests only.
+    nonisolated(unsafe) static var idleTimeout: TimeInterval = 60
+
+    private let configuration: URLSessionConfiguration
+    private let lock = NSLock()
+    private var session: URLSession?
+    private var running = 0
+    private var generation = 0
+
+    init(_ configuration: URLSessionConfiguration) { self.configuration = configuration }
+
+    /// A task on this configuration's session; `taskEnded()` once it completes.
+    func dataTask(with request: URLRequest) -> URLSessionDataTask {
+        lock.locked {
+            running += 1
+            generation += 1
+            let s = session ?? URLSession(
+                configuration: configuration, delegate: DownstreamDelegate.shared, delegateQueue: DownstreamDelegate.shared.queue)
+            session = s
+            return s.dataTask(with: request)
+        }
+    }
+
+    func taskEnded() {
+        let idle: Int? = lock.locked {
+            running -= 1
+            return running == 0 ? generation : nil
+        }
+        guard let idle else { return }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + DownstreamSession.idleTimeout) { [self] in
+            let s: URLSession? = lock.locked {
+                guard running == 0, generation == idle else { return nil }
+                defer { session = nil }
+                return session
+            }
+            s?.finishTasksAndInvalidate()
         }
     }
 }
 
 extension BugCapsule {
-    /// Inserts `BugCapsuleURLProtocol` as the first protocol of
-    /// [configuration] (create your `URLSession` with it afterwards). Protocol
-    /// classes already in the configuration keep running below the SDK's.
+    /// Inserts the SDK's URL protocol (a `BugCapsuleURLProtocol` subclass
+    /// for this configuration) as the first protocol of [configuration]
+    /// (create your `URLSession` with it afterwards). Requests are re-issued
+    /// with a copy of the configuration as it is now: its headers, cookie
+    /// storage, cache policy and TLS settings apply to its own requests only.
+    /// Protocol classes already in the configuration keep running below the SDK's.
     public static func instrument(_ configuration: URLSessionConfiguration) {
         var protocols = configuration.protocolClasses ?? []
-        protocols.removeAll { $0 == BugCapsuleURLProtocol.self }
+        protocols.removeAll { BugCapsuleURLSession.isSDKProtocol($0) }
         let original = configuration.copy() as! URLSessionConfiguration
         original.protocolClasses = protocols
-        BugCapsuleURLSession.registerDownstream(from: original)
-        configuration.protocolClasses = [BugCapsuleURLProtocol.self] + protocols
+        let tagged: AnyClass = BugCapsuleURLSession.registerDownstream(from: original)
+        configuration.protocolClasses = [tagged] + protocols
         BugCapsuleURLSession.protocolInstalled = true
     }
 
     /// Opt-in for `URLSession.shared` (and other sessions using the global
     /// protocol registry): `URLProtocol.registerClass(BugCapsuleURLProtocol.self)`.
+    /// Their requests are re-issued with `URLSessionConfiguration.default`
+    /// (shared cookie storage, cache and credentials), as `URLSession.shared` does.
     public static func instrumentSharedSession() {
         URLProtocol.registerClass(BugCapsuleURLProtocol.self)
         BugCapsuleURLSession.protocolInstalled = true

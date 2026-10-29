@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+- URLSession (security): the app's session delegate works for instrumented
+  sessions. Authentication challenges (certificate pinning, mTLS client
+  certificates, HTTP auth) were answered with default handling below the
+  SDK and never reached the delegate; they are now forwarded to the app's
+  session. Redirects were followed below the SDK without asking the
+  delegate or applying its redirect policy; the app's session now decides
+  and a followed redirect is re-issued through it. Capture records each
+  redirect hop as its own exchange (the 3xx without its body, then the
+  target) and replay serves recorded redirects as redirects. Capsules
+  recorded before replay as before.
+- URLSession (security): every instrumented configuration gets its own
+  downstream session, built from a copy of that configuration. Requests
+  were re-issued with the configuration passed to `instrument(_:)` last,
+  so one session's `httpAdditionalHeaders` (e.g. `Authorization`) went out
+  on another session's requests, an ephemeral session's cookies were stored
+  in `HTTPCookieStorage.shared`, and the original session's cache policy,
+  TLS, proxy and timeout settings were not applied. `URLSession.shared`
+  (`instrumentSharedSession()`) uses `URLSessionConfiguration.default`.
+  `instrument(_:)` now inserts a `BugCapsuleURLProtocol` subclass created
+  for that configuration, so `protocolClasses.first` is no longer
+  `BugCapsuleURLProtocol.self` itself; custom protocol classes of one
+  configuration no longer run for another's requests.
+- URLSession: a response is always delivered to the request that made it.
+  Requests on two instrumented sessions in flight at the same time could
+  get each other's response, and one of them then never completed.
+
 ## 0.4.1-beta.4 — 2026-10-28
 
 - Apply the project's `maxInteractionPayloadBytes` capture setting to every interaction adapter (`RemoteCaptureConfig.maxInteractionPayloadBytes`).
