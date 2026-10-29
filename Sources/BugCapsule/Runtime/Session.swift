@@ -299,6 +299,8 @@ public final class BugCapsuleSession: @unchecked Sendable {
         }
         installObservers()
         afterAppStarted()
+        // Emergency policies initialized before start can now use this connection.
+        BugCapsuleEmergency.shared.sessionDidStart()
     }
 
     @MainActor

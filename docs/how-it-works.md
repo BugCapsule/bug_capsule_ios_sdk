@@ -390,7 +390,8 @@ crash report (the app exited, or reported itself) it prints nothing.
   backup): `captures/` (newest 20), `outbox/`
   (`<enqueuedAtMs>_<capsuleId>.bugcapsule`), `envelopes/` (monitoring),
   `monitoring/` (open session, install id, crash report), `journal/` (crash
-  journals, [above](#crash-capsules)), `remote_config.json`. Writes are
+  journals, [above](#crash-capsules)), `remote_config.json`, `emergency/`
+  ([emergency recovery](#emergency-recovery-feature-guards)). Writes are
   atomic (temp + rename); temp files are removed at start; corrupt files are
   dropped; a full disk drops the capsule. No SDK error reaches the app.
 * Uploads: capsules are gzipped and sent to the token's address (or the
@@ -651,6 +652,68 @@ off a single adapter by id (`bugcapsule-ios.urlsession-websocket`): its
 buffered events are dropped and it stops recording, while HTTP capture goes
 on.
 
+## Emergency recovery (feature guards)
+
+`BugCapsule.emergency` implements the client side of
+[emergency-client-v1](emergency-client-v1.md): remote, signed feature guards.
+Nothing executable is ever downloaded; a policy only says whether a named
+feature may run and what to show instead. It is independent of capture: it
+works before and without `BugCapsule.start`, with capture disabled and with
+the remote capture kill switch on.
+
+* **Trust.** The `bcek.v1.…` anchor passed to `initialize` holds the
+  application id and the ES256 public keys (SubjectPublicKeyInfo). It is
+  never fetched. Envelopes are verified in the contract's order (shape,
+  format, key from the anchor, ECDSA P-256/SHA-256 over the decoded payload
+  bytes, then schema, application and environment) with CryptoKit; the
+  payload is parsed only after the signature checks out. A policy with a
+  malformed field rejects the whole document; an unknown action counts as
+  `BLOCK`. An invalid anchor or environment turns the module off (one log
+  line, failure modes for every key, no network).
+* **Acceptance.** A lower revision than the highest ever accepted is refused
+  (`stale_revision`), the same revision with an `issued_at` that is not later
+  is ignored, and a document that expired more than 300 s ago is refused
+  (`expired_on_arrival`). An accepted document replaces the in-memory
+  snapshot in one swap: an evaluation sees the old document or the new one.
+* **Startup.** `initialize` parses the anchor, loads
+  `emergency/policies.<environment>.json` (envelope as received, ETag,
+  received time and highest revision, written atomically), verifies it again
+  against the current anchor and environment, discards it if that fails, and
+  starts the first fetch in the background. It never waits for the network.
+* **Refresh.** `GET {api}/v1/apps/{app}/emergency/policies` with the
+  connection's credential, `If-None-Match` and the environment, platform
+  (`NATIVE_IOS`), app and SDK versions. Every `refreshInterval` (default 60 s,
+  at least 15 s) while in the foreground, on `willEnterForeground` (and on
+  `didBecomeActive` after a background), and on `refreshPolicies()`;
+  concurrent calls join the fetch in flight. Failures back off
+  `min(interval × 2^(n−1), 15 min)` with ±20 % jitter and never below
+  `Retry-After`. 401/403/404 stop scheduled and foreground fetches for the
+  process (the cache stays in use until it expires; `refreshPolicies()` still
+  tries). Responses above 1 MiB are failed fetches. Timeouts: 5 s without
+  progress, 10 s per request.
+* **Evaluation.** Synchronous and in memory (§6 of the contract): matching
+  key (exact or `prefix.*`), unexpired, platform, version range, rollout
+  bucket; the winner is the highest priority, then the most restrictive
+  action, then the exact key, then the lowest policy id. The rollout subject
+  defaults to the installation id (16 random bytes, base64url, in
+  `emergency/installation-id`, never linked to a person).
+* **Failure modes.** The document is usable until `expires_at` + 300 s.
+  Without a usable document a key uses its configured mode (exact key, then
+  the longest `prefix.*`, else `FAIL_OPEN`): allow, block, or evaluate the
+  last verified document (`source: stale_policy`). Before `initialize`
+  everything is allowed.
+* **Receipts.** One `APPLIED` receipt per accepted revision and one `FAILED`
+  receipt per rejected `200` (reason as `errorCode`), each at most once per
+  process, fire-and-forget. A rejection before the signature is verified
+  reports the current revision, since the payload is not trusted.
+* **Replay.** While a capsule replays, no request or receipt is sent and
+  every evaluation is `ALLOW` with `source: replay`.
+* **Observation.** `changes` (`AsyncStream`) and `observe(_:)` (main thread,
+  cancel on release) get a snapshot after `initialize` and after each
+  accepted document; `status` gives the state (`none`, `usable`, `expired`),
+  revision, issue and expiry times, last fetch, last error and whether the
+  credential was refused.
+
 ## Limitations
 
 * **Pointer replay is not implemented** (`input.pointer.replay: unsupported`).
@@ -683,6 +746,11 @@ on.
 * Navigation is restored from periodic checkpoints only through an app-provided
   `BugCapsuleNavigation.shared.restorer`.
 * Cross-runtime replay is not supported (spec §12).
+* Emergency recovery: guards are a UX measure only (the app's server must
+  enforce the same restriction); there is no native code patching and no
+  forced in-app update on iOS (`REQUIRE_UPDATE` is shown by the app); guard
+  decisions are not recorded into capsules, so replay allows every feature.
+  A launch straight into the background still runs the first fetch.
 * Crash capsules: the last ≤ 250 ms before a crash may be missing from the
   journal (`stats.journalGapMs` says how long). Crash reports are read on
   the simulator only (the CLI replays on simulators); a death without a

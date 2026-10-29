@@ -1,0 +1,929 @@
+{
+  "description": "expected = evaluate(documents[document], feature_key, context); see docs/emergency-recovery-v1.md §6",
+  "documents": {
+    "empty": {
+      "revision": 7,
+      "policies": []
+    },
+    "block_all": {
+      "revision": 7,
+      "policies": [
+        {
+          "policy_id": "p-00",
+          "key": "checkout.confirm_order",
+          "revision": 1,
+          "action": "BLOCK",
+          "priority": 0,
+          "severity": "P0",
+          "incident_id": "i-1",
+          "target_platforms": [],
+          "version_ranges": [],
+          "rollout_bp": 10000,
+          "rollout_seed": "seed-checkout",
+          "reason_code": "PRICING_SAFETY",
+          "public_user_message": "Checkout is temporarily unavailable.",
+          "required_version": null,
+          "fallback": null,
+          "expires_at": null
+        }
+      ]
+    },
+    "platform_and_version": {
+      "revision": 7,
+      "policies": [
+        {
+          "policy_id": "p-00",
+          "key": "checkout.confirm_order",
+          "revision": 1,
+          "action": "BLOCK",
+          "priority": 0,
+          "severity": "P0",
+          "incident_id": "i-1",
+          "target_platforms": [
+            "FLUTTER_ANDROID",
+            "NATIVE_ANDROID"
+          ],
+          "version_ranges": [
+            {
+              "min": "2.4.0",
+              "max": "2.4.2"
+            }
+          ],
+          "rollout_bp": 10000,
+          "rollout_seed": "seed-checkout",
+          "reason_code": "PRICING_SAFETY",
+          "public_user_message": "Checkout is temporarily unavailable.",
+          "required_version": null,
+          "fallback": null,
+          "expires_at": null
+        }
+      ]
+    },
+    "wildcard_and_allow": {
+      "revision": 7,
+      "policies": [
+        {
+          "policy_id": "p-01",
+          "key": "checkout.*",
+          "revision": 1,
+          "action": "DISABLE_FEATURE",
+          "priority": 0,
+          "severity": "P0",
+          "incident_id": "i-1",
+          "target_platforms": [],
+          "version_ranges": [],
+          "rollout_bp": 10000,
+          "rollout_seed": "seed-checkout",
+          "reason_code": "PAYMENTS_OUTAGE",
+          "public_user_message": "Checkout is temporarily unavailable.",
+          "required_version": null,
+          "fallback": null,
+          "expires_at": null
+        },
+        {
+          "policy_id": "p-02",
+          "key": "checkout.view_cart",
+          "revision": 1,
+          "action": "ALLOW",
+          "priority": 10,
+          "severity": null,
+          "incident_id": "i-1",
+          "target_platforms": [],
+          "version_ranges": [],
+          "rollout_bp": 10000,
+          "rollout_seed": "seed-checkout",
+          "reason_code": "CART_SAFE",
+          "public_user_message": null,
+          "required_version": null,
+          "fallback": null,
+          "expires_at": null
+        }
+      ]
+    },
+    "tie_restrictive": {
+      "revision": 7,
+      "policies": [
+        {
+          "policy_id": "p-03",
+          "key": "wallet.transfer",
+          "revision": 1,
+          "action": "READ_ONLY",
+          "priority": 0,
+          "severity": "P0",
+          "incident_id": "i-1",
+          "target_platforms": [],
+          "version_ranges": [],
+          "rollout_bp": 10000,
+          "rollout_seed": "seed-checkout",
+          "reason_code": "LEDGER_CHECK",
+          "public_user_message": "Checkout is temporarily unavailable.",
+          "required_version": null,
+          "fallback": null,
+          "expires_at": null
+        },
+        {
+          "policy_id": "p-04",
+          "key": "wallet.*",
+          "revision": 1,
+          "action": "BLOCK",
+          "priority": 0,
+          "severity": "P0",
+          "incident_id": "i-1",
+          "target_platforms": [],
+          "version_ranges": [],
+          "rollout_bp": 10000,
+          "rollout_seed": "seed-checkout",
+          "reason_code": "LEDGER_HALT",
+          "public_user_message": "Checkout is temporarily unavailable.",
+          "required_version": null,
+          "fallback": null,
+          "expires_at": null
+        }
+      ]
+    },
+    "tie_specific": {
+      "revision": 7,
+      "policies": [
+        {
+          "policy_id": "p-05",
+          "key": "wallet.*",
+          "revision": 1,
+          "action": "BLOCK",
+          "priority": 0,
+          "severity": "P0",
+          "incident_id": "i-1",
+          "target_platforms": [],
+          "version_ranges": [],
+          "rollout_bp": 10000,
+          "rollout_seed": "seed-checkout",
+          "reason_code": "WILDCARD",
+          "public_user_message": "Checkout is temporarily unavailable.",
+          "required_version": null,
+          "fallback": null,
+          "expires_at": null
+        },
+        {
+          "policy_id": "p-06",
+          "key": "wallet.transfer",
+          "revision": 1,
+          "action": "BLOCK",
+          "priority": 0,
+          "severity": "P0",
+          "incident_id": "i-1",
+          "target_platforms": [],
+          "version_ranges": [],
+          "rollout_bp": 10000,
+          "rollout_seed": "seed-checkout",
+          "reason_code": "EXACT",
+          "public_user_message": "Checkout is temporarily unavailable.",
+          "required_version": null,
+          "fallback": null,
+          "expires_at": null
+        }
+      ]
+    },
+    "rollout_half": {
+      "revision": 7,
+      "policies": [
+        {
+          "policy_id": "p-00",
+          "key": "checkout.confirm_order",
+          "revision": 1,
+          "action": "BLOCK",
+          "priority": 0,
+          "severity": "P0",
+          "incident_id": "i-1",
+          "target_platforms": [],
+          "version_ranges": [],
+          "rollout_bp": 5000,
+          "rollout_seed": "seed-half",
+          "reason_code": "PRICING_SAFETY",
+          "public_user_message": "Checkout is temporarily unavailable.",
+          "required_version": null,
+          "fallback": null,
+          "expires_at": null
+        }
+      ]
+    },
+    "rollout_zero": {
+      "revision": 7,
+      "policies": [
+        {
+          "policy_id": "p-00",
+          "key": "checkout.confirm_order",
+          "revision": 1,
+          "action": "BLOCK",
+          "priority": 0,
+          "severity": "P0",
+          "incident_id": "i-1",
+          "target_platforms": [],
+          "version_ranges": [],
+          "rollout_bp": 0,
+          "rollout_seed": "seed-checkout",
+          "reason_code": "PRICING_SAFETY",
+          "public_user_message": "Checkout is temporarily unavailable.",
+          "required_version": null,
+          "fallback": null,
+          "expires_at": null
+        }
+      ]
+    },
+    "expiring": {
+      "revision": 7,
+      "policies": [
+        {
+          "policy_id": "p-00",
+          "key": "checkout.confirm_order",
+          "revision": 1,
+          "action": "BLOCK",
+          "priority": 0,
+          "severity": "P0",
+          "incident_id": "i-1",
+          "target_platforms": [],
+          "version_ranges": [],
+          "rollout_bp": 10000,
+          "rollout_seed": "seed-checkout",
+          "reason_code": "PRICING_SAFETY",
+          "public_user_message": "Checkout is temporarily unavailable.",
+          "required_version": null,
+          "fallback": null,
+          "expires_at": "2026-10-29T09:00:00.000Z"
+        }
+      ]
+    },
+    "require_update": {
+      "revision": 7,
+      "policies": [
+        {
+          "policy_id": "p-00",
+          "key": "checkout.confirm_order",
+          "revision": 1,
+          "action": "REQUIRE_UPDATE",
+          "priority": 0,
+          "severity": "P0",
+          "incident_id": "i-1",
+          "target_platforms": [],
+          "version_ranges": [
+            {
+              "min": null,
+              "max": "2.4.2"
+            }
+          ],
+          "rollout_bp": 10000,
+          "rollout_seed": "seed-checkout",
+          "reason_code": "MIN_VERSION",
+          "public_user_message": "Checkout is temporarily unavailable.",
+          "required_version": "2.4.3",
+          "fallback": null,
+          "expires_at": null
+        }
+      ]
+    },
+    "fallback": {
+      "revision": 7,
+      "policies": [
+        {
+          "policy_id": "p-00",
+          "key": "search.query",
+          "revision": 1,
+          "action": "USE_SAFE_FALLBACK",
+          "priority": 0,
+          "severity": "P0",
+          "incident_id": "i-1",
+          "target_platforms": [],
+          "version_ranges": [],
+          "rollout_bp": 10000,
+          "rollout_seed": "seed-checkout",
+          "reason_code": "SEARCH_DEGRADED",
+          "public_user_message": "Checkout is temporarily unavailable.",
+          "required_version": null,
+          "fallback": "cached_results",
+          "expires_at": null
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "document": "empty",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": true,
+        "action": "ALLOW",
+        "reason_code": null,
+        "policy_id": null,
+        "policy_revision": null,
+        "document_revision": 7,
+        "public_user_message": null,
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "block_all",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": false,
+        "action": "BLOCK",
+        "reason_code": "PRICING_SAFETY",
+        "policy_id": "p-00",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": "Checkout is temporarily unavailable.",
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "block_all",
+      "feature_key": "checkout.confirm",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm",
+        "allowed": true,
+        "action": "ALLOW",
+        "reason_code": null,
+        "policy_id": null,
+        "policy_revision": null,
+        "document_revision": 7,
+        "public_user_message": null,
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "block_all",
+      "feature_key": "checkout.confirm_order.extra",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order.extra",
+        "allowed": true,
+        "action": "ALLOW",
+        "reason_code": null,
+        "policy_id": null,
+        "policy_revision": null,
+        "document_revision": 7,
+        "public_user_message": null,
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "platform_and_version",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": false,
+        "action": "BLOCK",
+        "reason_code": "PRICING_SAFETY",
+        "policy_id": "p-00",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": "Checkout is temporarily unavailable.",
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "platform_and_version",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "NATIVE_IOS",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": true,
+        "action": "ALLOW",
+        "reason_code": null,
+        "policy_id": null,
+        "policy_revision": null,
+        "document_revision": 7,
+        "public_user_message": null,
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "platform_and_version",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.3",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": true,
+        "action": "ALLOW",
+        "reason_code": null,
+        "policy_id": null,
+        "policy_revision": null,
+        "document_revision": 7,
+        "public_user_message": null,
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "platform_and_version",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.2+512",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": false,
+        "action": "BLOCK",
+        "reason_code": "PRICING_SAFETY",
+        "policy_id": "p-00",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": "Checkout is temporarily unavailable.",
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "platform_and_version",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "dev-build",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": false,
+        "action": "BLOCK",
+        "reason_code": "PRICING_SAFETY",
+        "policy_id": "p-00",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": "Checkout is temporarily unavailable.",
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "platform_and_version",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": null,
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": false,
+        "action": "BLOCK",
+        "reason_code": "PRICING_SAFETY",
+        "policy_id": "p-00",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": "Checkout is temporarily unavailable.",
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "wildcard_and_allow",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": false,
+        "action": "DISABLE_FEATURE",
+        "reason_code": "PAYMENTS_OUTAGE",
+        "policy_id": "p-01",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": "Checkout is temporarily unavailable.",
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "wildcard_and_allow",
+      "feature_key": "checkout.view_cart",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.view_cart",
+        "allowed": true,
+        "action": "ALLOW",
+        "reason_code": "CART_SAFE",
+        "policy_id": "p-02",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": null,
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "wildcard_and_allow",
+      "feature_key": "checkout",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout",
+        "allowed": true,
+        "action": "ALLOW",
+        "reason_code": null,
+        "policy_id": null,
+        "policy_revision": null,
+        "document_revision": 7,
+        "public_user_message": null,
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "wildcard_and_allow",
+      "feature_key": "checkoutx.pay",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkoutx.pay",
+        "allowed": true,
+        "action": "ALLOW",
+        "reason_code": null,
+        "policy_id": null,
+        "policy_revision": null,
+        "document_revision": 7,
+        "public_user_message": null,
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "tie_restrictive",
+      "feature_key": "wallet.transfer",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "wallet.transfer",
+        "allowed": false,
+        "action": "BLOCK",
+        "reason_code": "LEDGER_HALT",
+        "policy_id": "p-04",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": "Checkout is temporarily unavailable.",
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "tie_specific",
+      "feature_key": "wallet.transfer",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "wallet.transfer",
+        "allowed": false,
+        "action": "BLOCK",
+        "reason_code": "EXACT",
+        "policy_id": "p-06",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": "Checkout is temporarily unavailable.",
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "rollout_half",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": false,
+        "action": "BLOCK",
+        "reason_code": "PRICING_SAFETY",
+        "policy_id": "p-00",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": "Checkout is temporarily unavailable.",
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "rollout_half",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0002",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": false,
+        "action": "BLOCK",
+        "reason_code": "PRICING_SAFETY",
+        "policy_id": "p-00",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": "Checkout is temporarily unavailable.",
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "rollout_half",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "user:42",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": true,
+        "action": "ALLOW",
+        "reason_code": null,
+        "policy_id": null,
+        "policy_revision": null,
+        "document_revision": 7,
+        "public_user_message": null,
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "rollout_half",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "b7c1d0f4e5a6",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": true,
+        "action": "ALLOW",
+        "reason_code": null,
+        "policy_id": null,
+        "policy_revision": null,
+        "document_revision": 7,
+        "public_user_message": null,
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "rollout_half",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": null,
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": false,
+        "action": "BLOCK",
+        "reason_code": "PRICING_SAFETY",
+        "policy_id": "p-00",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": "Checkout is temporarily unavailable.",
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "rollout_zero",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": true,
+        "action": "ALLOW",
+        "reason_code": null,
+        "policy_id": null,
+        "policy_revision": null,
+        "document_revision": 7,
+        "public_user_message": null,
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "expiring",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:59:59.999Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": false,
+        "action": "BLOCK",
+        "reason_code": "PRICING_SAFETY",
+        "policy_id": "p-00",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": "Checkout is temporarily unavailable.",
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "expiring",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T09:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": true,
+        "action": "ALLOW",
+        "reason_code": null,
+        "policy_id": null,
+        "policy_revision": null,
+        "document_revision": 7,
+        "public_user_message": null,
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "require_update",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.2",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": false,
+        "action": "REQUIRE_UPDATE",
+        "reason_code": "MIN_VERSION",
+        "policy_id": "p-00",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": "Checkout is temporarily unavailable.",
+        "required_version": "2.4.3",
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "require_update",
+      "feature_key": "checkout.confirm_order",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.3",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "checkout.confirm_order",
+        "allowed": true,
+        "action": "ALLOW",
+        "reason_code": null,
+        "policy_id": null,
+        "policy_revision": null,
+        "document_revision": 7,
+        "public_user_message": null,
+        "required_version": null,
+        "fallback": null,
+        "fallback_available": false
+      }
+    },
+    {
+      "document": "fallback",
+      "feature_key": "search.query",
+      "context": {
+        "platform": "FLUTTER_ANDROID",
+        "app_version": "2.4.1",
+        "subject": "install-0001",
+        "now": "2026-10-29T08:00:00.000Z"
+      },
+      "expected": {
+        "feature_key": "search.query",
+        "allowed": false,
+        "action": "USE_SAFE_FALLBACK",
+        "reason_code": "SEARCH_DEGRADED",
+        "policy_id": "p-00",
+        "policy_revision": 1,
+        "document_revision": 7,
+        "public_user_message": "Checkout is temporarily unavailable.",
+        "required_version": null,
+        "fallback": "cached_results",
+        "fallback_available": true
+      }
+    }
+  ]
+}
