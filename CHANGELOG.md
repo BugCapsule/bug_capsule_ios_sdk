@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Emergency recovery: App Store update adapter and runtime reports
+  (emergency-client-v1 §7.6, §7.7). `EmergencyConfiguration.updateProvider`
+  takes an `EmergencyUpdateProvider`; `AppStoreUpdateProvider` checks the
+  listed version with the public iTunes lookup API (bundle id and device
+  storefront, overridable) against a `REQUIRE_UPDATE` decision's required
+  version, and shows the App Store page (`SKStoreProductViewController`, or
+  the store URL). `BugCapsule.emergency.updates` offers
+  `checkAvailability(requiredVersion:)` / `checkAvailability(for:)`,
+  `presentUpdate(from:)`, `markDeclined()` and `status`; failures are typed
+  `EmergencyUpdateError`s and never count as available. The adapter's state
+  is sent as `RUNTIME` receipts (on change, never the same object twice in a
+  row, at most one per 60 s, latest wins; not in replay), and `APPLIED` /
+  `FAILED` receipts carry it. Nothing is ever installed or downloaded.
+  Objective-C: `BCAppStoreUpdateProvider`, `BCEmergencyConfiguration.updateProvider`,
+  `BCEmergency.updates` (`BCEmergencyUpdates`).
 - Emergency recovery (feature guards): `BugCapsule.emergency` fetches the
   project's signed emergency policies, verifies them (ECDSA P-256 against the
   `bcek.v1` trust anchor compiled into the app), caches them and answers

@@ -713,6 +713,36 @@ the remote capture kill switch on.
   accepted document; `status` gives the state (`none`, `usable`, `expired`),
   revision, issue and expiry times, last fetch, last error and whether the
   credential was refused.
+* **Update adapter.** `EmergencyConfiguration.updateProvider` (an
+  `EmergencyUpdateProvider`) backs `BugCapsule.emergency.updates`.
+  `AppStoreUpdateProvider` (`app_store`, flow `store_page`) looks the bundle
+  id up with `GET https://itunes.apple.com/lookup?bundleId=…&country=…`
+  (ephemeral session, never recorded by capture, 5 s without progress /
+  10 s per request, 1 MiB cap) and reads `results[0].version`, `trackId` and
+  `trackViewUrl`. The country is the override, else the device's App Store
+  storefront (StoreKit `Storefront.current`, alpha-3 mapped to alpha-2,
+  waiting at most 2 s), else the device region, else `us`. Available means
+  the listed version is at least the required version and newer than the
+  installed one (§6 version order); non-200, empty results, timeouts and
+  unparseable versions are typed `EmergencyUpdateError`s. `presentUpdate`
+  loads `SKStoreProductViewController` with the track id and presents it over
+  the top-most view controller above the app's, or opens `trackViewUrl`
+  (`itms-apps://apps.apple.com/app/id…` without one) with
+  `UIApplication.open`. It reports `opened_store` or `failed`, never an
+  install.
+* **Runtime reports.** Each state the adapter learns (`not_available`,
+  `available`, `failed`, `opened_store`, `declined`, or a custom provider's
+  state) becomes the `runtime.update` object
+  (`provider`, `flow`, `state`, `availableVersion`, `requiredVersion`;
+  versions over 64 characters as null). A changed object is sent as a
+  `RUNTIME` receipt with the highest accepted revision (`0` before any) and
+  `errorCode: null`, validated first. Never the same object twice in a row,
+  at most one report per 60 s; within the interval only the latest object is
+  sent, when it ends. Fire-and-forget, not subject to the receipt
+  once-per-(revision, status, errorCode) rule, nothing in replay, nothing
+  before a connection is known (the pending object goes out after
+  `BugCapsule.start`). `APPLIED` and `FAILED` receipts carry the latest
+  object. There is no `hotfix` object on iOS.
 
 ## Limitations
 
