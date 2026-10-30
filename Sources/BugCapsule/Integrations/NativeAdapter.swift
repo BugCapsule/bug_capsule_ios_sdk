@@ -343,44 +343,40 @@ public final class BugCapsuleNativeBridge: @unchecked Sendable {
         rec.emit(InteractionTypes.nativeSubscribe, d)
         rec.opened(sub, type: "native") { [weak adapter] in adapter?.canRestore(subscription: sub) ?? false }
         let state = SubscriptionState()
-        let end: @Sendable () -> Void = {
-            if state.end() {
-                rec.closed(sub)
-                runtime.releaseActive()
-            }
+        // Writes the closing event, if nothing closed the stream first.
+        let end: @Sendable (_ closing: () -> Void) -> Bool = { closing in
+            guard state.end(closing) else { return false }
+            rec.closed(sub)
+            runtime.releaseActive()
+            return true
         }
         let sink = BugCapsuleNativeSink(
             event: { value in
-                guard let index = state.nextIndex() else { return }
-                rec.emit(InteractionTypes.nativeEvent, ["sub": .string(sub), "index": .int(index), "value": rec.payload(value).json])
-                onEvent(value)
+                guard !state.isEnded else { return }
+                let payload = rec.payload(value).json
+                let delivered = state.next { index in
+                    rec.emit(InteractionTypes.nativeEvent, ["sub": .string(sub), "index": .int(index), "value": payload])
+                }
+                if delivered { onEvent(value) }
             },
             error: { [weak self] error in
                 guard !state.isEnded, let self else { return }
                 var e = self.errorData(error, rec: rec)
                 e["sub"] = .string(sub)
-                rec.emit(InteractionTypes.nativeError, e)
-                end()
-                onError(error)
+                if end({ rec.emit(InteractionTypes.nativeError, e) }) { onError(error) }
             },
             done: {
-                guard !state.isEnded else { return }
-                rec.emit(InteractionTypes.nativeDone, ["sub": .string(sub)])
-                end()
-                onDone()
+                if end({ rec.emit(InteractionTypes.nativeDone, ["sub": .string(sub)]) }) { onDone() }
             })
         let stop: @Sendable () -> Void
         do {
             stop = try live(sink)
         } catch {
-            end()
+            _ = end {}
             throw error
         }
         return BugCapsuleNativeSubscription(id: sub) {
-            guard !state.isEnded else { return }
-            rec.emit(InteractionTypes.nativeCancel, ["sub": .string(sub)])
-            end()
-            stop()
+            if end({ rec.emit(InteractionTypes.nativeCancel, ["sub": .string(sub)]) }) { stop() }
         }
     }
 
@@ -447,20 +443,25 @@ private final class SubscriptionState: @unchecked Sendable {
 
     var isEnded: Bool { lock.locked { ended } }
 
-    /// True the first time.
-    func end() -> Bool {
+    /// True the first time. `closing` runs under the lock, so no event of
+    /// the stream can be recorded after it.
+    func end(_ closing: () -> Void = {}) -> Bool {
         lock.locked {
             if ended { return false }
             ended = true
+            closing()
             return true
         }
     }
 
-    func nextIndex() -> Int? {
+    /// Runs `body` with the next index, unless the stream ended. Under the
+    /// lock, for the same reason as `end`.
+    func next(_ body: (Int) -> Void) -> Bool {
         lock.locked {
-            if ended { return nil }
-            defer { index += 1 }
-            return index
+            if ended { return false }
+            body(index)
+            index += 1
+            return true
         }
     }
 }
