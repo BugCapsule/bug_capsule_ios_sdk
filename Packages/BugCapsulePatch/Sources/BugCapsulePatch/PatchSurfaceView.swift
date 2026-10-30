@@ -2,8 +2,12 @@ import SwiftUI
 
 /// Renders the patched layout of a registered surface with shipped views, or
 /// `bundled` when this generation has none. Actions run the app's handlers.
+/// `images` maps registered asset IDs to app-supplied images. No patch bytes or
+/// URLs are decoded. A missing referenced image falls back to the whole bundled
+/// surface, including its actions.
 public struct PatchSurfaceView<Bundled: View>: View {
     private let document: [String: Any]?
+    private let images: [String: Image]
     private let actions: [String: () -> Void]
     private let onTextChanged: (String, String, String) -> Void
     private let bundled: Bundled
@@ -12,18 +16,20 @@ public struct PatchSurfaceView<Bundled: View>: View {
         patch: BugCapsulePatch,
         id: String,
         actions: [String: () -> Void],
+        images: [String: Image] = [:],
         onTextChanged: @escaping (String, String, String) -> Void = { _, _, _ in },
         @ViewBuilder bundled: () -> Bundled
     ) {
         document = patch.surface(id)?["root"] as? [String: Any]
+        self.images = images
         self.actions = actions
         self.onTextChanged = onTextChanged
         self.bundled = bundled()
     }
 
     public var body: some View {
-        if let document {
-            PatchNode(node: document, actions: actions, onTextChanged: onTextChanged)
+        if let document, surfaceImagesAvailable(document, available: Set(images.keys)) {
+            PatchNode(node: document, actions: actions, images: images, onTextChanged: onTextChanged)
         } else {
             bundled
         }
@@ -33,6 +39,7 @@ public struct PatchSurfaceView<Bundled: View>: View {
 private struct PatchNode: View {
     let node: [String: Any]
     let actions: [String: () -> Void]
+    let images: [String: Image]
     let onTextChanged: (String, String, String) -> Void
 
     private var children: [[String: Any]] { node["children"] as? [[String: Any]] ?? [] }
@@ -44,7 +51,8 @@ private struct PatchNode: View {
         case "text":
             return AnyView(Text(string("text")).font(font))
         case "image":
-            return AnyView(Color.clear.frame(width: 0, height: 0).accessibilityLabel(string("label")))
+            // The complete tree is checked before rendering; images are a value snapshot.
+            return AnyView(images[string("asset")]!.accessibilityLabel(string("label")))
         case "spacer":
             return AnyView(Color.clear.frame(width: CGFloat(node["size"] as? Int ?? 0), height: CGFloat(node["size"] as? Int ?? 0)))
         case "button":
@@ -62,7 +70,7 @@ private struct PatchNode: View {
 
     private var nodes: some View {
         ForEach(Array(children.enumerated()), id: \.offset) { _, child in
-            PatchNode(node: child, actions: actions, onTextChanged: onTextChanged)
+            PatchNode(node: child, actions: actions, images: images, onTextChanged: onTextChanged)
         }
     }
 
