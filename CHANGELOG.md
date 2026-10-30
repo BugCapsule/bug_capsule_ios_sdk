@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Emergency recovery (feature guards): `BugCapsule.emergency` fetches the
+  project's signed emergency policies, verifies them (ECDSA P-256 against the
+  `bcek.v1` trust anchor compiled into the app), caches them and answers
+  `evaluate(featureKey:subject:)` / `isFeatureAllowed(_:)` synchronously:
+  `ALLOW`, `BLOCK`, `READ_ONLY`, `REQUIRE_UPDATE`, `SHOW_MAINTENANCE`,
+  `DISABLE_FEATURE` or `USE_SAFE_FALLBACK`, with the operator's message.
+  Per-key failure modes (`failOpen` default, `failClosed`,
+  `useLastValidPolicy`) apply when no usable document exists. Refreshes every
+  60 s in the foreground and on resume, backs off on failures, stops on a
+  refused credential, sends apply/reject receipts, and works without
+  `BugCapsule.start` or with capture disabled. `changes`, `observe(_:)` and
+  `status` report state; an Objective-C surface (`BCEmergency`) is included.
+  Policies carry no code. Implements emergency-client-v1
+  (`docs/emergency-client-v1.md`) and passes its shared vectors
+  (`spec-fixtures/emergency-v1`).
 - URLSession (security): the app's session delegate works for instrumented
   sessions. Authentication challenges (certificate pinning, mTLS client
   certificates, HTTP auth) were answered with default handling below the
