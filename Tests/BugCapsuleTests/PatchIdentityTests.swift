@@ -87,3 +87,55 @@ final class PatchIdentityTests: XCTestCase {
         XCTAssertEqual(check(nil, id(), deps: [id(patch: digest).dependency])?.hasPrefix("patch.identity_missing"), true)
     }
 }
+
+private struct FakeBinding: PatchBinding {
+    let identity: PatchIdentity?
+    func pinForReplay(bundle: Data?, keyring: Data?, keyringSignature: Data?) throws -> PatchIdentity? { identity }
+}
+
+/// A real capture through the session, not a hand-built manifest.
+@MainActor
+final class PatchCaptureTests: XCTestCase {
+    private var dir: URL!
+    private let hostHash = "sha256:" + String(repeating: "a", count: 64)
+    private let digest = "sha256:" + String(repeating: "b", count: 64)
+
+    override func setUp() async throws {
+        await BugCapsule.resetForTesting()
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() async throws {
+        await BugCapsule.resetForTesting()
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    private func capture(_ binding: (any PatchBinding)?) async throws -> Capsule {
+        var config = BugCapsuleConfig(appVersion: "1.0", appBuild: "1", mode: .qa, gitSha: "abc", gitDirty: false, autoCaptureOnFailure: false)
+        config.patchBinding = binding
+        BugCapsule.start(config, overrides: BugCapsuleTestOverrides(storageDirectory: dir, captureSettleDelay: 0))
+        let result = await BugCapsule.capture()
+        return try CapsuleCodec.decode(Data(contentsOf: try XCTUnwrap(result?.file)))
+    }
+
+    func testACaptureOnAPatchRecordsItAndRequiresTheRuntime() async throws {
+        let c = try await capture(FakeBinding(identity: PatchIdentity(baseBuildId: "build-1", patchSetDigest: digest, engineAbi: 1, hostAbiHash: hostHash, artifactDigest: hostHash)))
+        XCTAssertEqual(c.manifest.patch?.patchSetDigest, digest)
+        XCTAssertEqual(c.manifest.patch?.artifactDigest, hostHash)
+        XCTAssertEqual(c.manifest.dependencies.filter { $0.required }.map(\.kind), [patchRuntimeDependencyKind])
+        XCTAssertTrue(c.manifest.isV2)
+    }
+
+    func testACaptureOnTheBareBaseNeedsNoRuntime() async throws {
+        let c = try await capture(FakeBinding(identity: PatchIdentity(baseBuildId: "build-1", patchSetDigest: nil, engineAbi: 1, hostAbiHash: hostHash)))
+        XCTAssertEqual(c.manifest.patch?.baseBuildId, "build-1")
+        XCTAssertNil(c.manifest.patch?.patchSetDigest)
+        XCTAssertTrue(c.manifest.dependencies.isEmpty)
+    }
+
+    func testWithoutABindingACaptureIsUnchanged() async throws {
+        let c = try await capture(nil)
+        XCTAssertNil(c.manifest.patch)
+    }
+}

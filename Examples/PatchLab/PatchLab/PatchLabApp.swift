@@ -83,21 +83,43 @@ struct Run {
     let patch: BugCapsulePatch
 }
 
+/// Carries the record into the update task; nothing else touches it.
+private struct Sendable_: @unchecked Sendable {
+    let value: [String: Any]
+    init(_ value: [String: Any]) { self.value = value }
+}
+
+private func append(_ record: [String: Any], to url: URL) {
+    guard var line = try? JSONSerialization.data(withJSONObject: record) else { return }
+    line.append(0x0A)
+    if let h = try? FileHandle(forWritingTo: url) {
+        h.seekToEndOfFile()
+        h.write(line)
+        h.closeFile()
+    } else {
+        try? line.write(to: url)
+    }
+}
+
 private func run() -> Run {
     let fm = FileManager.default
     let exchange = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
     let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     try? fm.createDirectory(at: support, withIntermediateDirectories: true)
+    // Test-only: an acceptance run points the lab at a real backend. Without
+    // this file the lab uses its file inbox. The base build id stays the binary's.
+    let remote = (try? Data(contentsOf: exchange.appendingPathComponent("patch-config.json")))
+        .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] }
     let patch = BugCapsulePatch.open(
         config: PatchConfig(
             storeDir: support.appendingPathComponent("bcpatch").path,
-            projectId: "demo",
+            projectId: remote?["projectId"] ?? "demo",
             applicationId: "dev.bugcapsule.patchlab.ios",
             environment: "staging",
             distributionProfile: "development",
             baseBuildId: baseBuildId,
             installationId: "device-1",
-            trustRoots: [trustAnchor]
+            trustRoots: [remote?["trustRoot"] ?? trustAnchor]
         ),
         modules: [coupon.contract],
         surfaces: [summarySurface]
@@ -127,17 +149,25 @@ private func run() -> Run {
         "inbox": inbox,
         "status": (try? patch.status()) ?? NSNull(),
     ]
-    if let data = try? JSONSerialization.data(withJSONObject: record) {
-        let url = exchange.appendingPathComponent("results.jsonl")
-        var line = data
-        line.append(0x0A)
-        if let h = try? FileHandle(forWritingTo: url) {
-            h.seekToEndOfFile()
-            h.write(line)
-            h.closeFile()
-        } else {
-            try? line.write(to: url)
+    let results = exchange.appendingPathComponent("results.jsonl")
+    if let remote, let base = remote["baseUrl"], let token = remote["deliveryToken"],
+        let transport = try? HttpPatchTransport(
+            baseURL: base, deliveryToken: token, applicationId: "dev.bugcapsule.patchlab.ios", platform: "ios",
+            distributionProfile: "development", baseBuildId: baseBuildId, installationId: "device-1")
+    {
+        let updater = PatchUpdater(patch: patch, transport: transport)
+        let snapshot = Sendable_(record)
+        Task.detached {
+            let r = await updater.checkForUpdate()
+            var doc = snapshot.value
+            var sent = -1
+            do { sent = try await updater.flushReceipts() } catch { doc["receiptError"] = "\(error)" }
+            doc["update"] = ["state": "\(r.state)", "artifactDigest": r.artifactDigest as Any? ?? NSNull(), "reason": r.reason as Any? ?? NSNull(), "receiptsSent": sent]
+            doc["status"] = (try? patch.status()) ?? NSNull()
+            append(doc, to: results)
         }
+    } else {
+        append(record, to: results)
     }
     return Run(priced: result.value, source: result.source.rawValue, state: before["state"] as? String ?? "?", micros: micros, patch: patch)
 }

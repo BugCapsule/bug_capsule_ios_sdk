@@ -54,6 +54,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
 
     private var recorder: FlightRecorder?
     private var _engine: ReplayEngine?
+    private let patchLock = NSLock()
     private var _patch: PatchIdentity?
     private var _patchRead = false
     private var _redactor = Redactor()
@@ -1171,7 +1172,8 @@ public final class BugCapsuleSession: @unchecked Sendable {
 
     /// What this process runs. Read once: a process pins one generation.
     var patchIdentity: PatchIdentity? {
-        lock.locked {
+        // Its own lock: callers may already hold the session lock.
+        patchLock.withLock {
             if !_patchRead {
                 _patchRead = true
                 _patch = config.patchBinding?.identity
@@ -1191,11 +1193,11 @@ public final class BugCapsuleSession: @unchecked Sendable {
                 let signature = settings.patchKeyring ? try channel?.fetchPatchFileSync(ReplayProtocol.keyringSignaturePath) : nil
                 running = try binding.pinForReplay(bundle: bundle, keyring: keyring, keyringSignature: signature)
             } catch {
-                lock.locked { _patchRead = true }
+                patchLock.withLock { _patchRead = true }
                 return "patch.unavailable: \(error)"
             }
         }
-        lock.locked {
+        patchLock.withLock {
             _patchRead = true
             _patch = running
         }
