@@ -1,0 +1,12 @@
+{
+  "runtime": "ios",
+  "ios": {
+    "project": "CapsuleLab.xcodeproj",
+    "scheme": "CapsuleLab",
+    "configuration": "Debug",
+    "bundleId": "dev.bugcapsule.capsulelab.ios",
+    "replayTest": "CapsuleLabUITests/BugCapsuleReplayTests/testReplay",
+    "startupSeconds": 120
+  },
+  "timeouts": {"buildSeconds": 1200}
+}
