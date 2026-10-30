@@ -74,7 +74,10 @@ The app's session delegate works for instrumented sessions as without the SDK:
   redirect goes through the SDK's protocol again. Capture records each hop
   as its own exchange (the 3xx with its `Location` and an empty body, then
   the target), and replay serves the 3xx as a redirect, so the app's
-  session follows it to the next fixture.
+  session follows it to the next fixture. The 3xx response is held until the
+  app has answered: delivered earlier, it can end a request the app follows.
+  A followed redirect stops the protocol at once. A refused one can't be
+  detected, so its 3xx arrives after 1 second.
 
 ## Supported frameworks and capabilities
 
