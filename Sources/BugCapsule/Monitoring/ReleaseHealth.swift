@@ -23,6 +23,10 @@ final class ReleaseHealth: @unchecked Sendable {
         /// nil in state files written before they were persisted.
         var release: String?
         var environment: String?
+        /// The patch this session ran, never the current one: it may since
+        /// have been rolled back. nil base: unknown.
+        var patchBaseBuildId: String?
+        var patchSetDigest: String?
 
         var json: JSONValue {
             [
@@ -31,14 +35,21 @@ final class ReleaseHealth: @unchecked Sendable {
                 "foreground": .bool(foreground), "backgroundAt": backgroundAt.map { .string(ISODate.format($0)) } ?? .null,
                 "updated": .string(ISODate.format(updated)), "release": release.map { .string($0) } ?? .null,
                 "environment": environment.map { .string($0) } ?? .null,
+                "patchBaseBuildId": patchBaseBuildId.map { .string($0) } ?? .null,
+                "patchSetDigest": patchSetDigest.map { .string($0) } ?? .null,
             ]
         }
 
-        init(sid: String, did: String, started: Date, release: String? = nil, environment: String? = nil) {
+        init(
+            sid: String, did: String, started: Date, release: String? = nil, environment: String? = nil,
+            patch: PatchIdentity? = nil
+        ) {
             self.sid = sid
             self.did = did
             self.release = release
             self.environment = environment
+            patchBaseBuildId = patch?.baseBuildId
+            patchSetDigest = patch?.patchSetDigest
             seq = 0
             initSent = false
             self.started = started
@@ -64,6 +75,8 @@ final class ReleaseHealth: @unchecked Sendable {
             updated = json["updated"]?.stringValue.flatMap(ISODate.parse) ?? started
             release = json["release"]?.stringValue
             environment = json["environment"]?.stringValue
+            patchBaseBuildId = json["patchBaseBuildId"]?.stringValue
+            patchSetDigest = json["patchSetDigest"]?.stringValue
         }
     }
 
@@ -76,16 +89,19 @@ final class ReleaseHealth: @unchecked Sendable {
     /// Receives each session update payload.
     private let emit: @Sendable (JSONObject) -> Void
     private let did: @Sendable () -> String
+    /// What this process runs; rollout health compares sessions by it.
+    private let patch: @Sendable () -> PatchIdentity?
 
     init(
         file: URL?, release: String, environment: String, timeout: TimeInterval, did: @escaping @Sendable () -> String,
-        emit: @escaping @Sendable (JSONObject) -> Void
+        patch: @escaping @Sendable () -> PatchIdentity? = { nil }, emit: @escaping @Sendable (JSONObject) -> Void
     ) {
         self.file = file
         self.release = release
         self.environment = environment
         self.timeout = timeout
         self.did = did
+        self.patch = patch
         self.emit = emit
     }
 
@@ -106,13 +122,16 @@ final class ReleaseHealth: @unchecked Sendable {
         let isInit = !s.initSent
         s.initSent = true
         s.updated = time
-        return [
+        var payload: JSONObject = [
             "sid": .string(s.sid), "did": .string(s.did), "seq": .int(s.seq), "init": .bool(isInit),
             "started": .string(ISODate.format(s.started)), "timestamp": .string(ISODate.format(time)),
             "status": .string(s.status), "errors": .int(s.errors),
             "duration": .double(max(time.timeIntervalSince(s.started), 0)), "release": .string(s.release ?? release),
             "environment": .string(s.environment ?? environment), "runtime": "ios",
         ]
+        if let base = s.patchBaseBuildId { payload["patchBaseBuildId"] = .string(base) }
+        if let digest = s.patchSetDigest { payload["patchSetDigest"] = .string(digest) }
+        return payload
     }
 
     /// The previous launch's open session, closed as `crashed`, `abnormal`
@@ -147,8 +166,10 @@ final class ReleaseHealth: @unchecked Sendable {
     /// Starts a new session (ending the running one as `exited`).
     func start(at time: Date = Date()) {
         end(at: time)
+        let identity = patch()
         let payload: JSONObject = lock.locked {
-            var s = State(sid: uuidV4(), did: did(), started: time, release: release, environment: environment)
+            var s = State(
+                sid: uuidV4(), did: did(), started: time, release: release, environment: environment, patch: identity)
             let p = updateLocked(&s, at: time)
             state = s
             persistLocked()

@@ -165,6 +165,7 @@ final class Monitoring: @unchecked Sendable {
             file: directory?.appendingPathComponent("session.json"), release: release, environment: environment,
             timeout: options.sessionTimeout,
             did: { [weak self] in self?.currentScope.user?.id ?? self?.installId ?? uuidV4() },
+            patch: { [weak self] in self?.session?.patchIdentity },
             emit: { [weak self] payload in self?.enqueue("session", payload) })
         lock.locked { self.health = health }
         // What the previous run left is persisted in the outbox before its

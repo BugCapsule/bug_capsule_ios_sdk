@@ -130,8 +130,23 @@ extension BugCapsuleSession {
         let recorded = RecordedWindow(checkpoint: checkpoint, events: events, droppedEvents: 0, hasGap: window.hasGap)
         for integration in integrations { integration.describeEligibility(eligibility, window: recorded) }
         let declared = (h["dependencies"]?.arrayValue ?? []).compactMap { $0.objectValue.map(CapsuleDependency.init(json:)) }
+        // Patch execution is not an interaction event. Keep its declared
+        // requirement even when this window contains no interaction traffic.
+        let patchDependencies = declared.filter { $0.kind == patchRuntimeDependencyKind }
         let dependencies = InteractionRuntime.selectDependencies(
-            declared, events: events, checkpoint: checkpoint, eligibility: eligibility)
+            declared.filter { $0.kind != patchRuntimeDependencyKind }, events: events, checkpoint: checkpoint, eligibility: eligibility)
+            + patchDependencies
+        var patch: PatchIdentity?
+        if let raw = h["patch"], raw != .null {
+            guard let object = raw.objectValue, let identity = PatchIdentity(json: object),
+                let digest = object["patchSetDigest"], digest == .null || digest.stringValue != nil
+            else { return nil }
+            patch = identity
+        }
+        // A damaged journal must not become a seemingly unpatched capsule.
+        // Preserve recorded requirements; never invent trust metadata.
+        if patchDependencies.contains(where: { $0.required }) && patch == nil { return nil }
+        if patch?.patchSetDigest != nil && !patchDependencies.contains(where: { $0.required }) { return nil }
         eligibility.missing("crash.native", Self.crashNativeReason)
 
         var m = JSONObject()
@@ -159,6 +174,7 @@ extension BugCapsuleSession {
         manifest.labels = Array(labels.suffix(100))
         manifest.monitoring = link
         manifest.dependencies = dependencies
+        manifest.patch = patch
         manifest.journalGapMs = gapMs
         return Capsule(manifest: manifest, checkpoint: checkpoint.shifted(anchorT), events: events.map { $0.shifted(anchorT) })
     }

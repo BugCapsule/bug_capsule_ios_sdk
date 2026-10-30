@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Capsules with screenshots are no longer rejected: `capturedAtT` now moves
+  with the event time when a capsule is rebased to its anchor. With a first
+  frame over 1 s the backend answered `invalid_capsule` and dropped the whole
+  capsule.
+- Release-health sessions report `patchBaseBuildId` and `patchSetDigest`, so
+  patch rollouts can be judged from real sessions. A session recovered on the
+  next launch reports the patch it ran, not the current one.
 - URLSession interception: a followed redirect could end the request on the
   3xx response when that response reached the loading system before the app's
   answer. The 3xx now waits for the answer, in capture and in replay. A

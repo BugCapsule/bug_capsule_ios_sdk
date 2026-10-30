@@ -1,0 +1,30 @@
+name: PatchLab
+options:
+  deploymentTarget:
+    iOS: "15.0"
+packages:
+  BugCapsulePatch:
+    path: ../../Packages/BugCapsulePatch
+targets:
+  PatchLab:
+    type: application
+    platform: iOS
+    sources: [PatchLab]
+    info:
+      path: PatchLab/Info.plist
+      properties:
+        CFBundleDisplayName: Patch Lab
+        UILaunchScreen: {}
+        # Example app only: reaches a local acceptance backend.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    dependencies:
+      - package: BugCapsulePatch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.bugcapsule.patchlab.ios
+        PRODUCT_NAME: PatchLab
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
