@@ -173,6 +173,7 @@ public final class BugCapsuleEmergency: NSObject, @unchecked Sendable {
     private var handlers: [UUID: @MainActor @Sendable (EmergencySnapshot) -> Void] = [:]
     private var continuations: [UUID: AsyncStream<EmergencySnapshot>.Continuation] = [:]
     private var warnedUninitialized = false
+    private let decisions = EmergencyDecisionTracker()
 
     /// The update adapter configured with `updateProvider`: availability
     /// checks, the store page, and their runtime reports (§7.6, §7.7).
@@ -228,15 +229,20 @@ public final class BugCapsuleEmergency: NSObject, @unchecked Sendable {
     }
 
     /// The policy behind the current decision for [featureKey]; nil when no
-    /// policy applies (ALLOW, a failure mode or replay).
+    /// policy applies (ALLOW, a failure mode or replay, which serves the
+    /// decision a capsule recorded and has no policy object).
     public func getPolicy(_ featureKey: String, subject: String? = nil) -> EmergencyPolicy? {
         evaluateWithPolicy(featureKey: featureKey, subject: subject).1
     }
 
     private func evaluateWithPolicy(featureKey: String, subject: String?) -> (EmergencyDecision, EmergencyPolicy?) {
-        if let r = current { return r.evaluate(featureKey: featureKey, subject: subject) }
+        if let r = current {
+            let result = r.evaluate(featureKey: featureKey, subject: subject)
+            track(result.0, subject: subject)
+            return result
+        }
         if ReplayGate.replayURL() != nil || BugCapsuleSession.current?.isReplaying == true {
-            return (EmergencyDecision(featureKey: featureKey, allowed: true, action: .allow, source: .replay), nil)
+            return (replayDecision(featureKey: featureKey, subject: subject), nil)
         }
         let warn = lock.locked { () -> Bool in
             defer { warnedUninitialized = true }
@@ -245,8 +251,63 @@ public final class BugCapsuleEmergency: NSObject, @unchecked Sendable {
         if warn {
             BugCapsuleLog.warn("emergency: evaluate called before BugCapsule.emergency.initialize; every feature is allowed")
         }
-        return (EmergencyRuntime.unavailable(featureKey, allowed: true), nil)
+        let decision = EmergencyRuntime.unavailable(featureKey, allowed: true)
+        track(decision, subject: subject)
+        return (decision, nil)
     }
+
+    // MARK: decisions in capsules (§7.8)
+
+    /// What the app saw during capture. A launch in replay can evaluate before
+    /// its capsule has loaded: nothing is known yet, so the feature is allowed,
+    /// as it is when the capsule has no decision for it.
+    func replayDecision(featureKey: String, subject: String?) -> EmergencyDecision {
+        let engine = BugCapsuleSession.current?.engine
+        return engine?.emergencyDecision(featureKey: featureKey, subjectTag: subject.map(decisions.tag(of:)))
+            ?? EmergencyDecision(featureKey: featureKey, allowed: true, action: .allow, source: .replay)
+    }
+
+    /// Never changes the decision: at worst the recording misses it. Off the
+    /// tracker's lock, because writing runs the app's `beforeRecord` hook.
+    private func track(_ decision: EmergencyDecision, subject: String?) {
+        guard decision.source != .replay else { return }
+        switch decisions.track(decision, subject: subject) {
+        case .unchanged:
+            break
+        case .changed(let pair):
+            if let session = BugCapsuleSession.current { write(pair, to: session) }
+        case .limitReached:
+            BugCapsuleSession.current?.refreshJournalHeader()
+        }
+    }
+
+    /// Writes the latest decision of [pair], then looks again: with threads
+    /// racing, the decision just written may no longer be the latest, and the
+    /// last event of a pair has to be, because nothing changes after it.
+    private func write(_ pair: EmergencyDecisionTracker.Pair, to session: BugCapsuleSession) {
+        var written: EmergencyDecision?
+        while let latest = decisions.latest(of: pair), latest != written {
+            guard session.recordDecision(EmergencyDecisionTracker.eventData(latest, tag: pair.tag)) else {
+                if decisions.markIncomplete() { session.refreshJournalHeader() }
+                return
+            }
+            written = latest
+        }
+    }
+
+    /// One event for every tracked decision: when recording starts, for those
+    /// made before it, and after a periodic checkpoint, so a window that
+    /// starts there knows them.
+    func writeDecisions(to session: BugCapsuleSession) {
+        for pair in decisions.pairs { write(pair, to: session) }
+    }
+
+    /// A decision already in the recording can't be kept. The caller rewrites
+    /// the crash journal.
+    func decisionLost() { _ = decisions.markIncomplete() }
+
+    /// `manifest.capabilities["emergency.decisions"]`.
+    var decisionsCapability: String { decisions.complete ? "supported" : "partial" }
 
     // MARK: refresh and state
 
@@ -304,7 +365,7 @@ public final class BugCapsuleEmergency: NSObject, @unchecked Sendable {
         Task { await r.onSessionStarted() }
     }
 
-    /// Forgets the client, observers and streams (tests). Files stay.
+    /// Forgets the client, observers, streams and decisions (tests). Files stay.
     public func resetForTesting() async {
         let (r, cs) = lock.locked { () -> (EmergencyRuntime?, [AsyncStream<EmergencySnapshot>.Continuation]) in
             let r = runtime
@@ -317,6 +378,7 @@ public final class BugCapsuleEmergency: NSObject, @unchecked Sendable {
         }
         r?.dispose()
         for c in cs { c.finish() }
+        decisions.clear()
     }
 
     var runtimeForTesting: EmergencyRuntime? { current }

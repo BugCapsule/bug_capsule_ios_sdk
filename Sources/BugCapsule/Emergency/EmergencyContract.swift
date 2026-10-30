@@ -42,7 +42,8 @@ public enum EmergencyDecisionSource: String, Sendable, Equatable {
     case stalePolicy = "stale_policy"
     /// No usable document: the feature's failure mode decided.
     case failureMode = "failure_mode"
-    /// The SDK is replaying a Capsule: every feature is allowed.
+    /// The SDK is replaying a Capsule: the decision recorded in it, or ALLOW
+    /// when it has none for the feature (§7.8).
     case replay
 }
 
