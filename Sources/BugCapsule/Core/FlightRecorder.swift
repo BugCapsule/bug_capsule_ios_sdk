@@ -138,11 +138,13 @@ public struct IdleCompressor: Sendable {
 
     /// Recorded time from which the recording is idle until the input at
     /// [to], given the previous input at [from]; nil when not longer than
-    /// `minGapMs`. An HTTP exchange counts from request to response.
+    /// `minGapMs`. An HTTP exchange counts from request to response. Guard
+    /// decisions aren't app activity: they are written again after every
+    /// periodic checkpoint, and replay finds them by time wherever it jumps.
     public func idleSince(from: Int, to: Int) -> Int? {
         if to - from <= minGapMs { return nil }
         var since = from
-        for e in events {
+        for e in events where e.type != EventTypes.emergencyDecision {
             let start = e.type == EventTypes.http ? e.t - (e.data["durationMs"]?.intValue ?? 0) : e.t
             if start >= to { continue }
             let end = e.t < to ? e.t : to

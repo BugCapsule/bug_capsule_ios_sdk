@@ -1,0 +1,257 @@
+{
+  "description": "§7.8: subject tags, and the decision replay returns for an evaluation at time t. expect null means no entry: ALLOW with source replay. expect fields are compared with the decision; allowed is true only for ALLOW.",
+  "subjectTags": [
+    {
+      "subject": "user-1",
+      "tag": "748982dd71b97baf"
+    },
+    {
+      "subject": "user-2",
+      "tag": "5baa2f291d4eb976"
+    },
+    {
+      "subject": "é✓",
+      "tag": "27d78df1dbaeee6f"
+    }
+  ],
+  "events": [
+    {
+      "seq": 1,
+      "t": 100,
+      "type": "route",
+      "data": {
+        "location": "/"
+      }
+    },
+    {
+      "seq": 2,
+      "t": 200,
+      "type": "emergency.decision",
+      "data": {
+        "key": "checkout.pay",
+        "action": "ALLOW",
+        "source": "policy",
+        "documentRevision": 41
+      }
+    },
+    {
+      "seq": 3,
+      "t": 1000,
+      "type": "emergency.decision",
+      "data": {
+        "key": "checkout.pay",
+        "action": "BLOCK",
+        "source": "policy",
+        "reasonCode": "INCIDENT",
+        "policyId": "p-1",
+        "policyRevision": 3,
+        "documentRevision": 42,
+        "message": "Payments are paused."
+      }
+    },
+    {
+      "seq": 4,
+      "t": 2000,
+      "type": "emergency.decision",
+      "data": {
+        "key": "checkout.pay",
+        "action": "ALLOW",
+        "source": "policy",
+        "documentRevision": 43
+      }
+    },
+    {
+      "seq": 5,
+      "t": 300,
+      "type": "emergency.decision",
+      "data": {
+        "key": "wallet.send",
+        "subject": "748982dd71b97baf",
+        "action": "BLOCK",
+        "source": "policy",
+        "reasonCode": "INCIDENT"
+      }
+    },
+    {
+      "seq": 6,
+      "t": 300,
+      "type": "emergency.decision",
+      "data": {
+        "key": "wallet.send",
+        "subject": "5baa2f291d4eb976",
+        "action": "ALLOW",
+        "source": "policy"
+      }
+    },
+    {
+      "seq": 7,
+      "t": 400,
+      "type": "emergency.decision",
+      "data": {
+        "key": "app.upgrade",
+        "action": "REQUIRE_UPDATE",
+        "source": "policy",
+        "requiredVersion": "2.4.1",
+        "message": "Update to continue."
+      }
+    },
+    {
+      "seq": 8,
+      "t": 500,
+      "type": "emergency.decision",
+      "data": {
+        "key": "feed.home",
+        "action": "USE_SAFE_FALLBACK",
+        "source": "failure_mode",
+        "fallback": "cached",
+        "fallbackAvailable": true
+      }
+    },
+    {
+      "seq": 9,
+      "t": 600,
+      "type": "emergency.decision",
+      "data": {
+        "key": "broken.future",
+        "action": "SOME_FUTURE_ACTION",
+        "source": "policy"
+      }
+    },
+    {
+      "seq": 10,
+      "t": 650,
+      "type": "emergency.decision",
+      "data": {
+        "action": "BLOCK",
+        "source": "policy"
+      }
+    }
+  ],
+  "cases": [
+    {
+      "name": "before the first entry: the earliest",
+      "t": 0,
+      "key": "checkout.pay",
+      "subject": null,
+      "expect": {
+        "allowed": true,
+        "action": "ALLOW",
+        "documentRevision": 41
+      }
+    },
+    {
+      "name": "between entries: the latest so far",
+      "t": 1500,
+      "key": "checkout.pay",
+      "subject": null,
+      "expect": {
+        "allowed": false,
+        "action": "BLOCK",
+        "reasonCode": "INCIDENT",
+        "policyId": "p-1",
+        "policyRevision": 3,
+        "documentRevision": 42,
+        "message": "Payments are paused."
+      }
+    },
+    {
+      "name": "exactly at an entry",
+      "t": 1000,
+      "key": "checkout.pay",
+      "subject": null,
+      "expect": {
+        "allowed": false,
+        "action": "BLOCK"
+      }
+    },
+    {
+      "name": "after a restriction ended",
+      "t": 2500,
+      "key": "checkout.pay",
+      "subject": null,
+      "expect": {
+        "allowed": true,
+        "action": "ALLOW",
+        "documentRevision": 43
+      }
+    },
+    {
+      "name": "a subject gets its own entry",
+      "t": 1000,
+      "key": "wallet.send",
+      "subject": "user-1",
+      "expect": {
+        "allowed": false,
+        "action": "BLOCK"
+      }
+    },
+    {
+      "name": "another subject gets its own entry",
+      "t": 1000,
+      "key": "wallet.send",
+      "subject": "user-2",
+      "expect": {
+        "allowed": true,
+        "action": "ALLOW"
+      }
+    },
+    {
+      "name": "a subject not recorded uses any entry of the key",
+      "t": 1000,
+      "key": "checkout.pay",
+      "subject": "user-1",
+      "expect": {
+        "allowed": false,
+        "action": "BLOCK"
+      }
+    },
+    {
+      "name": "no subject on a key recorded with subjects uses any entry",
+      "t": 1000,
+      "key": "wallet.send",
+      "subject": null,
+      "expect": {
+        "allowed": true,
+        "action": "ALLOW"
+      }
+    },
+    {
+      "name": "update fields survive",
+      "t": 1000,
+      "key": "app.upgrade",
+      "subject": null,
+      "expect": {
+        "allowed": false,
+        "action": "REQUIRE_UPDATE",
+        "requiredVersion": "2.4.1",
+        "message": "Update to continue."
+      }
+    },
+    {
+      "name": "fallback fields survive",
+      "t": 1000,
+      "key": "feed.home",
+      "subject": null,
+      "expect": {
+        "allowed": false,
+        "action": "USE_SAFE_FALLBACK",
+        "fallback": "cached",
+        "fallbackAvailable": true
+      }
+    },
+    {
+      "name": "an unrecorded key is allowed",
+      "t": 1000,
+      "key": "never.seen",
+      "subject": null,
+      "expect": null
+    },
+    {
+      "name": "an unknown action is ignored",
+      "t": 1000,
+      "key": "broken.future",
+      "subject": null,
+      "expect": null
+    }
+  ]
+}
