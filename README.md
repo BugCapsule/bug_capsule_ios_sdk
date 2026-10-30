@@ -566,9 +566,15 @@ Platform limits:
 - iOS has no forced in-app update. `REQUIRE_UPDATE` is a decision your app
   shows (with `requiredVersion`); the App Store adapter above only checks the
   listed version and opens the store page.
-- While BugCapsule replays a capsule, every feature is allowed and no policy
-  is fetched. Guard decisions are not yet recorded into capsules, so a
-  replay does not reproduce a feature that was blocked when it was captured.
+- While BugCapsule replays a capsule, `evaluate` returns the decision the app
+  saw at that point of the capture, with source `.replay` and no policy
+  object, and no policy is fetched. A feature the capsule has no decision for
+  is allowed. Capture records a decision when it changes, as a hash of the
+  subject (never the subject), at most 256 feature and subject pairs per run.
+  A replay of a capsule needs a build with an SDK that records decisions; an
+  older one allows every feature. During a replay, `updates` reaches no
+  provider or store: `checkAvailability` says no update is available and
+  `presentUpdate` returns `.notAvailable`.
 
 Wire format, verification and evaluation rules:
 [docs/emergency-client-v1.md](docs/emergency-client-v1.md).

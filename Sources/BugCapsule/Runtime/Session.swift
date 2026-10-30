@@ -183,14 +183,28 @@ public final class BugCapsuleSession: @unchecked Sendable {
     /// Records an event (no-op when not observing). Data passes through the
     /// redactor and the app's `beforeRecord` hook first; it goes to the
     /// flight recorder and becomes a monitoring breadcrumb.
-    public func record(_ type: String, _ data: JSONObject = JSONObject()) {
+    public func record(_ type: String, _ data: JSONObject = JSONObject()) { recordEvent(type, data) }
+
+    /// A guard decision (§7.8). False when the capture rules dropped it from a
+    /// recording or changed what replay needs: the capsule then misses a
+    /// decision.
+    func recordDecision(_ data: JSONObject) -> Bool {
+        recordEvent(EventTypes.emergencyDecision, data) { EmergencyDecisionTracker.isIntact($0, original: data) }
+    }
+
+    /// False when the event was wanted for a capsule but dropped. [accept]
+    /// decides on the event as the capture rules left it.
+    @discardableResult
+    private func recordEvent(_ type: String, _ data: JSONObject, accept: ((JSONObject) -> Bool)? = nil) -> Bool {
         let t = now()
         let (active, redactor, bodies, monitoring) = lock.locked {
             (recording && recorder != nil, _redactor, captureBodies, _engine == nil ? _monitoring : nil)
         }
         let observe = type != EventTypes.pointer && (monitoring?.wantsBreadcrumbs ?? false)
-        guard active || observe else { return }
-        guard let clean = sanitize(type, data, redactor: redactor, captureBodies: bodies && active) else { return }
+        guard active || observe else { return true }
+        guard let clean = sanitize(type, data, redactor: redactor, captureBodies: bodies && active), accept?(clean) ?? true else {
+            return !active
+        }
         if active {
             lock.locked {
                 guard recording, let recorder else { return }
@@ -203,6 +217,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
             }
         }
         if observe { monitoring?.recorded(type, clean) }
+        return true
     }
 
     /// Defense in depth: whatever an integration records goes through the
@@ -414,6 +429,8 @@ public final class BugCapsuleSession: @unchecked Sendable {
                     directory: journals.currentDirectory, maxBytes: 2 * maxCapsuleBytes, header: header, launch: launch)
             }
             installCapture()
+            // Decisions made before recording started.
+            BugCapsuleEmergency.shared.writeDecisions(to: self)
         }
     }
 
@@ -488,6 +505,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
             recorder.addCheckpoint(checkpoint)
             journal?.checkpoint(checkpoint)
         }
+        BugCapsuleEmergency.shared.writeDecisions(to: self)
         refreshJournalHeader()
     }
 
@@ -560,6 +578,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
             ("random.seeded", "explicit"),
             ("crash.uncaught", "partial"),
             ("crash.native", "partial"),
+            (emergencyDecisionsCapability, BugCapsuleEmergency.shared.decisionsCapability),
         ]
         for i in integrations { capabilities.append(contentsOf: i.capabilities) }
         return capabilities
@@ -1002,6 +1021,10 @@ public final class BugCapsuleSession: @unchecked Sendable {
                         return nil
                     }
                     guard let d = self.sanitize(e.type, e.data, redactor: redactor, captureBodies: bodies, hook: false) else {
+                        return nil
+                    }
+                    if e.type == EventTypes.emergencyDecision, !EmergencyDecisionTracker.isIntact(d, original: e.data) {
+                        BugCapsuleEmergency.shared.decisionLost()
                         return nil
                     }
                     return BugCapsuleEvent(seq: e.seq, t: e.t, type: e.type, data: d)

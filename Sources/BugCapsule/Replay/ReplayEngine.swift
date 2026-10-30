@@ -28,6 +28,7 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
     public let capsule: Capsule
     public let settings: ReplaySettings
     public let fixtures: FixtureStore
+    private let emergencyDecisions: EmergencyDecisionScript
     let buildGitSha: String?
     let channel: ReplayChannel?
     weak var session: BugCapsuleSession?
@@ -65,6 +66,7 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
         self.channel = channel
         self.session = session
         fixtures = FixtureStore(events: capsule.events)
+        emergencyDecisions = EmergencyDecisionScript(events: capsule.events)
         idle = IdleCompressor(events: capsule.events)
         interactions = InteractionReplay(
             capsule: capsule, clock: { [weak self] in self?.interactionClock() ?? 0 },
@@ -94,6 +96,12 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
     func virtualNow() -> Date {
         let ms = capsule.checkpoint.wallClockMs + Int((uptime() - restoreStart) * 1000) + lock.locked { skippedMs }
         return Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
+    }
+
+    /// The decision the app saw at this point of the capture; nil when the
+    /// capsule has none for [featureKey]. Any thread.
+    func emergencyDecision(featureKey: String, subjectTag: String?) -> EmergencyDecision? {
+        emergencyDecisions.lookup(key: featureKey, subjectTag: subjectTag, t: base + elapsed())
     }
 
     // MARK: ReplayContext

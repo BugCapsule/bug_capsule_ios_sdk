@@ -93,6 +93,7 @@ Frameworks seen are listed in `manifest.runtime.frameworks` (`uikit`,
 | `navigation.uikit`, `navigation.explicit` | explicit | Through `observe` / `setRoute`. |
 | `clock.virtual`, `random.seeded` | explicit | Only through `BugCapsule.now()` / `BugCapsule.random`. |
 | `crash.uncaught` | partial | NSException only, best effort, uploaded next launch. |
+| `emergency.decisions` | supported / partial | Guard decisions in the capsule; `partial` when some are missing (over 256 pairs, or dropped or altered by the capture rules). |
 | `interaction.websocket` | supported | Through `BugCapsuleWebSocket` (adapter `bugcapsule-ios.urlsession-websocket`). |
 | `interaction.native.<adapter>` | supported | One per installed native adapter. |
 
@@ -706,8 +707,27 @@ the remote capture kill switch on.
   receipt per rejected `200` (reason as `errorCode`), each at most once per
   process, fire-and-forget. A rejection before the signature is verified
   reports the current revision, since the payload is not trusted.
-* **Replay.** While a capsule replays, no request or receipt is sent and
-  every evaluation is `ALLOW` with `source: replay`.
+* **Decisions in capsules.** Every evaluation outside replay updates a small
+  tracker of the latest decision per feature key and subject (at most 256
+  pairs, under its own lock). A change writes one `emergency.decision` event
+  through the usual capture path (redaction, `beforeRecord`, sampling, kill
+  switch); a subject appears only as a hash. Decisions made before recording
+  starts are written when it starts, and each periodic checkpoint is followed
+  by one event per tracked decision, so a window that starts there after older
+  events were evicted still knows them. These events don't count as activity
+  for idle compression. `emergency.decisions` is `supported`, or `partial` once
+  the limit was hit or the capture rules dropped a decision or changed its
+  `key`, `subject` or `action`, also later when remote redaction rules rewrite
+  the buffer. Such a decision isn't kept (the crash journal header follows).
+* **Replay.** While a capsule replays, no request or receipt is sent.
+  `evaluate` looks the decision up at `checkpoint t + replay clock` (the
+  clock includes skipped idle time): the latest entry for the key and subject
+  at or before that time, else the earliest; entries of other subjects when
+  the subject has none. The result has `source: replay` and no policy object.
+  With no entry for the key, or before the capsule has loaded, it is `ALLOW`.
+  Entries with an unknown action are ignored. A replayed `REQUIRE_UPDATE`
+  reaches nothing: `updates` calls no provider and makes no store lookup,
+  reports no update available and changes no status.
 * **Observation.** `changes` (`AsyncStream`) and `observe(_:)` (main thread,
   cancel on release) get a snapshot after `initialize` and after each
   accepted document; `status` gives the state (`none`, `usable`, `expired`),
