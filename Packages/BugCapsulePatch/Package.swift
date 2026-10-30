@@ -13,5 +13,11 @@ let package = Package(
     targets: [
         .binaryTarget(name: "BcpatchRuntime", path: "Binaries/BcpatchRuntime.xcframework"),
         .target(name: "BugCapsulePatch", dependencies: ["BcpatchRuntime"], swiftSettings: [.swiftLanguageMode(.v6)]),
+        .testTarget(
+            name: "BugCapsulePatchTests",
+            dependencies: ["BugCapsulePatch", "BcpatchRuntime"],
+            resources: [.copy("Fixtures")],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )
