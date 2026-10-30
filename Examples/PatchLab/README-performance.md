@@ -17,3 +17,21 @@ Mach RSS values are current-process resident-memory snapshots before/after open,
 No latency budget passes by default. Optionally supply `budgetsNs`, for example `{"p95Ns": YOUR_PREDECLARED_LIMIT_IN_NS}` as a numeric value chosen from the application's actual frame/request budget before observing the result. The result reports comparisons to those user limits, not a production qualification. No arbitrary hardware threshold is built in. `correctness=passed` establishes checked output only. Compare baseline, runtime-on-base and patched distributions with identical hardware/run ordering, and retain raw runs rather than only averaged percentiles. Physical release execution, HTTP acceptance, distribution policy and battery/network impact remain separate evidence.
 
 Remove benchmark-config.json to restore ordinary lab behavior. Do not delete the runtime journal to manufacture a clean comparison; explicitly identify any fresh-install runs separately.
+
+## Real HTTP delivery timing
+
+Remove `benchmark-config.json` to resume the normal delivery flow. Add
+`"measurePerformance": "true"` to the private `patch-config.json` (native uses
+string values; Flutter uses a boolean). `results.jsonl` then includes
+`deliveryPerformance`: whole check/verify/stage nanoseconds, receipt-flush
+nanoseconds, and each actual artifact fetch's elapsed nanoseconds and received
+byte count. The actor delegates to the existing real transport unchanged and
+records neither URLs, tokens, payloads nor error text. A failed download has
+`completed: false` and no claimed byte count. Empty fetches mean no download.
+
+Download timing includes transport overhead and buffering; it is not pure wire
+time. Use a fresh authorized digest plus backend request logs to substantiate
+a first-download claim. Do not erase monotonic trust journals to fake a cold
+state. Receipt timing alone does not prove server acceptance; retain HTTP and
+backend evidence separately. Keep private delivery configuration out of shared
+evidence. No network-latency threshold is assumed.

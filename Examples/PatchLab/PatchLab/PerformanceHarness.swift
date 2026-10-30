@@ -138,3 +138,35 @@ enum PerformanceHarness {
         }
     }
 }
+
+/// Lab-only instrumentation around the real transport; no endpoints or secrets.
+actor TimedPatchTransport: PatchTransport {
+    struct Fetch: Sendable {
+        let elapsedNs: UInt64
+        let receivedBytes: Int?
+        var record: [String: Any] {
+            var result: [String: Any] = ["elapsedNs": elapsedNs, "completed": receivedBytes != nil]
+            if let receivedBytes { result["receivedBytes"] = receivedBytes }
+            return result
+        }
+    }
+    private let inner: any PatchTransport
+    private var fetches: [Fetch] = []
+    init(_ inner: any PatchTransport) { self.inner = inner }
+    func measurements() -> [Fetch] { fetches }
+    func fetchChannel(etag: String?) async throws -> SignedChannel? {
+        try await inner.fetchChannel(etag: etag)
+    }
+    func postReceipts(_ batch: Data) async throws { try await inner.postReceipts(batch) }
+    func fetchArtifact(digest: String) async throws -> Data {
+        let start = DispatchTime.now().uptimeNanoseconds
+        do {
+            let bytes = try await inner.fetchArtifact(digest: digest)
+            fetches.append(Fetch(elapsedNs: DispatchTime.now().uptimeNanoseconds - start, receivedBytes: bytes.count))
+            return bytes
+        } catch {
+            fetches.append(Fetch(elapsedNs: DispatchTime.now().uptimeNanoseconds - start, receivedBytes: nil))
+            throw error
+        }
+    }
+}

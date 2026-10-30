@@ -173,13 +173,27 @@ private func run() -> Run {
             baseURL: base, deliveryToken: token, applicationId: "dev.bugcapsule.patchlab.ios", platform: "ios",
             distributionProfile: "development", baseBuildId: baseBuildId, installationId: "device-1")
     {
-        let updater = PatchUpdater(patch: patch, transport: transport)
+        let timedTransport = TimedPatchTransport(transport)
+        let updater = PatchUpdater(patch: patch, transport: timedTransport)
+        let measurePerformance = remote["measurePerformance"] == "true"
         let snapshot = Sendable_(record)
         Task.detached {
+            let updateStart = DispatchTime.now().uptimeNanoseconds
             let r = await updater.checkForUpdate()
+            let updateNs = DispatchTime.now().uptimeNanoseconds - updateStart
             var doc = snapshot.value
             var sent = -1
+            let receiptStart = DispatchTime.now().uptimeNanoseconds
             do { sent = try await updater.flushReceipts() } catch { doc["receiptError"] = "\(error)" }
+            let receiptNs = DispatchTime.now().uptimeNanoseconds - receiptStart
+            if measurePerformance {
+                let fetches = await timedTransport.measurements()
+                doc["deliveryPerformance"] = [
+                    "checkVerifyStageNs": updateNs, "flushReceiptsNs": receiptNs,
+                    "artifactFetches": fetches.map { $0.record },
+                    "scope": "whole transport download/buffering; update includes metadata, verification and staging; no cold-cache claim",
+                ]
+            }
             doc["update"] = ["state": "\(r.state)", "artifactDigest": r.artifactDigest as Any? ?? NSNull(), "reason": r.reason as Any? ?? NSNull(), "receiptsSent": sent]
             doc["status"] = (try? patch.status()) ?? NSNull()
             append(doc, to: results)
