@@ -505,6 +505,56 @@ if !decision.allowed {
   `evaluateFeatureKey:subject:` (a `BCEmergencyDecision`) and
   `refreshPoliciesWithCompletion:`.
 
+### Sending users to the App Store (`REQUIRE_UPDATE`)
+
+A `REQUIRE_UPDATE` decision carries the first version without the
+restriction. Configure the App Store update adapter and let the guarded
+feature offer the update:
+
+```swift
+BugCapsule.emergency.initialize(EmergencyConfiguration(
+    trustAnchor: "bcek.v1.…",
+    updateProvider: AppStoreUpdateProvider()))   // bundleId/country default to the app and the device storefront
+
+// Where the feature starts, on the main actor:
+let decision = BugCapsule.emergency.evaluate(featureKey: "checkout.confirm_order")
+if decision.action == .requireUpdate {
+    let update = try? await BugCapsule.emergency.updates.checkAvailability(for: decision)
+    if update?.isAvailable == true {
+        // Your UI first; then the App Store page over your view controller.
+        let state = await BugCapsule.emergency.updates.presentUpdate(from: viewController)  // .openedStore or .failed
+    } else {
+        showUnavailable(decision.publicUserMessage)  // the store does not have the version yet
+    }
+}
+```
+
+- `checkAvailability` asks the public iTunes lookup API
+  (`itunes.apple.com/lookup?bundleId=…&country=…`) for the listed version.
+  An update is available only when that version is at least the required
+  version (and newer than the installed one), compared like policy version
+  ranges. Timeouts, HTTP errors and a missing listing throw an
+  `EmergencyUpdateError` (`timeout`, `http_error`, `not_listed`, …); a
+  failure never counts as available.
+- `presentUpdate(from:)` shows `SKStoreProductViewController` over your view
+  controller, or opens the listing in the App Store app when there is no view
+  controller or the page does not load (`fallbackToStoreURL`). Pass
+  `presentation: .storeURL` to always open the App Store app. Call
+  `markDeclined()` when the user says no in your own prompt.
+- iOS has no in-app install: the SDK never installs or restarts anything,
+  and nothing else in the app is blocked. An installed update shows up as the
+  new app version.
+- What the adapter learns (`available`, `opened_store`, `declined`, …) is
+  reported to BugCapsule as a runtime report: on change, at most once a
+  minute, never in replay. No report is sent without an update adapter.
+- Builds distributed outside the App Store implement `EmergencyUpdateProvider`
+  (`flow: .custom`) themselves.
+- Objective-C: set `BCEmergencyConfiguration.updateProvider` to a
+  `BCAppStoreUpdateProvider`, then use `BCEmergency.sharedInstance.updates`
+  (`checkAvailabilityWithRequiredVersion:completion:`,
+  `presentUpdateWithRequiredVersion:fromViewController:completion:`,
+  `markDeclined`).
+
 **A client guard only improves what users see.** A modified or old app can
 skip it. Your server must enforce the same restriction for anything that
 moves money or data, at the point where the operation commits.
@@ -514,7 +564,8 @@ Platform limits:
 - Policies never contain code, and the SDK never downloads or runs any. A
   bug in native code is fixed only by a new App Store build.
 - iOS has no forced in-app update. `REQUIRE_UPDATE` is a decision your app
-  shows (with `requiredVersion`); sending users to the App Store is up to you.
+  shows (with `requiredVersion`); the App Store adapter above only checks the
+  listed version and opens the store page.
 - While BugCapsule replays a capsule, every feature is allowed and no policy
   is fetched. Guard decisions are not yet recorded into capsules, so a
   replay does not reproduce a feature that was blocked when it was captured.

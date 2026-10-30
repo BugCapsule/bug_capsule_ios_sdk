@@ -14,6 +14,8 @@ struct EmergencyTestHooks: @unchecked Sendable {
     var isReplaying: (@Sendable () -> Bool)?
     /// false: no UIKit lifecycle observers.
     var observeLifecycle = true
+    /// Seconds between runtime reports (§7.6); nil: 60.
+    var runtimeReportInterval: TimeInterval?
 }
 
 /// One initialized emergency client (§7): the verified document, the
@@ -73,6 +75,19 @@ final class EmergencyRuntime: @unchecked Sendable {
     private var transport: EmergencyHTTPTransport?
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var warnedKeys = Set<String>()
+    /// The update adapter; set once in `init`.
+    private(set) var updates: EmergencyUpdateCoordinator?
+    // Runtime reports (§7.6).
+    private let runtimeReportInterval: TimeInterval
+    /// The latest `runtime` object, sent or not.
+    private var runtimeObject: JSONObject?
+    /// The encoded object of the last report: never sent twice in a row.
+    private var lastReportedRuntime: String?
+    /// `systemUptime` of the last report.
+    private var lastRuntimeReportAt: TimeInterval?
+    /// Sends the latest object when the interval ends.
+    private var runtimeTimer: Task<Void, Never>?
+    private var warnedInvalidRuntime = false
     /// Delay of the last scheduled refresh (tests).
     var scheduledDelay: TimeInterval? { lock.locked { _scheduledDelay } }
     /// A refresh timer is waiting (tests).
@@ -91,6 +106,7 @@ final class EmergencyRuntime: @unchecked Sendable {
         autoSchedule = hooks?.autoSchedule ?? true
         observeLifecycle = hooks?.observeLifecycle ?? true
         replaying = hooks?.isReplaying ?? defaultReplaying
+        runtimeReportInterval = hooks?.runtimeReportInterval ?? EmergencyRuntimeReport.interval
         environment = c.environment
         refreshInterval = min(max(c.refreshInterval.isFinite ? c.refreshInterval : 60, Self.minRefreshInterval), 86400)
         appVersion = c.appVersion ?? BugCapsuleSession.current?.config.appVersion ?? Self.bundleVersion()
@@ -160,6 +176,11 @@ final class EmergencyRuntime: @unchecked Sendable {
         installationId = store?.installationId() ?? EmergencyStore.newInstallationId()
         lastError = configurationError
         loadCache()
+        if let provider = c.updateProvider {
+            updates = EmergencyUpdateCoordinator(provider: provider, installedVersion: appVersion) { [weak self] status in
+                self?.setUpdateStatus(status)
+            }
+        }
     }
 
     static func bundleVersion() -> String? {
@@ -204,15 +225,16 @@ final class EmergencyRuntime: @unchecked Sendable {
     }
 
     func dispose() {
-        let (observers, timer, inFlight): ([NSObjectProtocol], Task<Void, Never>?, Task<Void, Never>?) = lock.locked {
+        let (observers, timers, inFlight): ([NSObjectProtocol], [Task<Void, Never>], Task<Void, Never>?) = lock.locked {
             disposed = true
             let o = lifecycleObservers
             lifecycleObservers = []
-            let t = self.timer
+            let t = [self.timer, runtimeTimer].compactMap { $0 }
             self.timer = nil
+            runtimeTimer = nil
             return (o, t, self.inFlight?.task)
         }
-        timer?.cancel()
+        for t in timers { t.cancel() }
         inFlight?.cancel()
         for o in observers { NotificationCenter.default.removeObserver(o) }
     }
@@ -502,6 +524,7 @@ final class EmergencyRuntime: @unchecked Sendable {
     /// `BugCapsule.start` resolved a backend after `initialize`.
     func onSessionStarted() async {
         let needed = lock.locked { explicitBackend == nil && lastFetchAt == nil && !credentialRejected }
+        reportRuntime()
         if needed { await refresh(.sessionStarted) }
     }
 
@@ -544,8 +567,16 @@ final class EmergencyRuntime: @unchecked Sendable {
     ) {
         if replaying() { return }
         let key = "\(revision)|\(status)|\(errorCode ?? "")"
-        let fresh = lock.locked { sentReceipts.insert(key).inserted }
+        let (fresh, runtime) = lock.locked { (sentReceipts.insert(key).inserted, runtimeObject) }
         if !fresh { return }
+        // APPLIED and FAILED may carry the latest runtime object (§7.6).
+        let body = receiptBody(
+            revision: revision, status: status, errorCode: errorCode,
+            runtime: runtime.flatMap { EmergencyRuntimeReport.validate($0) == nil ? $0 : nil })
+        post(body, status: status, revision: revision, anchor: anchor, backend: backend)
+    }
+
+    private func receiptBody(revision: Int, status: String, errorCode: String?, runtime: JSONObject?) -> JSONObject {
         var body: JSONObject = [
             "environment": .string(environment), "platform": .string(EmergencyContract.platform),
             "installationId": .string(installationId), "revision": .int(revision), "status": .string(status),
@@ -553,6 +584,13 @@ final class EmergencyRuntime: @unchecked Sendable {
         ]
         body["appVersion"] = EmergencyHTTPTransport.diagnosticVersion(appVersion).map { .string($0) } ?? .null
         body["errorCode"] = errorCode.map { .string($0) } ?? .null
+        if let runtime { body["runtime"] = .object(runtime) }
+        return body
+    }
+
+    private func post(
+        _ body: JSONObject, status: String, revision: Int, anchor: EmergencyTrustAnchor, backend: BugCapsuleBackendConfig
+    ) {
         let transport = transport(for: backend)
         let app = anchor.applicationId
         Task {
@@ -560,5 +598,75 @@ final class EmergencyRuntime: @unchecked Sendable {
                 BugCapsuleLog.warn("emergency: receipt \(status) for revision \(revision) not delivered (\(failure.message))")
             }
         }
+    }
+
+    // MARK: runtime reports (§7.6)
+
+    /// The update adapter learned something: report it when it differs from
+    /// the last object.
+    func setUpdateStatus(_ status: EmergencyUpdateStatus) {
+        let object = EmergencyRuntimeReport.object(update: status)
+        let changed = lock.locked { () -> Bool in
+            if runtimeObject == object { return false }
+            runtimeObject = object
+            return true
+        }
+        if changed { reportRuntime() }
+    }
+
+    /// The latest runtime object (tests).
+    var latestRuntimeObject: JSONObject? { lock.locked { runtimeObject } }
+
+    /// Sends the latest runtime object as a `RUNTIME` receipt: never the
+    /// object of the last report again, at most one report per interval.
+    /// Within the interval, the latest object waits for its end. Exempt from
+    /// the once-per-(revision, status, errorCode) rule of receipts. Never in
+    /// replay.
+    private func reportRuntime() {
+        if replaying() { return }
+        guard let anchor else { return }
+        let backend = resolveBackend()
+        enum Step { case none, invalid(String), send(JSONObject, revision: Int) }
+        let step: Step = lock.locked {
+            guard !disposed, runtimeTimer == nil, let object = runtimeObject else { return .none }
+            let key = JSON.encode(.object(object))
+            if key == lastReportedRuntime { return .none }
+            if let problem = EmergencyRuntimeReport.validate(object) {
+                if warnedInvalidRuntime { return .none }
+                warnedInvalidRuntime = true
+                return .invalid(problem)
+            }
+            // Without a connection the object stays unsent; `BugCapsule.start`
+            // reports it once a backend is known.
+            guard backend != nil else { return .none }
+            let t = ProcessInfo.processInfo.systemUptime
+            if let last = lastRuntimeReportAt, t - last < runtimeReportInterval {
+                let delay = runtimeReportInterval - (t - last)
+                runtimeTimer = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: UInt64(max(delay, 0) * 1_000_000_000))
+                    if Task.isCancelled { return }
+                    self?.runtimeIntervalEnded()
+                }
+                return .none
+            }
+            lastReportedRuntime = key
+            lastRuntimeReportAt = t
+            return .send(object, revision: highestRevision ?? 0)
+        }
+        switch step {
+        case .none:
+            return
+        case .invalid(let problem):
+            BugCapsuleLog.warn("emergency: runtime report not sent: \(problem)")
+        case .send(let object, let revision):
+            guard let backend else { return }
+            let body = receiptBody(revision: revision, status: EmergencyRuntimeReport.status, errorCode: nil, runtime: object)
+            post(body, status: EmergencyRuntimeReport.status, revision: revision, anchor: anchor, backend: backend)
+        }
+    }
+
+    private func runtimeIntervalEnded() {
+        lock.locked { runtimeTimer = nil }
+        reportRuntime()
     }
 }
