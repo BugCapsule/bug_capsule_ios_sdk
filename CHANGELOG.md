@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Capsules with screenshots are no longer rejected: `capturedAtT` now moves
+  with the event time when a capsule is rebased to its anchor. With a first
+  frame over 1 s the backend answered `invalid_capsule` and dropped the whole
+  capsule.
+- Release-health sessions report `patchBaseBuildId` and `patchSetDigest`, so
+  patch rollouts can be judged from real sessions. A session recovered on the
+  next launch reports the patch it ran, not the current one.
 - Emergency recovery: App Store update adapter and runtime reports
   (emergency-client-v1 §7.6, §7.7). `EmergencyConfiguration.updateProvider`
   takes an `EmergencyUpdateProvider`; `AppStoreUpdateProvider` checks the

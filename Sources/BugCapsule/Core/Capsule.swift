@@ -47,8 +47,11 @@ public struct BugCapsuleEvent: Sendable, Equatable {
         data = json["data"]?.objectValue ?? JSONObject()
     }
 
+    /// `t` and a screenshot's `capturedAtT` are on the same clock, so both move.
     public func shifted(_ offset: Int) -> BugCapsuleEvent {
-        BugCapsuleEvent(seq: seq, t: t - offset, type: type, data: data)
+        var moved = data
+        if let capturedAt = data["capturedAtT"]?.intValue { moved["capturedAtT"] = .int(capturedAt - offset) }
+        return BugCapsuleEvent(seq: seq, t: t - offset, type: type, data: moved)
     }
 
     public var json: JSONValue {
