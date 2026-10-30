@@ -5,8 +5,13 @@ public struct SignedChannel: Sendable {
     public let document: Data
     public let signature: Data
     public let etag: String?
+    /// The current keyring, applied first so a rotated signer verifies.
+    public let keyringDocument: Data?
+    public let keyringSignature: Data?
 
-    public init(document: Data, signature: Data, etag: String? = nil) {
+    public init(document: Data, signature: Data, etag: String? = nil, keyringDocument: Data? = nil, keyringSignature: Data? = nil) {
+        self.keyringDocument = keyringDocument
+        self.keyringSignature = keyringSignature
         self.document = document
         self.signature = signature
         self.etag = etag
@@ -54,12 +59,15 @@ public actor PatchUpdater {
     public func checkForUpdate() async -> PatchUpdateResult {
         do {
             guard let channel = try await transport.fetchChannel(etag: etag) else { return PatchUpdateResult(.upToDate) }
+            if let k = channel.keyringDocument, let s = channel.keyringSignature { try patch.applyKeyring(k, signature: s) }
             let result = try await act(patch.applyChannel(channel.document, signature: channel.signature))
             // Only after the download and staging worked: a 304 must not end retries.
             etag = channel.etag
             return result
         } catch let e as PatchError {
             return PatchUpdateResult(.failed, reason: e.code)
+        } catch let e as PatchHTTPError {
+            return PatchUpdateResult(.failed, reason: e.reason)
         } catch {
             return PatchUpdateResult(.failed, reason: "transport: \(error)")
         }

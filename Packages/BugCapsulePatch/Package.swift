@@ -10,9 +10,16 @@ let package = Package(
     products: [
         .library(name: "BugCapsulePatch", targets: ["BugCapsulePatch"]),
     ],
+    dependencies: [
+        .package(name: "BugCapsule", path: "../.."),
+    ],
     targets: [
         .binaryTarget(name: "BcpatchRuntime", path: "Binaries/BcpatchRuntime.xcframework"),
-        .target(name: "BugCapsulePatch", dependencies: ["BcpatchRuntime"], swiftSettings: [.swiftLanguageMode(.v6)]),
+        .target(
+            name: "BugCapsulePatch",
+            dependencies: ["BcpatchRuntime", .product(name: "BugCapsule", package: "BugCapsule")],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         .testTarget(
             name: "BugCapsulePatchTests",
             dependencies: ["BugCapsulePatch", "BcpatchRuntime"],

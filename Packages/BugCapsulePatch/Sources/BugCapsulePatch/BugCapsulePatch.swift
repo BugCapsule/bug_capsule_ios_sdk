@@ -106,6 +106,20 @@ public struct PatchConfig: Sendable {
     }
 }
 
+/// Replay pinning: the archived files an attempt loads, read-only and offline.
+/// A nil `bundlePath` is the bare base.
+public struct PatchReplay: Sendable {
+    public var bundlePath: String?
+    public var keyringPath: String?
+    public var keyringSignaturePath: String?
+
+    public init(bundlePath: String? = nil, keyringPath: String? = nil, keyringSignaturePath: String? = nil) {
+        self.bundlePath = bundlePath
+        self.keyringPath = keyringPath
+        self.keyringSignaturePath = keyringSignaturePath
+    }
+}
+
 public struct PatchError: Error, Sendable {
     public let code: String
     public let message: String
@@ -134,10 +148,19 @@ private enum Op {
 /// life of the process: staging never changes running behavior. This replaces
 /// `PatchModule`s only; compiled Swift and Objective-C are never replaced.
 public final class BugCapsulePatch: @unchecked Sendable {
-    private let engine: OpaquePointer?
+    private var engine: OpaquePointer?
 
     /// Why this build runs fallbacks only; nil when the runtime is up.
-    public let unavailableReason: String?
+    public private(set) var unavailableReason: String?
+
+    /// Moves this handle onto `pinned`, so everything already holding it runs
+    /// the replay pin and nothing keeps the live store.
+    func adoptReplay(_ pinned: BugCapsulePatch) {
+        if let engine { bcp_close(engine) }
+        engine = pinned.engine
+        unavailableReason = pinned.unavailableReason
+        pinned.engine = nil
+    }
 
     public var available: Bool { engine != nil }
 
@@ -152,11 +175,11 @@ public final class BugCapsulePatch: @unchecked Sendable {
 
     /// Opens the store and selects this process's generation. Never throws:
     /// without a usable runtime every `call` uses the fallback.
-    public static func open(config: PatchConfig, modules: [PatchContract], surfaces: [PatchSurfaceContract] = []) -> BugCapsulePatch {
+    public static func open(config: PatchConfig, modules: [PatchContract], surfaces: [PatchSurfaceContract] = [], replay: PatchReplay? = nil) -> BugCapsulePatch {
         guard bcp_abi_version() == 1 else {
             return BugCapsulePatch(engine: nil, unavailableReason: "abi_mismatch")
         }
-        let doc: [String: Any] = [
+        var doc: [String: Any] = [
             "storeDir": config.storeDir,
             "projectId": config.projectId,
             "applicationId": config.applicationId,
@@ -171,6 +194,14 @@ public final class BugCapsulePatch: @unchecked Sendable {
                 ["id": $0.id, "components": $0.components, "actions": $0.actions, "requiredActions": $0.requiredActions, "assets": $0.assets] as [String: Any]
             },
         ]
+        if let replay {
+            var r: [String: Any] = ["bundlePath": replay.bundlePath as Any? ?? NSNull()]
+            if let k = replay.keyringPath, let s = replay.keyringSignaturePath {
+                r["keyringPath"] = k
+                r["keyringSignaturePath"] = s
+            }
+            doc["replay"] = r
+        }
         guard let json = try? JSONSerialization.data(withJSONObject: doc) else {
             return BugCapsulePatch(engine: nil, unavailableReason: "bad_config")
         }

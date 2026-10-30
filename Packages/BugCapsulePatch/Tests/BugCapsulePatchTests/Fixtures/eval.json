@@ -6,8 +6,8 @@
   "output": "int",
   "value": "40",
   "expected": 42,
-  "steps": 4,
-  "memory": 48
+  "steps": 5,
+  "memory": 112
  },
  {
   "name": "int overflow traps",
@@ -40,8 +40,8 @@
   "output": "int",
   "value": "-7",
   "expected": -3,
-  "steps": 4,
-  "memory": 48
+  "steps": 5,
+  "memory": 112
  },
  {
   "name": "int remainder keeps dividend sign",
@@ -50,8 +50,8 @@
   "output": "int",
   "value": "-7",
   "expected": -1,
-  "steps": 4,
-  "memory": 48
+  "steps": 5,
+  "memory": 112
  },
  {
   "name": "int divide by zero traps",
@@ -68,8 +68,8 @@
   "output": "dec(2)",
   "value": "\"1.05\"",
   "expected": "1.15",
-  "steps": 4,
-  "memory": 48
+  "steps": 7,
+  "memory": 240
  },
  {
   "name": "dec input pads scale",
@@ -78,8 +78,8 @@
   "output": "dec(2)",
   "value": "\"1.5\"",
   "expected": "1.50",
-  "steps": 2,
-  "memory": 48
+  "steps": 5,
+  "memory": 240
  },
  {
   "name": "dec input with excess scale refused",
@@ -96,8 +96,8 @@
   "output": "dec(3)",
   "value": "\"1.25\"",
   "expected": "0.625",
-  "steps": 4,
-  "memory": 48
+  "steps": 7,
+  "memory": 240
  },
  {
   "name": "dec negative text",
@@ -106,8 +106,8 @@
   "output": "dec(2)",
   "value": "\"0.50\"",
   "expected": "-0.50",
-  "steps": 4,
-  "memory": 48
+  "steps": 7,
+  "memory": 240
  },
  {
   "name": "round half even down",
@@ -116,8 +116,8 @@
   "output": "dec(2)",
   "value": "\"1.125\"",
   "expected": "1.12",
-  "steps": 3,
-  "memory": 48
+  "steps": 6,
+  "memory": 240
  },
  {
   "name": "round half even up",
@@ -126,8 +126,8 @@
   "output": "dec(2)",
   "value": "\"1.135\"",
   "expected": "1.14",
-  "steps": 3,
-  "memory": 48
+  "steps": 6,
+  "memory": 240
  },
  {
   "name": "round half up negative",
@@ -136,8 +136,8 @@
   "output": "dec(2)",
   "value": "\"-1.125\"",
   "expected": "-1.13",
-  "steps": 3,
-  "memory": 48
+  "steps": 6,
+  "memory": 240
  },
  {
   "name": "round down",
@@ -146,8 +146,8 @@
   "output": "dec(2)",
   "value": "\"-1.129\"",
   "expected": "-1.12",
-  "steps": 3,
-  "memory": 48
+  "steps": 6,
+  "memory": 240
  },
  {
   "name": "round up",
@@ -156,8 +156,8 @@
   "output": "dec(2)",
   "value": "\"1.121\"",
   "expected": "1.13",
-  "steps": 3,
-  "memory": 48
+  "steps": 6,
+  "memory": 240
  },
  {
   "name": "round floor",
@@ -166,8 +166,8 @@
   "output": "dec(2)",
   "value": "\"-1.121\"",
   "expected": "-1.13",
-  "steps": 3,
-  "memory": 48
+  "steps": 6,
+  "memory": 240
  },
  {
   "name": "round ceiling",
@@ -176,8 +176,8 @@
   "output": "dec(2)",
   "value": "\"1.121\"",
   "expected": "1.13",
-  "steps": 3,
-  "memory": 48
+  "steps": 6,
+  "memory": 240
  },
  {
   "name": "dec division rounding",
@@ -186,8 +186,8 @@
   "output": "dec(4)",
   "value": "\"10.00\"",
   "expected": "3.3333",
-  "steps": 5,
-  "memory": 48
+  "steps": 8,
+  "memory": 240
  },
  {
   "name": "dec division by zero",
@@ -204,8 +204,8 @@
   "output": "int",
   "value": "\"2.50\"",
   "expected": 2,
-  "steps": 3,
-  "memory": 48
+  "steps": 4,
+  "memory": 112
  },
  {
   "name": "dec overflow",
@@ -222,8 +222,8 @@
   "output": "bool",
   "value": "\"0.1\"",
   "expected": true,
-  "steps": 5,
-  "memory": 48
+  "steps": 6,
+  "memory": 112
  },
  {
   "name": "null is an opt",
@@ -232,8 +232,8 @@
   "output": "int",
   "value": "null",
   "expected": 7,
-  "steps": 8,
-  "memory": 80
+  "steps": 9,
+  "memory": 144
  },
  {
   "name": "opt present",
@@ -242,8 +242,8 @@
   "output": "int",
   "value": "3",
   "expected": 3,
-  "steps": 8,
-  "memory": 80
+  "steps": 9,
+  "memory": 144
  },
  {
   "name": "narrowing",
@@ -252,8 +252,8 @@
   "output": "int",
   "value": "1",
   "expected": 2,
-  "steps": 9,
-  "memory": 48
+  "steps": 10,
+  "memory": 112
  },
  {
   "name": "unwrap null traps",
@@ -270,8 +270,8 @@
   "output": "int",
   "value": "\"aé𝄞\"",
   "expected": 3,
-  "steps": 3,
-  "memory": 55
+  "steps": 4,
+  "memory": 119
  },
  {
   "name": "substring by scalars",
@@ -280,8 +280,8 @@
   "output": "str",
   "value": "\"aé𝄞z\"",
   "expected": "é𝄞",
-  "steps": 5,
-  "memory": 78
+  "steps": 7,
+  "memory": 190
  },
  {
   "name": "substring clamps",
@@ -290,8 +290,8 @@
   "output": "str",
   "value": "\"abc\"",
   "expected": "c",
-  "steps": 5,
-  "memory": 68
+  "steps": 7,
+  "memory": 140
  },
  {
   "name": "substring negative traps",
@@ -308,8 +308,8 @@
   "output": "bool",
   "value": "\"é\"",
   "expected": false,
-  "steps": 4,
-  "memory": 51
+  "steps": 7,
+  "memory": 115
  },
  {
   "name": "case is ascii only",
@@ -318,8 +318,8 @@
   "output": "str",
   "value": "\"aé\"",
   "expected": "Aé",
-  "steps": 3,
-  "memory": 70
+  "steps": 5,
+  "memory": 158
  },
  {
   "name": "trim is ascii only",
@@ -328,8 +328,8 @@
   "output": "str",
   "value": "\" a  \"",
   "expected": "a ",
-  "steps": 3,
-  "memory": 72
+  "steps": 5,
+  "memory": 160
  },
  {
   "name": "string order is code point order",
@@ -338,8 +338,8 @@
   "output": "bool",
   "value": "\"￿\"",
   "expected": true,
-  "steps": 4,
-  "memory": 51
+  "steps": 5,
+  "memory": 115
  },
  {
   "name": "list index out of bounds",
@@ -364,8 +364,8 @@
   "output": "int",
   "value": "[1,2,3]",
   "expected": 10,
-  "steps": 44,
-  "memory": 624
+  "steps": 45,
+  "memory": 688
  },
  {
   "name": "lambda captures",
@@ -377,8 +377,8 @@
    3,
    4
   ],
-  "steps": 17,
-  "memory": 320
+  "steps": 20,
+  "memory": 576
  },
  {
   "name": "input list ceiling",
@@ -435,8 +435,8 @@
   "output": "bool",
   "value": "{\"b\":\"z\",\"a\":1}",
   "expected": true,
-  "steps": 7,
-  "memory": 129
+  "steps": 11,
+  "memory": 193
  },
  {
   "name": "unknown input field refused",

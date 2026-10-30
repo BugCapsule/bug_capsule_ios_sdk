@@ -54,6 +54,8 @@ public final class BugCapsuleSession: @unchecked Sendable {
 
     private var recorder: FlightRecorder?
     private var _engine: ReplayEngine?
+    private var _patch: PatchIdentity?
+    private var _patchRead = false
     private var _redactor = Redactor()
     private var recording = false
     private var captureBodies = true
@@ -517,7 +519,8 @@ public final class BugCapsuleSession: @unchecked Sendable {
                 ],
                 "integrations": .array(integrations.map { .string($0.name) }),
                 "labels": .object(labels),
-                "dependencies": .array(dependencies.map(\.json)),
+                "dependencies": .array((dependencies + (patchIdentity?.patchSetDigest == nil ? [] : [patchIdentity!.dependency])).map(\.json)),
+                "patch": patchIdentity?.json ?? .null,
                 "runtime": RuntimeInfo(name: "ios", version: platform.osVersion, language: "swift", frameworks: frameworks).json,
                 "capabilities": .object(capabilities),
             ]
@@ -762,8 +765,10 @@ public final class BugCapsuleSession: @unchecked Sendable {
         for integration in integrations {
             integration.describeEligibility(eligibility, window: window)
         }
+        let patch = patchIdentity
         let dependencies = interactions.manifestDependencies(
             events: windowEvents, checkpoint: window.checkpoint, eligibility: eligibility)
+            + (patch?.patchSetDigest == nil ? [] : [patch!.dependency])
         let capabilities = capabilityList
         let events = windowEvents.map { $0.shifted(anchor) }
         var merged = config.labels
@@ -783,7 +788,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
                 droppedEvents: window.droppedEvents, checkpointKind: window.checkpoint.kind, labels: labelPairs,
                 redactionKeys: redactor.extraKeys, redactionHeaders: redactor.extraHeaders,
                 runtime: RuntimeInfo(name: "ios", version: platform.osVersion, language: "swift", frameworks: frameworks),
-                capabilities: capabilities, monitoring: link, dependencies: dependencies),
+                capabilities: capabilities, monitoring: link, dependencies: dependencies, patch: patch),
             checkpoint: window.checkpoint.shifted(anchor),
             events: events)
         let problem = validateCapsuleDocument(CapsuleCodec.toJSON(capsule))
@@ -1164,6 +1169,40 @@ public final class BugCapsuleSession: @unchecked Sendable {
         return setUpReplay(capsule: capsule, settings: settings, channel: nil, onReport: onReport)
     }
 
+    /// What this process runs. Read once: a process pins one generation.
+    var patchIdentity: PatchIdentity? {
+        lock.locked {
+            if !_patchRead {
+                _patchRead = true
+                _patch = config.patchBinding?.identity
+            }
+            return _patch
+        }
+    }
+
+    /// Loads the exact patch of a replay attempt. Returns why it can't run, or nil.
+    private func pinPatch(capsule: Capsule, settings: ReplaySettings, channel: ReplayChannel?) -> String? {
+        let binding = config.patchBinding
+        var running: PatchIdentity?
+        if let binding {
+            do {
+                let bundle = settings.patchArtifact ? try channel?.fetchPatchFileSync(ReplayProtocol.patchPath) : nil
+                let keyring = settings.patchKeyring ? try channel?.fetchPatchFileSync(ReplayProtocol.keyringPath) : nil
+                let signature = settings.patchKeyring ? try channel?.fetchPatchFileSync(ReplayProtocol.keyringSignaturePath) : nil
+                running = try binding.pinForReplay(bundle: bundle, keyring: keyring, keyringSignature: signature)
+            } catch {
+                lock.locked { _patchRead = true }
+                return "patch.unavailable: \(error)"
+            }
+        }
+        lock.locked {
+            _patchRead = true
+            _patch = running
+        }
+        channel?.patch = running
+        return patchPreflight(manifest: capsule.manifest, settings: settings, hasBinding: binding != nil, running: running)
+    }
+
     @MainActor
     private func setUpReplay(
         capsule: Capsule, settings: ReplaySettings, channel: ReplayChannel?,
@@ -1196,7 +1235,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
         for integration in integrations { integration.setUp(self) }
         // capsule-v2 §2 preflight: every required dependency's adapter is
         // installed, supports its schema and can restore what was open.
-        if let problem = interactions.preflight(capsule) {
+        if let problem = pinPatch(capsule: capsule, settings: settings, channel: channel) ?? interactions.preflight(capsule) {
             replay.finishIncompatible(problem)
             lock.locked { _engine = nil }
             interactions.replay = nil
