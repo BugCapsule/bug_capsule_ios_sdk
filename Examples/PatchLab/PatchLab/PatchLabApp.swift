@@ -127,7 +127,7 @@ private func run() -> Run {
         surfaces: [summarySurface]
     )
     }
-    if fm.fileExists(atPath: exchange.appendingPathComponent("benchmark-config.json").path) {
+    if PerformanceHarness.enabled(exchange: exchange) {
         try? fm.removeItem(at: exchange.appendingPathComponent("benchmark-result.json"))
         do {
             let b = try PerformanceHarness.run(exchange: exchange, module: coupon, input: sample, open: openPatch) {

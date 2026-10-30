@@ -35,3 +35,9 @@ a first-download claim. Do not erase monotonic trust journals to fake a cold
 state. Receipt timing alone does not prove server acceptance; retain HTTP and
 backend evidence separately. Keep private delivery configuration out of shared
 evidence. No network-latency threshold is assumed.
+
+To resume HTTP without deleting files, overwrite `benchmark-config.json` with
+`{"enabled":false}`. Only a JSON boolean false disables an existing request;
+omitting enabled preserves benchmarking. Malformed requests still enter the
+validator and fail rather than silently start delivery. Disabled requests also
+prevent appearance callbacks from modifying old benchmark results.

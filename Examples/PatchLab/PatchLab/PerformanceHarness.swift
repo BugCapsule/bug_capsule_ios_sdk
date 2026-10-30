@@ -1,10 +1,21 @@
 import BugCapsulePatch
 import Darwin
 import Foundation
+import CoreFoundation
 import UIKit
 
 /// Opt-in lab measurements; never runs in an app that lacks the request file.
 enum PerformanceHarness {
+    // Malformed requests still enter the benchmark validator and fail closed.
+    static func enabled(exchange: URL) -> Bool {
+        let file = exchange.appendingPathComponent("benchmark-config.json")
+        guard FileManager.default.fileExists(atPath: file.path) else { return false }
+        guard let data = try? Data(contentsOf: file),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let value = object["enabled"] as? NSNumber,
+              CFGetTypeID(value) == CFBooleanGetTypeID() else { return true }
+        return value.boolValue
+    }
     static let entryNs = DispatchTime.now().uptimeNanoseconds
     static func now() -> UInt64 { DispatchTime.now().uptimeNanoseconds }
     static func machine() -> String {
@@ -34,7 +45,7 @@ enum PerformanceHarness {
         } catch { print("benchmark result write failed: \(error)") }
     }
     static func firstFrame(exchange: URL) {
-        guard FileManager.default.fileExists(atPath: exchange.appendingPathComponent("benchmark-config.json").path) else { return }
+        guard enabled(exchange: exchange) else { return }
         let file = exchange.appendingPathComponent("benchmark-result.json")
         guard let data = try? Data(contentsOf: file),
               var record = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
