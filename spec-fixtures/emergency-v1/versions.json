@@ -1,0 +1,247 @@
+{
+  "description": "compare: result of compareVersions(a, b); invalid: strings that are not versions; targeted: versionTargeted(version, ranges)",
+  "compare": [
+    {
+      "a": "1.0.0",
+      "b": "1.0.0",
+      "result": 0
+    },
+    {
+      "a": "1.0",
+      "b": "1.0.0",
+      "result": 0
+    },
+    {
+      "a": "1",
+      "b": "1.0.0.0",
+      "result": 0
+    },
+    {
+      "a": "v2.4.1",
+      "b": "2.4.1",
+      "result": 0
+    },
+    {
+      "a": "2.4.1+77",
+      "b": "2.4.1+78",
+      "result": 0
+    },
+    {
+      "a": "2.4.1",
+      "b": "2.4.2",
+      "result": -1
+    },
+    {
+      "a": "2.10.0",
+      "b": "2.9.9",
+      "result": 1
+    },
+    {
+      "a": "10.0.0",
+      "b": "9.99.99",
+      "result": 1
+    },
+    {
+      "a": "1.2.3.4",
+      "b": "1.2.3",
+      "result": 1
+    },
+    {
+      "a": "1.2.3.0",
+      "b": "1.2.3",
+      "result": 0
+    },
+    {
+      "a": "1.0.0-beta.1",
+      "b": "1.0.0",
+      "result": -1
+    },
+    {
+      "a": "1.0.0-alpha",
+      "b": "1.0.0-alpha.1",
+      "result": -1
+    },
+    {
+      "a": "1.0.0-alpha.1",
+      "b": "1.0.0-alpha.beta",
+      "result": -1
+    },
+    {
+      "a": "1.0.0-alpha.beta",
+      "b": "1.0.0-beta",
+      "result": -1
+    },
+    {
+      "a": "1.0.0-beta.2",
+      "b": "1.0.0-beta.11",
+      "result": -1
+    },
+    {
+      "a": "1.0.0-rc.1",
+      "b": "1.0.0",
+      "result": -1
+    },
+    {
+      "a": "1.0.0-1",
+      "b": "1.0.0-a",
+      "result": -1
+    },
+    {
+      "a": " 3.1.4 ",
+      "b": "3.1.4",
+      "result": 0
+    },
+    {
+      "a": "0.0.1",
+      "b": "0.0.0",
+      "result": 1
+    }
+  ],
+  "invalid": [
+    {
+      "version": "",
+      "result": null
+    },
+    {
+      "version": "abc",
+      "result": null
+    },
+    {
+      "version": "1.x",
+      "result": null
+    },
+    {
+      "version": "1..2",
+      "result": null
+    },
+    {
+      "version": "-1.0",
+      "result": null
+    },
+    {
+      "version": "1.0.0-",
+      "result": null
+    },
+    {
+      "version": "1.0.0+",
+      "result": null
+    },
+    {
+      "version": "1.2.3.4.5.6.7",
+      "result": null
+    },
+    {
+      "version": "01.2.3.4567890123",
+      "result": null
+    },
+    {
+      "version": "1.0.0 beta",
+      "result": null
+    }
+  ],
+  "targeted": [
+    {
+      "version": "2.4.1",
+      "ranges": [],
+      "expected": true
+    },
+    {
+      "version": "2.4.1",
+      "ranges": [
+        {
+          "min": "2.4.0",
+          "max": "2.4.2"
+        }
+      ],
+      "expected": true
+    },
+    {
+      "version": "2.4.3",
+      "ranges": [
+        {
+          "min": "2.4.0",
+          "max": "2.4.2"
+        }
+      ],
+      "expected": false
+    },
+    {
+      "version": "2.4.2",
+      "ranges": [
+        {
+          "min": "2.4.0",
+          "max": "2.4.2"
+        }
+      ],
+      "expected": true
+    },
+    {
+      "version": "2.4.2+99",
+      "ranges": [
+        {
+          "min": null,
+          "max": "2.4.2"
+        }
+      ],
+      "expected": true
+    },
+    {
+      "version": "2.4.2-beta.1",
+      "ranges": [
+        {
+          "min": "2.4.2",
+          "max": null
+        }
+      ],
+      "expected": false
+    },
+    {
+      "version": "3.0.0",
+      "ranges": [
+        {
+          "min": null,
+          "max": "1.0.0"
+        },
+        {
+          "min": "3.0.0",
+          "max": null
+        }
+      ],
+      "expected": true
+    },
+    {
+      "version": "2.0.0",
+      "ranges": [
+        {
+          "min": null,
+          "max": "1.0.0"
+        },
+        {
+          "min": "3.0.0",
+          "max": null
+        }
+      ],
+      "expected": false
+    },
+    {
+      "version": "nightly-build",
+      "ranges": [
+        {
+          "min": "1.0.0",
+          "max": "1.0.0"
+        }
+      ],
+      "expected": true
+    },
+    {
+      "version": null,
+      "ranges": [
+        {
+          "min": "1.0.0",
+          "max": null
+        }
+      ],
+      "expected": true
+    }
+  ]
+}

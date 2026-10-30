@@ -1,0 +1,110 @@
+{
+  "description": "bucket = uint32 big-endian of the first 4 bytes of SHA-256(UTF-8 \"<seed>:<subject>\") mod 10000",
+  "cases": [
+    {
+      "seed": "3f2c1a9e-0b8d-4e57-9a61-2d4c7b8e9f10",
+      "subject": "install-0001",
+      "bucket": 6954
+    },
+    {
+      "seed": "3f2c1a9e-0b8d-4e57-9a61-2d4c7b8e9f10",
+      "subject": "install-0002",
+      "bucket": 2427
+    },
+    {
+      "seed": "3f2c1a9e-0b8d-4e57-9a61-2d4c7b8e9f10",
+      "subject": "user:42",
+      "bucket": 7991
+    },
+    {
+      "seed": "3f2c1a9e-0b8d-4e57-9a61-2d4c7b8e9f10",
+      "subject": "b7c1d0f4e5a6",
+      "bucket": 6511
+    },
+    {
+      "seed": "3f2c1a9e-0b8d-4e57-9a61-2d4c7b8e9f10",
+      "subject": "",
+      "bucket": 2075
+    },
+    {
+      "seed": "3f2c1a9e-0b8d-4e57-9a61-2d4c7b8e9f10",
+      "subject": "ascii only",
+      "bucket": 3380
+    },
+    {
+      "seed": "3f2c1a9e-0b8d-4e57-9a61-2d4c7b8e9f10",
+      "subject": "用户-17",
+      "bucket": 3069
+    },
+    {
+      "seed": "checkout.confirm_order",
+      "subject": "install-0001",
+      "bucket": 8008
+    },
+    {
+      "seed": "checkout.confirm_order",
+      "subject": "install-0002",
+      "bucket": 9188
+    },
+    {
+      "seed": "checkout.confirm_order",
+      "subject": "user:42",
+      "bucket": 3659
+    },
+    {
+      "seed": "checkout.confirm_order",
+      "subject": "b7c1d0f4e5a6",
+      "bucket": 1610
+    },
+    {
+      "seed": "checkout.confirm_order",
+      "subject": "",
+      "bucket": 2434
+    },
+    {
+      "seed": "checkout.confirm_order",
+      "subject": "ascii only",
+      "bucket": 8505
+    },
+    {
+      "seed": "checkout.confirm_order",
+      "subject": "用户-17",
+      "bucket": 8183
+    },
+    {
+      "seed": "é-ünïcødé",
+      "subject": "install-0001",
+      "bucket": 6878
+    },
+    {
+      "seed": "é-ünïcødé",
+      "subject": "install-0002",
+      "bucket": 7104
+    },
+    {
+      "seed": "é-ünïcødé",
+      "subject": "user:42",
+      "bucket": 6607
+    },
+    {
+      "seed": "é-ünïcødé",
+      "subject": "b7c1d0f4e5a6",
+      "bucket": 2366
+    },
+    {
+      "seed": "é-ünïcødé",
+      "subject": "",
+      "bucket": 5856
+    },
+    {
+      "seed": "é-ünïcødé",
+      "subject": "ascii only",
+      "bucket": 8036
+    },
+    {
+      "seed": "é-ünïcødé",
+      "subject": "用户-17",
+      "bucket": 3349
+    }
+  ]
+}

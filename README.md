@@ -25,6 +25,7 @@ bugcapsule regress ─► runs in CI from now on
 - [Make bugs replayable](#make-bugs-replayable)
 - [Replay, verify and keep a regression test](#replay-verify-and-keep-a-regression-test)
 - [Monitoring](#monitoring)
+- [Emergency recovery (feature guards)](#emergency-recovery-feature-guards)
 - [Privacy](#privacy)
 - [Going to production](#going-to-production)
 - [Limitations](#limitations)
@@ -455,6 +456,71 @@ CI environment):
 
 In Xcode it skips Debug builds and never fails the build
 (`BUGCAPSULE_ALLOW_FAILURE=0` makes upload errors fatal).
+
+## Emergency recovery (feature guards)
+
+Turn a broken feature off, or put it in read-only or maintenance mode, for
+the apps already on your users' phones, without shipping a release. You
+create the policy in the dashboard; the app fetches a signed list of policies,
+checks the signature against a trust anchor compiled into the app, caches it
+and evaluates it on the device.
+
+```swift
+// In application(_:didFinishLaunchingWithOptions:), before or after BugCapsule.start.
+BugCapsule.emergency.initialize(EmergencyConfiguration(
+    trustAnchor: "bcek.v1.…",                    // from the dashboard's emergency settings
+    environment: "production",
+    failureModes: ["checkout.*": .failClosed]))  // every other key fails open
+
+// Where the feature starts:
+let decision = BugCapsule.emergency.evaluate(featureKey: "checkout.confirm_order")
+if !decision.allowed {
+    showUnavailable(decision.publicUserMessage)  // decision.action says BLOCK, READ_ONLY, …
+    return
+}
+```
+
+- `initialize` never waits for the network: it loads and re-verifies the
+  cached policies and fetches in the background (every `refreshInterval`,
+  60 s by default, and when the app returns to the foreground; no timers run
+  in the background). `evaluate` and `isFeatureAllowed` are synchronous,
+  in memory and thread-safe.
+- The connection is `token` or `backend` in the configuration, else the one
+  given to `BugCapsule.start`. Guards work with capture disabled, and the
+  remote capture kill switch does not turn them off.
+- Policies are signed with ECDSA P-256. A document that fails verification
+  is never used; the reason is in `BugCapsule.emergency.status.lastError`.
+- With no usable policy document (never fetched, expired more than 5 minutes
+  ago, invalid anchor), each feature uses its failure mode: `.failOpen`
+  (default), `.failClosed` (use for actions that move money) or
+  `.useLastValidPolicy`. Before `initialize` every feature is allowed.
+- Partial rollouts bucket by a random installation id. Pass
+  `subject:` to bucket by your own stable pseudonymous user id instead; never
+  an email or anything else that identifies a person.
+- `BugCapsule.emergency.changes` (an `AsyncStream`) and `observe(_:)` (main
+  thread) report new policies; `status` reports the document state, revision,
+  last fetch and last error.
+- Objective-C: `BCEmergency.sharedInstance` with
+  `initializeWithConfiguration:`, `isFeatureAllowed:subject:`,
+  `evaluateFeatureKey:subject:` (a `BCEmergencyDecision`) and
+  `refreshPoliciesWithCompletion:`.
+
+**A client guard only improves what users see.** A modified or old app can
+skip it. Your server must enforce the same restriction for anything that
+moves money or data, at the point where the operation commits.
+
+Platform limits:
+
+- Policies never contain code, and the SDK never downloads or runs any. A
+  bug in native code is fixed only by a new App Store build.
+- iOS has no forced in-app update. `REQUIRE_UPDATE` is a decision your app
+  shows (with `requiredVersion`); sending users to the App Store is up to you.
+- While BugCapsule replays a capsule, every feature is allowed and no policy
+  is fetched. Guard decisions are not yet recorded into capsules, so a
+  replay does not reproduce a feature that was blocked when it was captured.
+
+Wire format, verification and evaluation rules:
+[docs/emergency-client-v1.md](docs/emergency-client-v1.md).
 
 ## Privacy
 

@@ -16,6 +16,8 @@ final class FixtureTests: XCTestCase {
             let e = fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey])!
             for case let url as URL in e where (try url.resourceValues(forKeys: [.isRegularFileKey])).isRegularFile == true {
                 let rel = String(url.path.dropFirst(root.path.count))
+                // emergency-v1 comes from the backend's generator, not from the Flutter SDK.
+                if rel.hasPrefix("/emergency-v1/") { continue }
                 out[rel] = try Data(contentsOf: url)
             }
             return out
