@@ -9,7 +9,11 @@ final class AppSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sen
     private var _challenges: [URLAuthenticationChallenge] = []
     private var _redirects: [URLRequest] = []
     let followRedirects: Bool
-    init(followRedirects: Bool = true) { self.followRedirects = followRedirects }
+    let answerDelay: TimeInterval
+    init(followRedirects: Bool = true, answerDelay: TimeInterval = 0) {
+        self.followRedirects = followRedirects
+        self.answerDelay = answerDelay
+    }
 
     var challenges: [URLAuthenticationChallenge] { lock.locked { _challenges } }
     var redirects: [URLRequest] { lock.locked { _redirects } }
@@ -28,7 +32,9 @@ final class AppSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sen
         newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void
     ) {
         lock.locked { _redirects.append(request) }
-        completionHandler(followRedirects ? request : nil)
+        let answer = followRedirects ? request : nil
+        guard answerDelay > 0 else { return completionHandler(answer) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + answerDelay) { completionHandler(answer) }
     }
 }
 
@@ -194,6 +200,18 @@ final class DownstreamSessionTests: XCTestCase {
         XCTAssertEqual(httpEvents[0].data["bodyEncoding"], "json")
         XCTAssertEqual(httpEvents[1].data["responseBody"], ["final": true])
         XCTAssertEqual(server.requests.map(\.path), ["/redirect", "/final"])
+    }
+
+    func testA3xxNeverOvertakesTheAppsAnswerToFollowTheRedirect() async throws {
+        for answerDelay in [0, 0.0002, 0.001, 0.005, 0.05] {
+            let session = URLSession(
+                configuration: instrumented(), delegate: AppSessionDelegate(answerDelay: answerDelay), delegateQueue: nil)
+            for _ in 0..<20 {
+                let (data, response) = try await session.data(from: url("/redirect"))
+                XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200, "the app answered after \(answerDelay)s")
+                XCTAssertEqual(try? JSON.parse(data), ["final": true])
+            }
+        }
     }
 
     func testAppCanRefuseARedirect() async throws {

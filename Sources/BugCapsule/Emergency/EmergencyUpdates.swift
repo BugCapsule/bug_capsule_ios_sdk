@@ -173,21 +173,25 @@ public struct EmergencyUpdateStatus: Sendable, Equatable {
 
 /// Runs the configured provider for one emergency client and keeps the last
 /// availability and status; each status change goes to [onChange] (the
-/// runtime report).
+/// runtime report). During a replay it does nothing: a replayed
+/// `REQUIRE_UPDATE` reaches no provider, store or network (§7.8), and no
+/// update is available.
 final class EmergencyUpdateCoordinator: @unchecked Sendable {
     let provider: any EmergencyUpdateProvider
     private let installedVersion: String?
+    private let replaying: @Sendable () -> Bool
     private let onChange: @Sendable (EmergencyUpdateStatus) -> Void
     private let lock = NSLock()
     private var _availability: EmergencyUpdateAvailability?
     private var _status: EmergencyUpdateStatus?
 
     init(
-        provider: any EmergencyUpdateProvider, installedVersion: String?,
+        provider: any EmergencyUpdateProvider, installedVersion: String?, replaying: @escaping @Sendable () -> Bool,
         onChange: @escaping @Sendable (EmergencyUpdateStatus) -> Void
     ) {
         self.provider = provider
         self.installedVersion = installedVersion
+        self.replaying = replaying
         self.onChange = onChange
         if !EmergencyRuntimeReport.isProvider(provider.providerId) {
             BugCapsuleLog.warn(
@@ -199,6 +203,7 @@ final class EmergencyUpdateCoordinator: @unchecked Sendable {
     var status: EmergencyUpdateStatus? { lock.locked { _status } }
 
     func checkAvailability(requiredVersion: String?) async throws(EmergencyUpdateError) -> EmergencyUpdateAvailability {
+        if replaying() { return EmergencyUpdateAvailability(isAvailable: false, availableVersion: nil, requiredVersion: requiredVersion) }
         do {
             let a = try await provider.checkAvailability(requiredVersion: requiredVersion, installedVersion: installedVersion)
             lock.locked { _availability = a }
@@ -215,6 +220,7 @@ final class EmergencyUpdateCoordinator: @unchecked Sendable {
     /// for [requiredVersion]; presents nothing when no update is available.
     @MainActor
     func presentUpdate(requiredVersion: String?, presentation: EmergencyUpdatePresentation) async -> EmergencyUpdateState {
+        if replaying() { return .notAvailable }
         var a = availability
         if a == nil || a?.requiredVersion != requiredVersion {
             do {
@@ -231,6 +237,7 @@ final class EmergencyUpdateCoordinator: @unchecked Sendable {
 
     /// The user said no to the update the app offered.
     func markDeclined() {
+        if replaying() { return }
         let a = availability
         record(.declined, availableVersion: a?.availableVersion, requiredVersion: a?.requiredVersion)
     }

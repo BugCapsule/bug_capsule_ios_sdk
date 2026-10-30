@@ -177,8 +177,8 @@ final class EmergencyRuntime: @unchecked Sendable {
         lastError = configurationError
         loadCache()
         if let provider = c.updateProvider {
-            updates = EmergencyUpdateCoordinator(provider: provider, installedVersion: appVersion) { [weak self] status in
-                self?.setUpdateStatus(status)
+            updates = EmergencyUpdateCoordinator(provider: provider, installedVersion: appVersion, replaying: replaying) {
+                [weak self] status in self?.setUpdateStatus(status)
             }
         }
     }
@@ -243,7 +243,7 @@ final class EmergencyRuntime: @unchecked Sendable {
 
     func evaluate(featureKey: String, subject: String?) -> (EmergencyDecision, EmergencyPolicy?) {
         if replaying() {
-            return (EmergencyDecision(featureKey: featureKey, allowed: true, action: .allow, source: .replay), nil)
+            return (BugCapsuleEmergency.shared.replayDecision(featureKey: featureKey, subject: subject), nil)
         }
         if !EmergencyContract.isFeatureKey(featureKey) {
             let first = lock.locked { () -> Bool in

@@ -9,6 +9,30 @@
 - Release-health sessions report `patchBaseBuildId` and `patchSetDigest`, so
   patch rollouts can be judged from real sessions. A session recovered on the
   next launch reports the patch it ran, not the current one.
+- URLSession interception: a followed redirect could end the request on the
+  3xx response when that response reached the loading system before the app's
+  answer. The 3xx now waits for the answer, in capture and in replay. A
+  refused redirect delivers its 3xx after 1 second, as a refusal can't be
+  detected sooner; followed redirects don't wait.
+- Native adapters: no `native.event` is recorded after its subscription was
+  cancelled or ended. A cancel during an event could put the event after
+  `native.cancel` in the capsule.
+- Emergency recovery: guard decisions are recorded into capsules and replayed
+  (emergency-client-v1 §7.8). A decision that changes writes an
+  `emergency.decision` event through the usual capture path; subjects are
+  written only as a hash, and at most 256 feature and subject pairs are
+  tracked. Decisions made before recording starts are written when it starts,
+  and every periodic checkpoint is followed by one event per tracked decision.
+  `manifest.capabilities["emergency.decisions"]` is `supported`, or `partial`
+  past the limit or when the capture rules drop a decision or change its `key`,
+  `subject` or `action` (such a decision isn't kept). During replay `evaluate` returns
+  the recorded decision with source `.replay` and no policy object, instead of
+  always `ALLOW`; a feature the capsule has no decision for is still allowed.
+  Idle compression ignores these events. `BugCapsule.emergency.updates` does
+  nothing during a replay: no provider call, no App Store lookup, no status;
+  `checkAvailability` reports no update available and `presentUpdate` returns
+  `.notAvailable`. Passes the shared vectors in
+  `spec-fixtures/emergency-v1/replay-decisions.json`.
 - Emergency recovery: App Store update adapter and runtime reports
   (emergency-client-v1 §7.6, §7.7). `EmergencyConfiguration.updateProvider`
   takes an `EmergencyUpdateProvider`; `AppStoreUpdateProvider` checks the

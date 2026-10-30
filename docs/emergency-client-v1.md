@@ -203,8 +203,8 @@ A usable document gives `source: policy`. The whole app never fails closed
 by default.
 
 While the SDK replays a Capsule, the emergency module makes no network calls
-and sends no receipts. Every evaluation returns ALLOW with `source: replay`.
-Recording guard decisions into Capsules is planned and not yet supported.
+and sends no receipts. Every evaluation returns what the app saw during
+capture, with `source: replay` (§7.8).
 
 ### 7.5 Status and observation
 
@@ -319,6 +319,75 @@ at least `required_version`, compared by the version rules in §6.
   * It reports `opened_store`. Whether the user then updates shows up later, as
     the new `appVersion` in that installation's next receipt (§7.6).
 
+### 7.8 Decisions in Capsules
+
+A guard changes what the app does, so a replay has to see the decisions the
+user saw. The SDK records them while it records a Capsule. Evaluations before
+recording starts are kept and written when it does.
+
+**Recording.** The event is written when the decision for a feature key and
+subject changes, not on every evaluation, because apps may evaluate during
+every build or layout:
+
+```json
+{"seq": 41, "t": 1820, "type": "emergency.decision", "data": {
+  "key": "checkout.confirm_order", "subject": "748982dd71b97baf",
+  "action": "BLOCK", "source": "policy", "reasonCode": "INCIDENT",
+  "policyId": "…", "policyRevision": 3, "documentRevision": 42,
+  "message": "Payments are paused.", "requiredVersion": null,
+  "fallback": null, "fallbackAvailable": false}}
+```
+
+| Field | Notes |
+|---|---|
+| `key` | The feature key as evaluated. |
+| `subject` | Only when the app passed a subject: the first 16 hex characters of SHA-256 of the UTF-8 string `bugcapsule.emergency.subject:<subject>`. The subject itself is never written. |
+| `action`, `source`, `reasonCode` | As in the decision (§6, §7.4). `allowed` is not stored: only ALLOW is allowed. |
+| `policyId`, `policyRevision`, `documentRevision`, `message`, `requiredVersion`, `fallback`, `fallbackAvailable` | As in the decision; `message` is its `public_user_message`. Fields that are null may be omitted. |
+
+Events go through the SDK's capture rules like any other: redaction, the
+`beforeRecord` hook, sampling and the kill switch.
+
+Two entries in the same state are the same decision. Any field that differs
+is a change, including `documentRevision`.
+
+A periodic checkpoint writes one event for each tracked decision, right after
+the checkpoint, so a window that starts there still knows the decisions made
+before it. These events aren't app activity, so idle compression ignores them.
+The SDK tracks at most 256 key and subject pairs. Decisions for further pairs
+are not recorded.
+
+**Capability.** `manifest.capabilities["emergency.decisions"]` says whether a
+replay can trust the Capsule's decisions:
+
+| Value | Meaning |
+|---|---|
+| `supported` | Every decision is in the Capsule. A Capsule with no events made no evaluations. |
+| `partial` | Some decisions are missing: the 256 pair limit was reached, or the capture rules dropped one or changed its `key`, `subject` or `action` (for example `key` in the app's redaction keys), including rules that arrive after it was recorded. |
+| absent | The SDK didn't record decisions. |
+
+**Replay.** Replay looks up each evaluation at the replay clock `t`, in the
+same milliseconds as the events:
+
+1. Take the entries with the same `key` and the same `subject` (absent matches
+   absent). If there are none, take every entry with that `key`.
+2. Return the latest entry with `entry.t <= t` (on equal `t`, the later event).
+   If there is none, return the earliest entry: an app may evaluate a little
+   sooner during replay.
+3. With no entry for the key, return ALLOW. The user never reached that guard
+   in the recording, and a fix may add a new key.
+
+The result has the recorded fields with `source: replay` and no policy object.
+The recorded `source` is not exposed. An entry with an unknown `action` or
+without a `key` is ignored. Capsules without the capability replay as before:
+every evaluation returns ALLOW with `source: replay`.
+
+A replayed `REQUIRE_UPDATE` must not reach anything: recovery adapters (§7.7)
+make no provider or network calls during replay.
+
+Replay needs an SDK that supports this section. A candidate built with an
+older SDK allows every feature.
+
 ## 8. Server enforcement
 
 A client guard improves the user's experience and nothing more. A server that
@@ -336,5 +405,6 @@ implements this contract for Node.js and documents its consistency options.
 | `rollout.json` | buckets |
 | `evaluation.json` | full decisions; `expected` uses the snake_case decision fields of §6, without `source` |
 | `envelopes.json` | verification outcomes with `anchor`; `valid_second_key` is `ok` with `anchor_rotated` |
+| `replay-decisions.json` | §7.8: subject tags, and the decision replay returns at a time |
 
 Clients load the files from their copy of the fixtures and assert every case.

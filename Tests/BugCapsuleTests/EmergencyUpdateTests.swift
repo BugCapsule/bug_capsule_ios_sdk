@@ -9,6 +9,7 @@ final class FakeUpdateProvider: EmergencyUpdateProvider, @unchecked Sendable {
     let flow = EmergencyUpdateFlow.custom
     let storeVersion: String
     let result: EmergencyUpdateState
+    let checked = Counter()
     let presented = Counter()
 
     init(providerId: String = "fake_store", storeVersion: String = "2.5.0", result: EmergencyUpdateState = .inProgress) {
@@ -20,7 +21,8 @@ final class FakeUpdateProvider: EmergencyUpdateProvider, @unchecked Sendable {
     func checkAvailability(requiredVersion: String?, installedVersion: String?) async throws(EmergencyUpdateError)
         -> EmergencyUpdateAvailability
     {
-        try AppStoreUpdateProvider.availability(
+        checked.increment()
+        return try AppStoreUpdateProvider.availability(
             listing: .init(version: storeVersion, trackId: 1, trackViewURL: nil), requiredVersion: requiredVersion,
             installedVersion: installedVersion)
     }

@@ -20,6 +20,7 @@ public enum EventTypes {
     public static let text = "text"
     public static let route = "route"
     public static let http = "http"
+    public static let emergencyDecision = "emergency.decision"
     public static let log = "log"
     public static let failure = "failure"
     public static let state = "state"

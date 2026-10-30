@@ -123,6 +123,45 @@ final class NativeAdapterTests: XCTestCase {
         XCTAssertEqual(report.divergences.map(\.type), ["native.unrecorded", "native.unrecorded"])
     }
 
+    final class Feed: BugCapsuleNativeAdapter, @unchecked Sendable {
+        let descriptor = BugCapsuleAdapterDescriptor(
+            dependencyId: "feed", adapter: "test.feed", adapterVersion: "1", operations: ["feed.watch"])
+        var bridge: BugCapsuleNativeBridge = .detached(BugCapsuleAdapterDescriptor(dependencyId: "x", adapter: "x", adapterVersion: "1"))
+        let replaying: Bool
+        init(replaying: Bool) { self.replaying = replaying }
+        func attach(_ bridge: BugCapsuleNativeBridge) { self.bridge = bridge }
+        /// Three values back to back: the cancel, sent on the first, lands
+        /// while a later one is being encoded.
+        func watchAndCancelOnTheFirstEvent() throws {
+            let first = DispatchSemaphore(value: 0)
+            let subscription = try bridge.subscribe("feed.watch", onEvent: { _ in first.signal() }) { sink in
+                let value = String(repeating: "x", count: 64 * 1024)
+                DispatchQueue.global().async {
+                    for _ in 0..<3 { sink.event(value) }
+                }
+                return {}
+            }
+            first.wait()
+            subscription.cancel()
+        }
+    }
+
+    func testNoEventIsRecordedAfterTheCancel() async throws {
+        // Capture only: values this large are not replayable.
+        let report = try await BugCapsuleAdapterConformance.run(makeAdapter: { replaying in Feed(replaying: replaying) }) { adapter, _ in
+            let feed = adapter as! Feed
+            guard !feed.replaying else { return }
+            for _ in 0..<20 { try feed.watchAndCancelOnTheFirstEvent() }
+        }
+        var cancelled = Set<String>()
+        for event in report.capsule.events {
+            guard let sub = event.data["sub"]?.stringValue else { continue }
+            if event.type == "native.cancel" { cancelled.insert(sub) }
+            XCTAssertFalse(event.type == "native.event" && cancelled.contains(sub), "\(sub): event after its cancel")
+        }
+        XCTAssertEqual(cancelled.count, 20)
+    }
+
     func testNoRecordingOrCaptureOnlyAdapterFailsInsteadOfGoingLive() async throws {
         // Nothing recorded for the adapter at all.
         let none = try await BugCapsuleAdapterConformance.run(makeAdapter: { Store(replaying: $0) }) { adapter, log in
