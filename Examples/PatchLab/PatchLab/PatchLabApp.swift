@@ -80,7 +80,7 @@ struct Run {
     let source: String
     let state: String
     let micros: Int
-    let patch: BugCapsulePatch
+    let patch: BugCapsulePatch?
 }
 
 /// Carries the record into the update task; nothing else touches it.
@@ -102,6 +102,7 @@ private func append(_ record: [String: Any], to url: URL) {
 }
 
 private func run() -> Run {
+    _ = PerformanceHarness.entryNs
     let fm = FileManager.default
     let exchange = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
     let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -110,7 +111,8 @@ private func run() -> Run {
     // this file the lab uses its file inbox. The base build id stays the binary's.
     let remote = (try? Data(contentsOf: exchange.appendingPathComponent("patch-config.json")))
         .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] }
-    let patch = BugCapsulePatch.open(
+    func openPatch() -> BugCapsulePatch {
+        BugCapsulePatch.open(
         config: PatchConfig(
             storeDir: support.appendingPathComponent("bcpatch").path,
             projectId: remote?["projectId"] ?? "demo",
@@ -124,6 +126,22 @@ private func run() -> Run {
         modules: [coupon.contract],
         surfaces: [summarySurface]
     )
+    }
+    if fm.fileExists(atPath: exchange.appendingPathComponent("benchmark-config.json").path) {
+        try? fm.removeItem(at: exchange.appendingPathComponent("benchmark-result.json"))
+        do {
+            let b = try PerformanceHarness.run(exchange: exchange, module: coupon, input: sample, open: openPatch) {
+                ["subtotal": $0.subtotal, "discount": $0.discount, "total": $0.total, "label": $0.label]
+            }
+            return Run(priced: b.value, source: b.source, state: "BENCHMARK", micros: Int(b.firstNs / 1000), patch: b.patch)
+        } catch {
+            if !fm.fileExists(atPath: exchange.appendingPathComponent("benchmark-result.json").path) {
+                PerformanceHarness.write(["correctness": "failed", "error": "\(error)"], exchange: exchange)
+            }
+            return Run(priced: bundledCoupon(sample), source: "benchmark_failed", state: "FAILED", micros: 0, patch: nil)
+        }
+    }
+    let patch = openPatch()
     let start = DispatchTime.now().uptimeNanoseconds
     let result = patch.call(coupon, sample)
     let micros = Int((DispatchTime.now().uptimeNanoseconds - start) / 1000)
@@ -188,14 +206,22 @@ struct PatchLabApp: App {
                 Text("Total: \(r.priced.total)")
                 Text("Eval: \(r.micros) µs")
                 Spacer().frame(height: 16)
-                PatchSurfaceView(patch: r.patch, id: summarySurface.id, actions: ["lab.pay": {}]) {
+                if let patch = r.patch {
+                PatchSurfaceView(patch: patch, id: summarySurface.id, actions: ["lab.pay": {}]) {
                     VStack(alignment: .leading) {
                         Text("Bundled summary")
                         Button("Pay") {}
                     }
                 }
+                }
             }
             .padding()
+            .onAppear {
+                DispatchQueue.main.async {
+                    let exchange = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                    PerformanceHarness.firstFrame(exchange: exchange)
+                }
+            }
         }
     }
 }
