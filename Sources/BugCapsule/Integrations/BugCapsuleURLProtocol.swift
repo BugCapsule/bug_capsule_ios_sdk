@@ -44,9 +44,9 @@ final class DownstreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sen
         h.downstreamChallenge(challenge, completionHandler)
     }
 
-    /// The app's session decides: the downstream task doesn't follow, the
-    /// protocol reports the redirect and still delivers the 3xx response,
-    /// which the loading system uses only if the app refuses the redirect.
+    /// The app's session decides: the downstream task doesn't follow and the
+    /// protocol reports the redirect, then holds the 3xx response for the
+    /// case that the app refuses (`holdForRedirectAnswer`).
     func urlSession(
         _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
         newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void
@@ -143,6 +143,9 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
     private var recorded = false
     private var finishedDownstream = false
     private var waitTimer: DispatchSourceTimer?
+    /// What waits for the app's answer to a redirect (nil: nothing does).
+    private var held: [() -> Void]?
+    private var redirectTimer: DispatchSourceTimer?
     private var contentType: String?
     private var endWork: (@Sendable () -> Void)?
 
@@ -160,6 +163,50 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     /// URLProtocol client callbacks must happen on the thread that called `startLoading`.
+    /// How long a 3xx waits for the app's session to take the redirect.
+    /// Only a refused redirect waits this long: a followed one stops this
+    /// protocol first.
+    static let redirectAnswerWait: TimeInterval = 1
+
+    /// Keeps what follows a reported redirect from the client until the app
+    /// answered. Delivered earlier, a 3xx can overtake the answer and end the
+    /// request even though the app follows. A followed redirect is seen as
+    /// `stopLoading`; a refused one is not seen at all, so the 3xx goes out
+    /// after `redirectAnswerWait`.
+    private func holdForRedirectAnswer() {
+        let timer = DispatchSource.makeTimerSource(queue: .global())
+        timer.schedule(deadline: .now() + Self.redirectAnswerWait)
+        timer.setEventHandler { [weak self] in self?.releaseHeld() }
+        lock.locked {
+            held = []
+            redirectTimer = timer
+        }
+        timer.resume()
+    }
+
+    /// In order, also against a `toClient` running at the same time.
+    private func releaseHeld() {
+        while let block = lock.locked({ () -> (() -> Void)? in
+            guard held?.isEmpty == false else {
+                held = nil
+                return nil
+            }
+            return held?.removeFirst()
+        }) {
+            onClient(block)
+        }
+    }
+
+    /// `onClient`, after the app's answer to a pending redirect.
+    private func toClient(_ block: @escaping () -> Void) {
+        let isHeld = lock.locked { () -> Bool in
+            guard held != nil else { return false }
+            held?.append(block)
+            return true
+        }
+        if !isHeld { onClient(block) }
+    }
+
     private func onClient(_ block: @escaping () -> Void) {
         let (thread, modes) = lock.locked { (clientThread, runLoopModes) }
         guard let thread else {
@@ -245,17 +292,21 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     public override func stopLoading() {
-        let (task, wasCapturing, timer, end, challenge) = lock.locked {
-            () -> (URLSessionDataTask?, Bool, DispatchSourceTimer?, (@Sendable () -> Void)?, DownstreamChallengeSender?) in
+        let (task, wasCapturing, timer, redirectTimer, end, challenge) = lock.locked {
+            () -> (URLSessionDataTask?, Bool, DispatchSourceTimer?, DispatchSourceTimer?, (@Sendable () -> Void)?, DownstreamChallengeSender?) in
             stopped = true
+            held = nil
+            let r = self.redirectTimer
+            self.redirectTimer = nil
             let e = endWork
             endWork = nil
             let c = pendingChallenge
             pendingChallenge = nil
-            return (innerTask, capturing && !finishedDownstream, waitTimer, e, c)
+            return (innerTask, capturing && !finishedDownstream, waitTimer, r, e, c)
         }
         challenge?.complete(.cancelAuthenticationChallenge, nil)
         timer?.cancel()
+        redirectTimer?.cancel()
         end?()
         if lock.locked({ !finishedDownstream }) {
             finishMonitoring(error: URLError(.cancelled))
@@ -455,7 +506,7 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
                 timer.resume()
             }
         }
-        onClient { [weak self] in
+        toClient { [weak self] in
             guard let self, !self.isStopped else { return }
             self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         }
@@ -490,7 +541,8 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
     /// Reports a downstream redirect to the app's session, which applies its
     /// delegate and redirect policy: it re-issues the new request (through
     /// this protocol again, recorded as its own exchange) or keeps the 3xx
-    /// response, which the downstream task still delivers.
+    /// response, which the downstream task still delivers and which waits
+    /// for that answer.
     func downstreamRedirect(_ response: HTTPURLResponse, to newRequest: URLRequest) {
         if isStopped { return }
         let (traced, capturing) = lock.locked { () -> ([(name: String, original: String?)], Bool) in
@@ -514,6 +566,7 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
             finishRecording(["responseBody": .null, "bodyEncoding": "json"])
         }
         finishMonitoring(error: nil)
+        holdForRedirectAnswer()
         onClient { [weak self] in
             guard let self, !self.isStopped else { return }
             self.client?.urlProtocol(self, wasRedirectedTo: next, redirectResponse: response)
@@ -533,7 +586,7 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
             return true
         }
         if overflow { finishRecording(["bodyEncoding": "truncated"]) }
-        onClient { [weak self] in
+        toClient { [weak self] in
             guard let self, !self.isStopped else { return }
             self.client?.urlProtocol(self, didLoad: data)
         }
@@ -572,7 +625,7 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
             return e
         }
         end?()
-        onClient { [weak self] in
+        toClient { [weak self] in
             guard let self, !self.isStopped else { return }
             if let error {
                 self.client?.urlProtocol(self, didFailWithError: error)
@@ -655,17 +708,22 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
         let body = BugCapsuleURLSession.encodeBody(fixture.responseBody, encoding: fixture.bodyEncoding)
         let url = request.url ?? URL(string: "http://localhost/")!
         let response = HTTPURLResponse(url: url, statusCode: fixture.status, httpVersion: "HTTP/1.1", headerFields: headers)!
-        let redirect = redirectRequest(for: response)
-        onClient { [weak self] in
+        // As captured: the app's session decides, and its new request is
+        // served from its own fixture.
+        if let redirect = redirectRequest(for: response) {
+            holdForRedirectAnswer()
+            onClient { [weak self] in
+                guard let self, !self.isStopped else { return }
+                self.client?.urlProtocol(self, wasRedirectedTo: redirect, redirectResponse: response)
+            }
+        }
+        toClient { [weak self] in
             guard let self, !self.isStopped else { return }
-            // As captured: the app's session decides, and its new request is
-            // served from its own fixture.
-            if let redirect { self.client?.urlProtocol(self, wasRedirectedTo: redirect, redirectResponse: response) }
             self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             if !body.isEmpty { self.client?.urlProtocol(self, didLoad: body) }
             self.client?.urlProtocolDidFinishLoading(self)
-            replay.activity()
         }
+        onClient { replay.activity() }
     }
 
     /// The request a recorded redirect leads to, built as URLSession does:
