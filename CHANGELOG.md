@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- URLSession interception: a followed redirect could end the request on the
+  3xx response when that response reached the loading system before the app's
+  answer. The 3xx now waits for the answer, in capture and in replay. A
+  refused redirect delivers its 3xx after 1 second, as a refusal can't be
+  detected sooner; followed redirects don't wait.
+- Native adapters: no `native.event` is recorded after its subscription was
+  cancelled or ended. A cancel during an event could put the event after
+  `native.cancel` in the capsule.
 - Emergency recovery: guard decisions are recorded into capsules and replayed
   (emergency-client-v1 §7.8). A decision that changes writes an
   `emergency.decision` event through the usual capture path; subjects are
