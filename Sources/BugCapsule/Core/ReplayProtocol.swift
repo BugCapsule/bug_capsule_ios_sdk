@@ -10,6 +10,9 @@ public enum ReplayProtocol {
     public static let capsulePath = "/capsule"
     public static let settingsPath = "/settings"
     public static let resultPath = "/result"
+    public static let patchPath = "/patch-artifact"
+    public static let keyringPath = "/patch-keyring"
+    public static let keyringSignaturePath = "/patch-keyring-signature"
     public static let stdoutPrefix = "BUGCAPSULE_RESULT::"
     /// Accessibility identifier of the element carrying the report for the UI test.
     public static let resultAccessibilityId = "bugcapsule.replay.result"
@@ -28,6 +31,11 @@ public struct ReplaySettings: Sendable, Equatable {
     public var idleCompression: Bool
     public var attemptId: String?
     public var runtime: String?
+    /// The attempt runs the exact artifact at `ReplayProtocol.patchPath`.
+    public var patchArtifact = false
+    /// The artifact needs its archived keyring: a delegated key signed it.
+    public var patchKeyring = false
+    public var expectedPatchSetDigest: String?
 
     public init(
         strategy: ReplayStrategy = .auto, settleTimeoutMs: Int = 8000, attempt: Int = 1, kind: String = "replay",
@@ -44,6 +52,9 @@ public struct ReplaySettings: Sendable, Equatable {
     }
 
     public init(json j: JSONObject) {
+        patchArtifact = j["patchArtifact"]?.boolValue ?? false
+        patchKeyring = j["patchKeyring"]?.boolValue ?? false
+        expectedPatchSetDigest = j["expectedPatchSetDigest"]?.stringValue
         strategy = ReplayStrategy(rawValue: j["strategy"]?.stringValue ?? "auto") ?? .auto
         settleTimeoutMs = j["settleTimeoutMs"]?.intValue ?? 8000
         attempt = j["attempt"]?.intValue ?? 1
@@ -61,6 +72,9 @@ public struct ReplaySettings: Sendable, Equatable {
         ]
         if let attemptId { o["attemptId"] = .string(attemptId) }
         if let runtime { o["runtime"] = .string(runtime) }
+        if patchArtifact { o["patchArtifact"] = .bool(true) }
+        if patchKeyring { o["patchKeyring"] = .bool(true) }
+        if let expectedPatchSetDigest { o["expectedPatchSetDigest"] = .string(expectedPatchSetDigest) }
         return .object(o)
     }
 }
@@ -116,6 +130,8 @@ public struct ReplayReport: Sendable, Equatable {
     /// Machine-readable reasons of the outcome: `failure.different`,
     /// `failure.different_frame` (crash-capsules §4).
     public var reasonCodes: [String]
+    /// What this attempt actually ran; nil when the app has no patch runtime.
+    public var patch: PatchIdentity?
 
     public init(
         outcome: ReplayOutcome, attempt: Int, durationMs: Int, strategy: ReplayStrategy,
@@ -165,6 +181,7 @@ public struct ReplayReport: Sendable, Equatable {
         attemptId = j["attemptId"]?.stringValue
         runtime = j["runtime"]?.stringValue
         reasonCodes = (j["reasonCodes"]?.arrayValue ?? []).compactMap(\.stringValue)
+        patch = j["patch"]?.objectValue.flatMap(PatchIdentity.init(json:))
     }
 
     public var json: JSONValue {

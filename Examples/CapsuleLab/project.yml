@@ -1,0 +1,61 @@
+name: CapsuleLab
+options:
+  deploymentTarget:
+    iOS: "15.0"
+packages:
+  BugCapsule:
+    path: ../..
+  BugCapsulePatch:
+    path: ../../Packages/BugCapsulePatch
+targets:
+  CapsuleLab:
+    type: application
+    platform: iOS
+    sources: [CapsuleLab]
+    info:
+      path: CapsuleLab/Info.plist
+      properties:
+        CFBundleDisplayName: Capsule Lab
+        UILaunchScreen: {}
+        # Example app only: reaches the CLI's local replay server.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    dependencies:
+      - package: BugCapsule
+        product: BugCapsule
+      - package: BugCapsulePatch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.bugcapsule.capsulelab.ios
+        PRODUCT_NAME: CapsuleLab
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        CODE_SIGNING_ALLOWED: NO
+  CapsuleLabUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [CapsuleLabUITests]
+    dependencies:
+      - target: CapsuleLab
+      - package: BugCapsule
+        product: BugCapsuleXCTest
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.bugcapsule.capsulelab.uitests
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+        SWIFT_VERSION: "6.0"
+        TEST_TARGET_NAME: CapsuleLab
+schemes:
+  CapsuleLab:
+    build:
+      targets:
+        CapsuleLab: all
+        CapsuleLabUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - name: CapsuleLabUITests
+          parallelizable: false

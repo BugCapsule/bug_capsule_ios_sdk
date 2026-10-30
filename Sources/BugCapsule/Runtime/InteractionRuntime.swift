@@ -343,7 +343,8 @@ final class InteractionRuntime: @unchecked Sendable {
     /// Preflight (capsule-v2 §2): nil when every required dependency of
     /// [capsule] can be replayed, otherwise the `incompatible` message.
     func preflight(_ capsule: Capsule) -> String? {
-        for dep in capsule.manifest.dependencies where dep.required {
+        // The patch runtime is checked by patchPreflight, not by an adapter.
+        for dep in capsule.manifest.dependencies where dep.required && dep.kind != patchRuntimeDependencyKind {
             guard let installed = installedAdapter(dep.adapter) else {
                 return "dependency.unsupported: \(dep.id) needs adapter \(dep.adapter) \(dep.adapterVersion) "
                     + "(schema \(dep.schema)), which this app does not install"

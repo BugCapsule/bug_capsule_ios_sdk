@@ -48,8 +48,11 @@ public struct BugCapsuleEvent: Sendable, Equatable {
         data = json["data"]?.objectValue ?? JSONObject()
     }
 
+    /// `t` and a screenshot's `capturedAtT` are on the same clock, so both move.
     public func shifted(_ offset: Int) -> BugCapsuleEvent {
-        BugCapsuleEvent(seq: seq, t: t - offset, type: type, data: data)
+        var moved = data
+        if let capturedAt = data["capturedAtT"]?.intValue { moved["capturedAtT"] = .int(capturedAt - offset) }
+        return BugCapsuleEvent(seq: seq, t: t - offset, type: type, data: moved)
     }
 
     public var json: JSONValue {
@@ -347,6 +350,8 @@ public struct CapsuleManifest: Sendable, Equatable {
     /// is written as spec v2; v1 capsules have none (a v1 document's field
     /// is ignored).
     public var dependencies: [CapsuleDependency]
+    /// What ran when this was captured; nil when no patch runtime is set up.
+    public var patch: PatchIdentity?
     /// `stats.journalGapMs` of a crash capsule: crash time minus the last
     /// journaled event's time (crash-capsules §2).
     public var journalGapMs: Int?
@@ -358,8 +363,9 @@ public struct CapsuleManifest: Sendable, Equatable {
         droppedEvents: Int, checkpointKind: CheckpointKind, labels: [(String, String)] = [],
         redactionKeys: [String] = [], redactionHeaders: [String] = [], runtime: RuntimeInfo? = nil,
         capabilities: [(String, String)] = [], monitoring: CapsuleMonitoringLink? = nil,
-        dependencies: [CapsuleDependency] = [], journalGapMs: Int? = nil
+        dependencies: [CapsuleDependency] = [], journalGapMs: Int? = nil, patch: PatchIdentity? = nil
     ) {
+        self.patch = patch
         self.capsuleId = capsuleId
         self.createdAt = createdAt
         self.mode = mode
@@ -425,6 +431,7 @@ public struct CapsuleManifest: Sendable, Equatable {
             specVersion >= 2
             ? (j["dependencies"]?.arrayValue ?? []).compactMap { $0.objectValue.map(CapsuleDependency.init(json:)) } : []
         journalGapMs = stats["journalGapMs"]?.intValue
+        patch = j["patch"]?.objectValue.flatMap(PatchIdentity.init(json:))
     }
 
     /// Written as spec v2: with interaction dependencies, or a crash
@@ -475,6 +482,7 @@ public struct CapsuleManifest: Sendable, Equatable {
         }
         if let monitoring { o["monitoring"] = monitoring.json }
         if isV2 { o["dependencies"] = .array(dependencies.map(\.json)) }
+        if let patch { o["patch"] = patch.json }
         return .object(o)
     }
 

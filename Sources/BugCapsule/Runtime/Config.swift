@@ -56,6 +56,8 @@ public struct BugCapsuleConfig: @unchecked Sendable {
     public var gitDirty: Bool?
     /// Bump when serialized state (registered state objects) changes incompatibly.
     public var stateSchemaVersion: Int
+    /// Records the running patch in capsules and pins it during replay.
+    public var patchBinding: (any PatchBinding)?
     public var checkpointInterval: TimeInterval
     /// Events older than this are evicted.
     public var window: TimeInterval

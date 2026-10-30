@@ -92,6 +92,71 @@ final class CrashCapsuleTests: XCTestCase {
 
     let link = CapsuleMonitoringLink(eventId: "0f0e0d0c0b0a49088706050403020100", release: "com.shop.app@1.4.0+52", environment: "qa")
 
+    func recoverPatchHeader(_ h: JSONObject) throws -> Capsule? {
+        let j = journal(UUID().uuidString, header: h)
+        j.flushSynchronously()
+        let contents = try XCTUnwrap(CrashJournalContents.load(j.directory))
+        let window = try XCTUnwrap(contents.window())
+        return bareSession().crashCapsule(
+            contents, window: window, draft: try segvDraft(), crashTime: nil, link: link, capsuleId: uuidV4())
+    }
+
+    func testRecoveredPatchIdentityAndRequirementSurviveWithoutInteractionEvents() throws {
+        let patch = PatchIdentity(baseBuildId: "base-1", patchSetDigest: "sha256:" + String(repeating: "a", count: 64),
+                                  engineAbi: 1, hostAbiHash: "sha256:" + String(repeating: "b", count: 64))
+        var h = header()
+        h["patch"] = patch.json
+        h["dependencies"] = .array([patch.dependency.json])
+        let capsule = try XCTUnwrap(recoverPatchHeader(h))
+        XCTAssertTrue(capsule.events.isEmpty)
+        XCTAssertEqual(capsule.manifest.patch, patch)
+        XCTAssertEqual(capsule.manifest.dependencies.map(\.json), [patch.dependency.json])
+        let decoded = try CapsuleCodec.decode(CapsuleCodec.encode(capsule))
+        XCTAssertEqual(decoded.manifest.patch, patch)
+        XCTAssertEqual(decoded.manifest.dependencies.map(\.json), [patch.dependency.json])
+    }
+
+    func testRecoveredBareBaseIdentityDoesNotInventPatchRequirement() throws {
+        let patch = PatchIdentity(baseBuildId: "base-1", patchSetDigest: nil, engineAbi: 1,
+                                  hostAbiHash: "sha256:" + String(repeating: "b", count: 64))
+        var h = header()
+        h["patch"] = patch.json
+        let capsule = try XCTUnwrap(recoverPatchHeader(h))
+        XCTAssertEqual(capsule.manifest.patch, patch)
+        XCTAssertTrue(capsule.manifest.dependencies.isEmpty)
+        XCTAssertNil(try XCTUnwrap(recoverPatchHeader(header())).manifest.patch)
+    }
+
+    func testRecoveredPatchPreservesUnknownRequiredSchemaForReplayToReject() throws {
+        let patch = PatchIdentity(baseBuildId: "base-1", patchSetDigest: "sha256:" + String(repeating: "a", count: 64),
+                                  engineAbi: 1, hostAbiHash: "sha256:" + String(repeating: "b", count: 64))
+        var dependency = try XCTUnwrap(patch.dependency.json.objectValue)
+        dependency["schema"] = .int(99)
+        var h = header()
+        h["patch"] = patch.json
+        h["dependencies"] = .array([.object(dependency)])
+        let capsule = try XCTUnwrap(recoverPatchHeader(h))
+        XCTAssertEqual(capsule.manifest.dependencies.first?.schema, 99)
+        XCTAssertEqual(capsule.manifest.dependencies.first?.required, true)
+    }
+
+    func testRecoveredDamagedPatchMetadataDoesNotBecomeBareBase() throws {
+        let patch = PatchIdentity(baseBuildId: "base-1", patchSetDigest: "sha256:" + String(repeating: "a", count: 64),
+                                  engineAbi: 1, hostAbiHash: "sha256:" + String(repeating: "b", count: 64))
+        var h = header()
+        h["dependencies"] = .array([patch.dependency.json])
+        XCTAssertNil(try recoverPatchHeader(h), "required runtime without its identity")
+        h["patch"] = .string("damaged")
+        XCTAssertNil(try recoverPatchHeader(h))
+        var object = try XCTUnwrap(patch.json.objectValue)
+        object["patchSetDigest"] = .int(42)
+        h["patch"] = .object(object)
+        XCTAssertNil(try recoverPatchHeader(h), "wrong digest type must not decode as base")
+        h["patch"] = patch.json
+        h["dependencies"] = .array([])
+        XCTAssertNil(try recoverPatchHeader(h), "patched identity without its required dependency")
+    }
+
     // MARK: 1. journal
 
     func testJournalWritesHeaderLaunchCheckpointAndEvents() throws {

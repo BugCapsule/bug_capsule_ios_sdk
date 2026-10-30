@@ -7,6 +7,8 @@ import Foundation
 final class ReplayChannel: @unchecked Sendable {
     let baseURL: String
     private let session: URLSession
+    /// What this attempt runs, attached to every report.
+    nonisolated(unsafe) var patch: PatchIdentity?
 
     enum DeliveryStatus: Equatable, Sendable {
         case accepted
@@ -56,6 +58,13 @@ final class ReplayChannel: @unchecked Sendable {
         return try result.get()
     }
 
+    /// A file of this attempt's patch archive. Throws when it can't be loaded.
+    func fetchPatchFileSync(_ path: String, timeout: TimeInterval = 20) throws -> Data {
+        let (data, status) = try syncData(try request(path), timeout: timeout)
+        guard status == 200 else { throw HTTPError(description: "\(path) download failed: HTTP \(status)") }
+        return data
+    }
+
     /// Blocking fetch, called from `BugCapsule.start` so that checkpoint
     /// data is restored before app code runs (loopback, DEBUG builds only).
     func fetchSync(timeout: TimeInterval = 20) throws -> (Capsule, ReplaySettings) {
@@ -82,6 +91,7 @@ final class ReplayChannel: @unchecked Sendable {
     func deliver(_ report: ReplayReport, attemptId: String?, timeout: TimeInterval = 5) -> DeliveryStatus {
         var r = report
         if r.attemptId == nil { r.attemptId = attemptId }
+        r.patch = patch
         let json = JSON.encode(r.json)
         let line = ReplayProtocol.stdoutPrefix + json + "\n"
         FileHandle.standardOutput.write(Data(line.utf8))
