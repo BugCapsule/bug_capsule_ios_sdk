@@ -31,7 +31,7 @@ enum PerformanceHarness {
                 task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
             }
         }
-        return code == KERN_SUCCESS ? ["residentBytes": info.resident_size] : ["error": code]
+        return code == KERN_SUCCESS ? ["residentBytes": info.resident_size, "processMaxResidentBytes": info.resident_size_max] : ["error": code]
     }
     static func summary(_ values: [UInt64]) -> [String: Any] {
         let sorted = values.sorted()
@@ -64,6 +64,8 @@ enum PerformanceHarness {
               let runId = request["runId"] as? String, !runId.isEmpty else {
             throw NSError(domain: "benchmark", code: 1, userInfo: [NSLocalizedDescriptionKey: "mode, runId, expectedOutput and expectedSource are required"])
         }
+        let startupFlag = request["startupOnly"] as? NSNumber
+        let startupOnly = startupFlag.map { CFGetTypeID($0) == CFBooleanGetTypeID() && $0.boolValue } ?? false
         #if targetEnvironment(simulator)
         let physical = false
         #else
@@ -79,8 +81,9 @@ enum PerformanceHarness {
             "deviceModel": UIDevice.current.model, "machine": machine(), "osVersion": UIDevice.current.systemVersion,
             "bundleId": Bundle.main.bundleIdentifier ?? "unknown", "appBuild": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") ?? "unknown",
             "thermalStateBefore": ProcessInfo.processInfo.thermalState.rawValue, "lowPowerMode": ProcessInfo.processInfo.isLowPowerModeEnabled,
-            "warmupCount": 20, "sampleCount": 200, "rssBeforeOpen": rss(), "latencyVerdict": "not_configured",
-            "measurementScope": "first call is first in process, not guaranteed cold filesystem; RSS snapshots are not peak; first-appearance callback interval starts in app code, not process launch or display presentation"]
+            "scope": startupOnly ? "startup_probe" : "evaluation_samples",
+            "warmupCount": startupOnly ? 0 : 20, "sampleCount": startupOnly ? 0 : 200, "rssBeforeOpen": rss(), "latencyVerdict": "not_configured",
+            "measurementScope": "first call is first in process, not guaranteed cold filesystem; residentBytes are snapshots; processMaxResidentBytes is process-lifetime high-water, not runtime allocation delta or app budget; first-appearance callback interval starts in app code, not process launch or display presentation"]
         let start = now()
         let patch = mode == "runtime" ? open() : nil
         if mode == "runtime" { record["runtimeOpenNs"] = now() - start }
@@ -115,10 +118,10 @@ enum PerformanceHarness {
             }
             let first = try evaluate()
             record["firstCallNs"] = first.1
-            for _ in 0..<20 { _ = try evaluate() }
+            for _ in 0..<(startupOnly ? 0 : 20) { _ = try evaluate() }
             var samples: [UInt64] = []
-            for _ in 0..<200 { samples.append(try evaluate().1) }
-            record["evaluation"] = summary(samples)
+            for _ in 0..<(startupOnly ? 0 : 200) { samples.append(try evaluate().1) }
+            if !startupOnly { record["evaluation"] = summary(samples) }
             record["output"] = expected; record["source"] = first.2; record["reasonCounts"] = reasons
             record["rssAfterEvaluation"] = rss()
             if let patch {
@@ -129,7 +132,7 @@ enum PerformanceHarness {
             }
             record["thermalStateAfter"] = ProcessInfo.processInfo.thermalState.rawValue
             record["correctness"] = "passed"
-            if let budgets = request["budgetsNs"] as? [String: NSNumber], !budgets.isEmpty {
+            if !startupOnly, let budgets = request["budgetsNs"] as? [String: NSNumber], !budgets.isEmpty {
                 let stats = summary(samples)
                 var comparisons: [String: Any] = [:]
                 for key in ["p50Ns", "p95Ns", "p99Ns", "maxNs"] {
