@@ -14,6 +14,24 @@ public struct PatchContract: Sendable {
     }
 }
 
+/// What the installed binary can render for a surface; part of the base capability hash.
+public struct PatchSurfaceContract: Sendable {
+    public let id: String
+    public let components: [String]
+    public let actions: [String]
+    /// Actions a layout must keep. A layout dropping one is refused.
+    public let requiredActions: [String]
+    public let assets: [String]
+
+    public init(id: String, components: [String], actions: [String], requiredActions: [String] = [], assets: [String] = []) {
+        self.id = id
+        self.components = components
+        self.actions = actions
+        self.requiredActions = requiredActions
+        self.assets = assets
+    }
+}
+
 /// A module the app ships a fallback for, and that patches may replace. The
 /// schemas are canonical type text (`int`, `dec(2)`, `rec(a:int,b:str)`); a
 /// patch must implement exactly these to activate.
@@ -109,6 +127,7 @@ private enum Op {
     static let asset: UInt32 = 8
     static let receipts: UInt32 = 9
     static let ack: UInt32 = 10
+    static let surface: UInt32 = 13
 }
 
 /// The runtime as the app sees it. One generation is pinned at `open` for the
@@ -133,7 +152,7 @@ public final class BugCapsulePatch: @unchecked Sendable {
 
     /// Opens the store and selects this process's generation. Never throws:
     /// without a usable runtime every `call` uses the fallback.
-    public static func open(config: PatchConfig, modules: [PatchContract]) -> BugCapsulePatch {
+    public static func open(config: PatchConfig, modules: [PatchContract], surfaces: [PatchSurfaceContract] = []) -> BugCapsulePatch {
         guard bcp_abi_version() == 1 else {
             return BugCapsulePatch(engine: nil, unavailableReason: "abi_mismatch")
         }
@@ -148,6 +167,9 @@ public final class BugCapsulePatch: @unchecked Sendable {
             "installationId": config.installationId,
             "trustRoots": config.trustRoots,
             "modules": modules.map { ["id": $0.id, "input": $0.inputSchema, "output": $0.outputSchema] },
+            "surfaces": surfaces.map {
+                ["id": $0.id, "components": $0.components, "actions": $0.actions, "requiredActions": $0.requiredActions, "assets": $0.assets] as [String: Any]
+            },
         ]
         guard let json = try? JSONSerialization.data(withJSONObject: doc) else {
             return BugCapsulePatch(engine: nil, unavailableReason: "bad_config")
@@ -209,6 +231,11 @@ public final class BugCapsulePatch: @unchecked Sendable {
 
     /// A patched asset, or nil when this generation does not override `id`.
     public func asset(_ id: String) -> Data? { try? invoke(Op.asset, Data(id.utf8)) }
+
+    /// The patched document for a registered surface, or nil to use the bundled layout.
+    public func surface(_ id: String) -> [String: Any]? {
+        (try? invoke(Op.surface, Data(id.utf8))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    }
 
     private func json(_ op: UInt32, _ a: Data = Data(), _ b: Data = Data(), n: UInt64 = 0) throws -> [String: Any] {
         guard let doc = try JSONSerialization.jsonObject(with: invoke(op, a, b, n)) as? [String: Any] else {

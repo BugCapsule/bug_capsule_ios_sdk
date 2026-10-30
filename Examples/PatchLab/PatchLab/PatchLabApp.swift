@@ -37,6 +37,13 @@ private let coupon = PatchModule<Cart, Priced>(
     fallback: bundledCoupon
 )
 
+private let summarySurface = PatchSurfaceContract(
+    id: "lab.summary",
+    components: ["column", "row", "text", "spacer", "button"],
+    actions: ["lab.pay"],
+    requiredActions: ["lab.pay"]
+)
+
 private let sample = Cart(lines: [Line(sku: "a", qty: 2, unitCents: 1999), Line(sku: "b", qty: 10, unitCents: 300)], couponPercent: 20)
 
 private func processInbox(_ patch: BugCapsulePatch, _ exchange: URL) -> [String] {
@@ -73,6 +80,7 @@ struct Run {
     let source: String
     let state: String
     let micros: Int
+    let patch: BugCapsulePatch
 }
 
 private func run() -> Run {
@@ -91,7 +99,8 @@ private func run() -> Run {
             installationId: "device-1",
             trustRoots: [trustAnchor]
         ),
-        modules: [coupon.contract]
+        modules: [coupon.contract],
+        surfaces: [summarySurface]
     )
     let start = DispatchTime.now().uptimeNanoseconds
     let result = patch.call(coupon, sample)
@@ -130,7 +139,7 @@ private func run() -> Run {
             try? line.write(to: url)
         }
     }
-    return Run(priced: result.value, source: result.source.rawValue, state: before["state"] as? String ?? "?", micros: micros)
+    return Run(priced: result.value, source: result.source.rawValue, state: before["state"] as? String ?? "?", micros: micros, patch: patch)
 }
 
 @main
@@ -148,6 +157,13 @@ struct PatchLabApp: App {
                 Text("Discount: \(r.priced.discount)")
                 Text("Total: \(r.priced.total)")
                 Text("Eval: \(r.micros) µs")
+                Spacer().frame(height: 16)
+                PatchSurfaceView(patch: r.patch, id: summarySurface.id, actions: ["lab.pay": {}]) {
+                    VStack(alignment: .leading) {
+                        Text("Bundled summary")
+                        Button("Pay") {}
+                    }
+                }
             }
             .padding()
         }
