@@ -8,11 +8,12 @@ cd "$root"
 version=$(sed -n 's/^let sdkVersion = "\(.*\)"/\1/p' Sources/BugCapsule/Runtime/Session.swift)
 [ -n "$version" ] || { echo "cannot read sdkVersion" >&2; exit 1; }
 echo "BugCapsule iOS $version"
-swift build -c release
-swift test
+python3 scripts/verify-patch-runtime.py
+swift build -c release -j 2
+swift test -j 2
 mkdir -p dist
 name="bugcapsule-ios-$version"
-tar -czf "dist/$name.tar.gz" --exclude .build --exclude .swiftpm --exclude dist --exclude xcuserdata \
-  -s "|^\.|$name|" ./Package.swift ./README.md ./LICENSE ./docs ./Sources ./Tests ./spec-fixtures ./Examples ./scripts
-shasum -a 256 "dist/$name.tar.gz" | tee "dist/$name.tar.gz.sha256"
+COPYFILE_DISABLE=1 tar -czf "dist/$name.tar.gz" --exclude .build --exclude .swiftpm --exclude dist --exclude xcuserdata --exclude .DS_Store \
+  -s "|^\.|$name|" ./Package.swift ./README.md ./CHANGELOG.md ./LICENSE ./docs ./Sources ./Tests ./spec-fixtures ./Examples ./scripts ./Packages
+( cd dist && shasum -a 256 "$name.tar.gz" ) | tee "dist/$name.tar.gz.sha256"
 echo "Release checklist: tag v$version, push the tag (SwiftPM resolves by tag)."

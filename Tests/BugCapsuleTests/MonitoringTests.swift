@@ -75,7 +75,7 @@ final class MonitoringTests: XCTestCase {
         let envelope = try XCTUnwrap(req.json)
         XCTAssertNotNil(envelope["sentAt"]?.stringValue.flatMap(ISODate.parse))
         XCTAssertEqual(envelope["sdk"]?["name"], "bugcapsule-ios")
-        XCTAssertEqual(envelope["sdk"]?["version"], "0.4.1-beta.4")
+        XCTAssertEqual(envelope["sdk"]?["version"], "0.4.1-beta.5")
 
         let e = try XCTUnwrap(StubBackend.items("event").first)
         XCTAssertEqual(e["eventId"]?.stringValue, id)

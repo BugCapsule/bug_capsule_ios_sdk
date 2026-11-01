@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 
 /// Check every node before rendering anything, including offscreen list children.
@@ -16,3 +17,5 @@ func surfaceImagesAvailable(_ root: [String: Any], available: Set<String>) -> Bo
     }
     return visit(root, depth: 0)
 }
+
+#endif

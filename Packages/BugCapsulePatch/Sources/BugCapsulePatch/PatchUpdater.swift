@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 
 /// Signed channel metadata as delivered, kept as the exact received bytes.
@@ -102,3 +103,5 @@ public actor PatchUpdater {
         return items.count
     }
 }
+
+#endif

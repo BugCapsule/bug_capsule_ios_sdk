@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.4.1-beta.5
+
+- Expose the optional iOS `BugCapsulePatch` product directly from the canonical
+  repository-root SwiftPM package alongside core and XCTest helpers.
+- Bundle the pinned iOS device/simulator runtime with complete SHA256 inventory;
+  source release archives now retain the patch package and binaries.
+- Preserve macOS core builds while keeping patch APIs iOS-only.
+
 
 - Capsules with screenshots are no longer rejected: `capturedAtT` now moves
   with the event time when a capsule is rebased to its anchor. With a first

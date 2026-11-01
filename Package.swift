@@ -15,8 +15,16 @@ let package = Package(
     products: [
         .library(name: "BugCapsule", targets: ["BugCapsule"]),
         .library(name: "BugCapsuleXCTest", targets: ["BugCapsuleXCTest"]),
+        .library(name: "BugCapsulePatch", targets: ["BugCapsulePatch"]),
     ],
     targets: [
+        .binaryTarget(name: "BcpatchRuntime", path: "Packages/BugCapsulePatch/Binaries/BcpatchRuntime.xcframework"),
+        .target(
+            name: "BugCapsulePatch",
+            dependencies: ["BugCapsule", .target(name: "BcpatchRuntime", condition: .when(platforms: [.iOS]))],
+            path: "Packages/BugCapsulePatch/Sources/BugCapsulePatch",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         // Async-signal-safe native crash writer (signals, Mach exceptions).
         .target(
             name: "BugCapsuleCrash",

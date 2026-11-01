@@ -1,3 +1,4 @@
+#if os(iOS)
 import BugCapsule
 import Foundation
 
@@ -64,3 +65,5 @@ public final class BugCapsulePatchBinding: PatchBinding, @unchecked Sendable {
         return identity(of: handle)
     }
 }
+
+#endif

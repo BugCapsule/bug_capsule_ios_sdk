@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 
 /// Refusal from the delivery endpoint, or a response outside its bounds.
@@ -204,3 +205,5 @@ public struct HttpPatchTransport: PatchTransport {
         guard code == 202 else { throw refused(code) }
     }
 }
+
+#endif

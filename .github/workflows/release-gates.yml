@@ -5,9 +5,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - run: python3 scripts/test-patch-runtime-package.py
       - run: swift test
       - run: swift test -c release -Xswiftc -enable-testing --filter ReplayProtocolTests/testGate
       - run: sh scripts/package-release.sh
+      - run: python3 scripts/test-release-consumer.py dist/bugcapsule-ios-*.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: spm-source-candidate

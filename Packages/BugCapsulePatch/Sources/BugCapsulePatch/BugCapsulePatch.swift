@@ -1,3 +1,4 @@
+#if os(iOS)
 import BcpatchRuntime
 import Foundation
 
@@ -296,3 +297,5 @@ public final class BugCapsulePatch: @unchecked Sendable {
         return bytes
     }
 }
+
+#endif

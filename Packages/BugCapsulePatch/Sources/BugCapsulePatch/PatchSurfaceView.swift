@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Renders the patched layout of a registered surface with shipped views, or
@@ -93,3 +94,5 @@ private struct PatchField: View {
             .textFieldStyle(.roundedBorder)
     }
 }
+
+#endif

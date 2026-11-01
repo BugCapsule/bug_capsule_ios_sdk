@@ -1,0 +1,4 @@
+framework module BcpatchRuntime {
+  header "bcpatch.h"
+  export *
+}

@@ -44,13 +44,13 @@ bugcapsule regress ─► runs in CI from now on
 
 In Xcode, choose **File → Add Package Dependencies…**, enter
 `https://github.com/BugCapsule/bug_capsule_ios_sdk.git` and pick the exact
-version `0.4.1-beta.4`. Add **`BugCapsule`** to your app target and
+version `0.4.1-beta.5`. Add **`BugCapsule`** to your app target and
 **`BugCapsuleXCTest`** to your UI test target.
 
 Or in a `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/BugCapsule/bug_capsule_ios_sdk.git", exact: "0.4.1-beta.4"),
+.package(url: "https://github.com/BugCapsule/bug_capsule_ios_sdk.git", exact: "0.4.1-beta.5"),
 
 // app target
 .product(name: "BugCapsule", package: "bug_capsule_ios_sdk"),
@@ -666,3 +666,25 @@ and distribution require prior written permission. See [LICENSE](LICENSE).
 
 Opt-in PNG frames are stored inside capsules and displayed against event time.
 See [capture, privacy, limits and platform examples](docs/screenshots-v1.md).
+
+
+## Optional signed patch runtime
+
+Select **BugCapsulePatch** from the same repository-root SwiftPM dependency at
+`0.4.1-beta.5`. The product links the existing core SDK and an embedded, pinned
+XCFramework for iOS arm64 and iOS Simulator arm64/x86_64. It requires iOS15+; the
+core SDK's macOS support is unchanged, but the patch API is iOS-only. No second
+repository, local path dependency or runtime binary download is needed.
+
+```swift
+.package(url: "https://github.com/BugCapsule/bug_capsule_ios_sdk.git", exact: "0.4.1-beta.5")
+// In your iOS target dependencies:
+.product(name: "BugCapsule", package: "bug_capsule_ios_sdk"),
+.product(name: "BugCapsulePatch", package: "bug_capsule_ios_sdk")
+```
+
+Register immutable module/surface contracts in the original binary and pin your
+project's public roots; never ship the example's development root for a customer
+project. See [patch release packaging](docs/patch-release.md) for provenance and
+scope. Installing the package alone does not enable patching or establish store
+qualification.

@@ -1,28 +1,21 @@
 // swift-tools-version: 6.0
-//
-// The patch runtime lives in its own package so the BugCapsule package never
-// resolves a binary target. Run scripts/sync_patch_runtime.sh first.
+// Compatibility entry point for existing local source checkouts.
+// Remote consumers select BugCapsulePatch from the repository-root package.
 import PackageDescription
-
 let package = Package(
-    name: "BugCapsulePatch",
+    name: "BugCapsulePatchLocal",
     platforms: [.iOS(.v15)],
-    products: [
-        .library(name: "BugCapsulePatch", targets: ["BugCapsulePatch"]),
-    ],
-    dependencies: [
-        .package(name: "BugCapsule", path: "../.."),
-    ],
+    products: [.library(name: "BugCapsulePatch", targets: ["BugCapsulePatchCompatibility"])],
+    dependencies: [.package(name: "BugCapsule", path: "../..")],
     targets: [
-        .binaryTarget(name: "BcpatchRuntime", path: "Binaries/BcpatchRuntime.xcframework"),
         .target(
-            name: "BugCapsulePatch",
-            dependencies: ["BcpatchRuntime", .product(name: "BugCapsule", package: "BugCapsule")],
-            swiftSettings: [.swiftLanguageMode(.v6)]
+            name: "BugCapsulePatchCompatibility",
+            dependencies: [.product(name: "BugCapsulePatch", package: "BugCapsule")],
+            path: "Compatibility"
         ),
         .testTarget(
             name: "BugCapsulePatchTests",
-            dependencies: ["BugCapsulePatch", "BcpatchRuntime"],
+            dependencies: [.product(name: "BugCapsulePatch", package: "BugCapsule")],
             resources: [.copy("Fixtures")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

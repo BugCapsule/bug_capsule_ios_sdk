@@ -1,0 +1,30 @@
+{
+  "engineSourceCommit": "dcc08088c400bb44b634598a156ff8f3c5ff965b",
+  "compiledInputsEquivalentTo": "8dd6d43ff95c80a959799ccbe20b11ce702426bf",
+  "comparedPaths": [
+    "core/src",
+    "bindings/src",
+    "core/Cargo.toml",
+    "bindings/Cargo.toml",
+    "Cargo.toml",
+    "Cargo.lock",
+    "tools/build-native.sh"
+  ],
+  "build": "Rust 1.99.1; cargo --locked --release; CARGO_BUILD_JOBS=2; tools/build-native.sh all",
+  "platforms": [
+    "ios-arm64",
+    "ios-arm64_x86_64-simulator"
+  ],
+  "scope": "Bundled original-app runtime; no runtime executable downloads. Built once for private candidates, reused byte-for-byte. Not a bitwise rebuild attestation.",
+  "files": {
+    "Info.plist": "a116460661f7e29a1092119a628d2641cd680eb15b664aab59da9edcd693a29a",
+    "ios-arm64/BcpatchRuntime.framework/BcpatchRuntime": "23cb9145278dbb9834cfb1899a2ab9131e1c7444e9e395559350acf1a44592df",
+    "ios-arm64/BcpatchRuntime.framework/Headers/bcpatch.h": "c83b82b268ec32bc22779fc72276e1463546a9e9489a6ec2076efb5af1f46e73",
+    "ios-arm64/BcpatchRuntime.framework/Info.plist": "7d1b1592ab9d98f1ce00ad5a61386b7895aff24cff210cb285a884521362831d",
+    "ios-arm64/BcpatchRuntime.framework/Modules/module.modulemap": "f1c7240255ccff0be8cd66691c09d80f7bb1876644da79ffd7f1c8c9ae1cb7ee",
+    "ios-arm64_x86_64-simulator/BcpatchRuntime.framework/BcpatchRuntime": "09af9d002dca583d8c10c59bd58f8871a7384d59ba9b98511048abefc1549a76",
+    "ios-arm64_x86_64-simulator/BcpatchRuntime.framework/Headers/bcpatch.h": "c83b82b268ec32bc22779fc72276e1463546a9e9489a6ec2076efb5af1f46e73",
+    "ios-arm64_x86_64-simulator/BcpatchRuntime.framework/Info.plist": "7d7f4e5ef01432279d13740d58f2a354943292e7d4ef982301ee584dee08a741",
+    "ios-arm64_x86_64-simulator/BcpatchRuntime.framework/Modules/module.modulemap": "f1c7240255ccff0be8cd66691c09d80f7bb1876644da79ffd7f1c8c9ae1cb7ee"
+  }
+}

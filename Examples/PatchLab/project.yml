@@ -3,8 +3,8 @@ options:
   deploymentTarget:
     iOS: "15.0"
 packages:
-  BugCapsulePatch:
-    path: ../../Packages/BugCapsulePatch
+  BugCapsule:
+    path: ../..
 targets:
   PatchLab:
     type: application
@@ -19,7 +19,8 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
     dependencies:
-      - package: BugCapsulePatch
+      - package: BugCapsule
+        product: BugCapsulePatch
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.bugcapsule.patchlab.ios
