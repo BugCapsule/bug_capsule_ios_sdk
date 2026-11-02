@@ -132,6 +132,7 @@ final class RemoteNarrowingTests: XCTestCase {
         c.testHooks = EmergencyTestHooks(
             storageDirectory: tempDirectory(), now: { Date() }, random: { 0.5 }, autoSchedule: false,
             isReplaying: { false }, observeLifecycle: false)
+        c.testHooks?.requestTimeout = loopbackRequestTimeout
         let r = EmergencyRuntime(configuration: c, notify: { _ in })
         await r.refresh(.manual)
         XCTAssertEqual(r.status().lastError?.code, "invalid_backend")

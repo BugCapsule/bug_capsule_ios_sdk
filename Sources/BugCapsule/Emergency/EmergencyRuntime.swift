@@ -18,6 +18,8 @@ struct EmergencyTestHooks: @unchecked Sendable {
     var runtimeReportInterval: TimeInterval?
     /// The monotonic clock runtime reports are spaced by; nil: `systemUptime`.
     var uptime: (@Sendable () -> TimeInterval)?
+    /// Seconds without progress before an emergency request fails; nil: 5 (§3).
+    var requestTimeout: TimeInterval?
     /// Runs [fire] when a runtime report interval ends, after [delay]; nil: a sleeping task.
     var runtimeReportTimer: (@Sendable (_ delay: TimeInterval, _ fire: @escaping @Sendable () -> Void) -> Void)?
 }
@@ -87,6 +89,7 @@ final class EmergencyRuntime: @unchecked Sendable {
     // Runtime reports (§7.6).
     private let runtimeReportInterval: TimeInterval
     private let uptime: @Sendable () -> TimeInterval
+    private let requestTimeout: TimeInterval
     private let runtimeReportTimer: (@Sendable (TimeInterval, @escaping @Sendable () -> Void) -> Void)?
     /// The latest `runtime` object, sent or not.
     private var runtimeObject: JSONObject?
@@ -121,6 +124,7 @@ final class EmergencyRuntime: @unchecked Sendable {
         let defaultUptime: @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
         uptime = hooks?.uptime ?? defaultUptime
         runtimeReportTimer = hooks?.runtimeReportTimer
+        requestTimeout = hooks?.requestTimeout ?? 5
         environment = c.environment
         refreshInterval = min(max(c.refreshInterval.isFinite ? c.refreshInterval : 60, Self.minRefreshInterval), 86400)
         appVersion = c.appVersion ?? BugCapsuleSession.current?.config.appVersion ?? Self.bundleVersion()
@@ -366,7 +370,7 @@ final class EmergencyRuntime: @unchecked Sendable {
     private func transport(for backend: BugCapsuleBackendConfig) -> EmergencyHTTPTransport {
         lock.locked {
             if let transport, transport.backend == backend { return transport }
-            let t = EmergencyHTTPTransport(backend: backend)
+            let t = EmergencyHTTPTransport(backend: backend, timeout: requestTimeout)
             transport = t
             return t
         }

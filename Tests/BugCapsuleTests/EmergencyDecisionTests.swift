@@ -205,9 +205,12 @@ final class EmergencyDecisionCaptureTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        backend.stop()
+        // This test's runtime finishes its receipts against this test's
+        // server, then goes, then the server: nothing outlives the test.
+        await BugCapsuleEmergency.shared.runtimeForTesting?.waitForReceiptsForTesting()
         await BugCapsuleEmergency.shared.resetForTesting()
         await BugCapsule.resetForTesting()
+        backend.stop()
     }
 
     /// A real document blocking [feature], served, fetched and verified.
@@ -220,10 +223,11 @@ final class EmergencyDecisionCaptureTests: XCTestCase {
         let clock = self.clock!
         c.testHooks = EmergencyTestHooks(
             storageDirectory: dir.appendingPathComponent("emergency"), now: { clock.now }, autoSchedule: false,
-            observeLifecycle: false)
+            observeLifecycle: false, requestTimeout: loopbackRequestTimeout)
         BugCapsule.emergency.initialize(c)
         await BugCapsule.emergency.refreshPolicies()
-        XCTAssertEqual(BugCapsule.emergency.status.revision, 5)
+        XCTAssertEqual(
+            BugCapsule.emergency.status.revision, 5, "policy not applied: \(String(describing: BugCapsule.emergency.status.lastError))")
     }
 
     func serve(revision: Int, message: String = "Temporarily unavailable.", ttl: TimeInterval = 3600) {
@@ -717,7 +721,7 @@ final class EmergencyDecisionCaptureTests: XCTestCase {
         var c = EmergencyConfiguration(trustAnchor: signer.anchor(app: app), backend: backend.backend)
         c.testHooks = EmergencyTestHooks(
             storageDirectory: dir.appendingPathComponent("emergency"), autoSchedule: false, isReplaying: { true },
-            observeLifecycle: false)
+            observeLifecycle: false, requestTimeout: loopbackRequestTimeout)
         BugCapsule.emergency.initialize(c)
         let d = BugCapsule.emergency.evaluate(featureKey: feature)
         XCTAssertTrue(d.allowed)

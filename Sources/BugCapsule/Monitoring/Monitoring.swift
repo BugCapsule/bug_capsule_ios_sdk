@@ -250,6 +250,9 @@ final class Monitoring: @unchecked Sendable {
         metricKit?.stop()
         frames.stop()
         scope.onChange = nil
+        // Events still waiting for their batch go to disk now (sent on a
+        // later launch), not to an outbox about to close.
+        writePendingSynchronously()
         if owns {
             if options.enableNativeCrashHandling { NativeCrashHandler.uninstallForTesting() }
             CrashOwnership.release(.sdk)
@@ -741,7 +744,13 @@ final class Monitoring: @unchecked Sendable {
         if !items.isEmpty, let box {
             if let bytes = try? Gzip.compress(envelopeBody(items)) {
                 if !(await box.enqueue(capsuleId: uuidV4(), bytes: bytes)) {
-                    BugCapsuleLog.warn("envelope not queued (outbox limit or disk error)")
+                    if lock.locked({ stopped }) {
+                        // Stopped meanwhile and the outbox closed: kept on disk all the same.
+                        _ = UploadOutbox.writeSynchronously(
+                            directory: box.directory, capsuleId: uuidV4(), bytes: bytes, fileExtension: "envelope")
+                    } else {
+                        BugCapsuleLog.warn("envelope not queued (outbox limit or disk error)")
+                    }
                 }
             }
         }

@@ -90,6 +90,10 @@ final class TestHTTPServer: @unchecked Sendable {
     }
 }
 
+/// Emergency requests to the loopback test servers: the SDK's 5 s (§3) is a
+/// production budget; a loaded CI runner can stall longer than that.
+let loopbackRequestTimeout: TimeInterval = 60
+
 struct ListenerNotReady: Error, CustomStringConvertible {
     let state: String
     var description: String { "loopback listener not ready: \(state)" }

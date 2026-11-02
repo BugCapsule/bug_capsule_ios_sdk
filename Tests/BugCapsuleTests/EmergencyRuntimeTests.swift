@@ -100,6 +100,7 @@ final class EmergencyRuntimeTests: XCTestCase {
         c.testHooks = EmergencyTestHooks(
             storageDirectory: dir, now: { clock.now }, random: { random }, autoSchedule: autoSchedule,
             isReplaying: { replaying }, observeLifecycle: false)
+        c.testHooks?.requestTimeout = loopbackRequestTimeout
         return c
     }
 

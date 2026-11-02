@@ -70,6 +70,7 @@ final class EmergencyUpdateTests: XCTestCase {
         c.testHooks = EmergencyTestHooks(
             storageDirectory: dir, now: { clock.now }, random: { 0.5 }, autoSchedule: false, isReplaying: { replaying },
             observeLifecycle: false, runtimeReportInterval: interval)
+        c.testHooks?.requestTimeout = loopbackRequestTimeout
         if let uptime { c.testHooks?.uptime = { uptime.now.timeIntervalSince1970 } }
         if let timer { c.testHooks?.runtimeReportTimer = timer.schedule }
         return c
