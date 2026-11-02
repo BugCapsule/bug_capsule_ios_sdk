@@ -23,7 +23,7 @@ final class SessionCaptureTests: XCTestCase {
 
     func start(_ config: BugCapsuleConfig? = nil, integrations: [BugCapsuleIntegration] = []) {
         var c = config ?? BugCapsuleConfig(appVersion: "1.0", appBuild: "7", mode: .qa)
-        c.backend = BugCapsuleBackendConfig(url: "http://backend.test", ingestKey: "bci_test")
+        c.backend = BugCapsuleBackendConfig(url: "https://backend.test", ingestKey: "bci_test")
         BugCapsule.start(
             c, integrations: integrations,
             overrides: BugCapsuleTestOverrides(storageDirectory: dir, transport: transport, captureSettleDelay: 0.05))
@@ -127,7 +127,7 @@ final class SessionCaptureTests: XCTestCase {
     func testCachedKillSwitchDisablesRecordingAtLaunch() async throws {
         let store = try CapsuleStore(root: dir)
         try store.configCache.write(
-            scope: RemoteConfigController.scope(for: BugCapsuleBackendConfig(url: "http://backend.test", ingestKey: "bci_test")),
+            scope: RemoteConfigController.scope(for: BugCapsuleBackendConfig(url: "https://backend.test", ingestKey: "bci_test")),
             config: RemoteCaptureConfig(enabled: false, fetchedAtMs: 1))
         start()
         XCTAssertFalse(BugCapsule.isRecording)

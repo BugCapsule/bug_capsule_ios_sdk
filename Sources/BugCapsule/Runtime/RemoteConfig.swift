@@ -19,7 +19,9 @@ public struct RemoteCaptureConfig: Sendable, Equatable {
     public var tracesSampleRate: Double?
     public var sessionTracking: Bool
     public var maxBreadcrumbs: Int?
-    /// When set, replaces the app's list.
+    /// When set, narrows the app's list: a URL gets trace headers only if it
+    /// matches the app's targets and contains one of these entries (plain
+    /// substrings, never patterns). It can never add destinations.
     public var tracePropagationTargets: [String]?
     /// Interaction adapters switched off for this project (capsule-v2 §7),
     /// by adapter id, e.g. `bugcapsule-ios.urlsession-websocket`. HTTP
@@ -55,6 +57,14 @@ public struct RemoteCaptureConfig: Sendable, Equatable {
 
     public struct FormatError: Error, Sendable { public let message: String }
 
+    /// Ceiling for the server's `maxCapsuleBytes` (the backend's own maximum).
+    public static let maxRemoteCapsuleBytes = 50 * 1024 * 1024
+
+    /// Clamps a capsule size to `1...maxRemoteCapsuleBytes`. A larger value can
+    /// only come from a misconfigured or compromised server, and it also sizes
+    /// the on-disk crash journal (2x).
+    static func clampCapsuleBytes(_ bytes: Int) -> Int { min(max(bytes, 1), maxRemoteCapsuleBytes) }
+
     /// Parses the `/v1/sdk/config` body (or the cache). Throws on wrong
     /// types; values are clamped to sane ranges.
     public init(json j: JSONObject, fetchedAtMs: Int? = nil) throws {
@@ -83,7 +93,7 @@ public struct RemoteCaptureConfig: Sendable, Equatable {
         let rate = j["sampleRate"]?.doubleValue ?? 1
         enabled = j["enabled"]?.boolValue ?? true
         sampleRate = rate.isNaN ? 0 : min(max(rate, 0), 1)
-        maxCapsuleBytes = max(j["maxCapsuleBytes"]?.intValue ?? 5 * 1024 * 1024, 1)
+        maxCapsuleBytes = Self.clampCapsuleBytes(j["maxCapsuleBytes"]?.intValue ?? 5 * 1024 * 1024)
         captureNetworkBodies = j["captureNetworkBodies"]?.boolValue ?? true
         redactKeys = (j["redactKeys"]?.arrayValue ?? []).map { $0.stringValue ?? JSON.encode($0) }
         configTtlSeconds = min(max(j["configTtlSeconds"]?.intValue ?? 300, 0), 86400)

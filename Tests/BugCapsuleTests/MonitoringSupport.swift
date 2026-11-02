@@ -3,7 +3,7 @@ import XCTest
 
 @testable import BugCapsule
 
-/// The backend as a URLProtocol stub (`http://backend.test`), speaking the
+/// The backend as a URLProtocol stub (`https://backend.test`), speaking the
 /// monitoring-v1 contract: config, capsule upload and envelope ingest.
 final class StubBackend: URLProtocol, @unchecked Sendable {
     struct Request: Sendable {
@@ -103,7 +103,7 @@ final class StubBackend: URLProtocol, @unchecked Sendable {
     override func stopLoading() {}
 }
 
-let stubBackend = BugCapsuleBackendConfig(url: "http://backend.test", ingestKey: "bci_test_key_1234567890")
+let stubBackend = BugCapsuleBackendConfig(url: "https://backend.test", ingestKey: "bci_test_key_1234567890")
 
 func stubTransport() -> BugCapsuleBackendClient {
     BugCapsuleBackendClient(config: stubBackend, protocolClasses: [StubBackend.self])
