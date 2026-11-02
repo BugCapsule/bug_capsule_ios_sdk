@@ -775,6 +775,23 @@ final class EmergencyDecisionCaptureTests: XCTestCase {
         XCTAssertEqual(action, .block)
     }
 
+    /// A device that runs the action late (here 400 ms, past the next
+    /// recorded decision) still sees the decision recorded before it.
+    func testAnActionDispatchedLateSeesTheDecisionRecordedBeforeIt() async throws {
+        let events = [
+            decision(feature, t: -500, seq: 1, action: "ALLOW"), decision(feature, t: 100, seq: 2),
+            BugCapsuleEvent(seq: 3, t: 150, type: EventTypes.action, data: ["id": "slow_look"]),
+            decision(feature, t: 400, seq: 4, action: "ALLOW"),
+        ]
+        let seen = EventLog()
+        BugCapsule.registerAction("slow_look") { _ in
+            Thread.sleep(forTimeInterval: 0.4)
+            seen.append(["action": .string(BugCapsule.emergency.evaluate(featureKey: feature).action.rawValue)])
+        }
+        _ = try await replay(makeCapsule(events: events))
+        XCTAssertEqual(seen.items.first?["action"]?.stringValue, EmergencyAction.block.rawValue)
+    }
+
     func testAnIdleGapSkippedInReplayCountsOnTheClock() async throws {
         let events = [
             decision(feature, t: 10, seq: 1, action: "ALLOW"),

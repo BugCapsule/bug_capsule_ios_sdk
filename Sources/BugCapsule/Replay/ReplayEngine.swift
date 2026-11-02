@@ -44,6 +44,9 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
     private var expected = 0
     private let idle: IdleCompressor
     private var skippedMs = 0
+    /// Recorded `t` of the event being waited for or dispatched: the replay
+    /// is not past it, however late a loaded device runs (lookups by time).
+    private var positionLimit: Int?
     private var gapsCompressed = 0
     private var work = 0
     private var lastActivityMs = 0
@@ -109,7 +112,15 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
     /// The decision the app saw at this point of the capture; nil when the
     /// capsule has none for [featureKey]. Any thread.
     func emergencyDecision(featureKey: String, subjectTag: String?) -> EmergencyDecision? {
-        emergencyDecisions.lookup(key: featureKey, subjectTag: subjectTag, t: base + elapsed())
+        emergencyDecisions.lookup(key: featureKey, subjectTag: subjectTag, t: replayPosition())
+    }
+
+    /// Where the replay is on the recorded clock: the elapsed time, but never
+    /// past the event being waited for or dispatched (dispatch can run late
+    /// on a loaded device; what the app saw then was recorded before it).
+    func replayPosition() -> Int {
+        let t = base + elapsed()
+        return lock.locked { positionLimit }.map { min(t, $0) } ?? t
     }
 
     // MARK: ReplayContext
@@ -291,6 +302,7 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
         var previous = base
         for event in toDispatch {
             if isReproduced { break }
+            lock.locked { positionLimit = event.t }
             let due = event.t - base
             lastT = due
             let idleSince = settings.idleCompression ? idle.idleSince(from: previous, to: event.t) : nil
@@ -324,6 +336,7 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
             if isReproduced { break }
             dispatch(event)
         }
+        lock.locked { positionLimit = nil }
 
         if !isReproduced {
             let failureDue = expectedFailure.map { $0.t - base } ?? 0

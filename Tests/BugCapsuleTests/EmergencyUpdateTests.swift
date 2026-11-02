@@ -340,7 +340,7 @@ final class EmergencyUpdateTests: XCTestCase {
         try TestHTTPServer(handler: respond)
     }
 
-    func provider(_ server: TestHTTPServer, country: String? = "gb", timeout: TimeInterval = 5) -> AppStoreUpdateProvider {
+    func provider(_ server: TestHTTPServer, country: String? = "gb", timeout: TimeInterval = loopbackRequestTimeout) -> AppStoreUpdateProvider {
         AppStoreUpdateProvider(
             bundleId: "com.example.app", country: country, endpoint: URL(string: "\(server.baseURL)/lookup")!,
             timeout: timeout)
