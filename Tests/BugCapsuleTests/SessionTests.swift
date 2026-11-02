@@ -282,6 +282,46 @@ final class RestorationTests: XCTestCase {
         defaults.removePersistentDomain(forName: suite)
     }
 
+    func testUserDefaultsRestoreAppliesTheCapturePolicy() async throws {
+        let suite = "bugcapsule.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let ud = BugCapsuleUserDefaults(keys: ["cart_cache", "bugcapsule.replayDisabled"], prefixes: ["feature."], denyPrefixes: ["feature.internal", "bugcapsule."], suiteName: suite)
+        // Captured elsewhere or edited: only cart_cache and feature.dark pass the
+        // rules (an explicitly listed SDK-internal key is still denied).
+        let entries: JSONObject = [
+            "cart_cache": ["type": "string", "value": "[]"],
+            "feature.dark": ["type": "bool", "value": true],
+            "feature.internal.debug": ["type": "bool", "value": true],
+            "not_allowlisted": ["type": "string", "value": "x"],
+            "bugcapsule.replayDisabled": ["type": "bool", "value": true],
+        ]
+        let capsule = makeCapsule(checkpointData: ["user_defaults": .object(entries)])
+        let session = BugCapsuleSession(
+            config: BugCapsuleConfig(appVersion: "1", appBuild: "1", mode: .qa), integrations: [ud],
+            overrides: BugCapsuleTestOverrides(storageDirectory: tempDirectory()))
+        let engine = session.startReplayForTesting(capsule: capsule, settings: ReplaySettings())!
+        let restored = UserDefaults(suiteName: suite)!
+        XCTAssertEqual(restored.string(forKey: "cart_cache"), "[]", "an allowed key is still restored")
+        XCTAssertTrue(restored.bool(forKey: "feature.dark"))
+        for key in ["feature.internal.debug", "not_allowlisted", "bugcapsule.replayDisabled"] {
+            XCTAssertNil(restored.object(forKey: key), "\(key) must not be written")
+        }
+        let report = engine.buildReport()
+        let disallowed = report.divergences.filter { $0.type == "restore.disallowed" }
+        XCTAssertEqual(disallowed.count, 3)
+        for key in ["feature.internal.debug", "not_allowlisted", "bugcapsule.replayDisabled"] {
+            XCTAssertTrue(disallowed.contains { $0.detail.contains(key) }, "divergence names \(key)")
+        }
+        XCTAssertTrue(disallowed.allSatisfy(DivergencePolicy.isMaterial))
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    func testRestoreDisallowedIsAMaterialDivergence() {
+        XCTAssertTrue(DivergencePolicy.isMaterial(Divergence("restore.disallowed", "user_defaults k")))
+        XCTAssertFalse(DivergencePolicy.expected.contains("restore.disallowed"))
+    }
+
     func testStateRestoreLateAndMissing() async throws {
         let state = BugCapsuleStateIntegration()
         let capsule = makeCapsule(checkpointData: ["state": ["cart": ["coupon": "SAVE10"], "never": ["x": 1]]])
