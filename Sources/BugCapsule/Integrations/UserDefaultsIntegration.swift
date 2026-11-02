@@ -9,7 +9,8 @@ import Foundation
 /// are skipped and reported as `storage.<key>` in eligibility. Values are
 /// redacted (sensitive key names become `[REDACTED]`; strings are scrubbed,
 /// JSON strings redacted as JSON); restoring a placeholder reports
-/// `storage.redacted`.
+/// `storage.redacted`. Restore applies the same allow/deny rules: a key
+/// outside them is not written and reports `restore.disallowed`.
 public final class BugCapsuleUserDefaults: BugCapsuleIntegration, @unchecked Sendable {
     public let name = "user_defaults"
     public var capabilities: [(String, String)] { [("storage.user_defaults", "supported")] }
@@ -95,6 +96,12 @@ public final class BugCapsuleUserDefaults: BugCapsuleIntegration, @unchecked Sen
         guard let o = data?.objectValue else { return }
         let replay = session.replay
         for (key, entry) in o {
+            // The capture policy applies to restore too: a capsule (edited, or
+            // captured with other rules) can't write keys outside it.
+            guard allowed(key) else {
+                replay?.diverge("restore.disallowed", "user_defaults \(key) is outside the capture allowlist; not written")
+                continue
+            }
             guard let item = entry.objectValue else {
                 replay?.diverge("storage.redacted", key)
                 continue

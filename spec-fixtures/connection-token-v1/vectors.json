@@ -21,6 +21,18 @@
       "ingestKey": "bct_Q2xpZW50VmlzaWJsZUluZ2VzdE9ubHlLZXlfMDEyMzQ"
     },
     {
+      "name": "local development over http on localhost",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwOi8vbG9jYWxob3N0Ojg3ODciLCJrZXkiOiJiY3RfUTJ4cFpXNTBWbWx6YVdKc1pVbHVaMlZ6ZEU5dWJIbExaWGxmTURFeU16USJ9",
+      "url": "http://localhost:8787",
+      "ingestKey": "bct_Q2xpZW50VmlzaWJsZUluZ2VzdE9ubHlLZXlfMDEyMzQ"
+    },
+    {
+      "name": "Android emulator host over http",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwOi8vMTAuMC4yLjI6ODc4NyIsImtleSI6ImJjdF9RMnhwWlc1MFZtbHphV0pzWlVsdVoyVnpkRTl1YkhsTFpYbGZNREV5TXpRIn0",
+      "url": "http://10.0.2.2:8787",
+      "ingestKey": "bct_Q2xpZW50VmlzaWJsZUluZ2VzdE9ubHlLZXlfMDEyMzQ"
+    },
+    {
       "name": "unknown fields are ignored",
       "token": "bcsdk.v1.eyJhcGkiOiJodHRwczovL2FwaS5idWdjYXBzdWxlLmNvbSIsImtleSI6ImJjdF9RMnhwWlc1MFZtbHphV0pzWlVsdVoyVnpkRTl1YkhsTFpYbGZNREV5TXpRIiwicmVnaW9uIjoiZXUiLCJub3RlIjoiZnV0dXJlIn0",
       "url": "https://api.bugcapsule.com",
@@ -113,6 +125,16 @@
     {
       "name": "api is not http(s)",
       "token": "bcsdk.v1.eyJhcGkiOiJmdHA6Ly9hcGkuYnVnY2Fwc3VsZS5jb20iLCJrZXkiOiJiY3RfUTJ4cFpXNTBWbWx6YVdKc1pVbHVaMlZ6ZEU5dWJIbExaWGxmTURFeU16USJ9",
+      "error": "invalid_token"
+    },
+    {
+      "name": "api is plain http to a remote host",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwOi8vYXBpLmV4YW1wbGUuY29tIiwia2V5IjoiYmN0X1EyeHBaVzUwVm1semFXSnNaVWx1WjJWemRFOXViSGxMWlhsZk1ERXlNelEifQ",
+      "error": "invalid_token"
+    },
+    {
+      "name": "api is plain http to a LAN address",
+      "token": "bcsdk.v1.eyJhcGkiOiJodHRwOi8vMTkyLjE2OC4xLjIwOjg3ODciLCJrZXkiOiJiY3RfUTJ4cFpXNTBWbWx6YVdKc1pVbHVaMlZ6ZEU5dWJIbExaWGxmTURFeU16USJ9",
       "error": "invalid_token"
     },
     {

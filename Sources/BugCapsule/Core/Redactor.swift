@@ -140,7 +140,7 @@ public final class Redactor: @unchecked Sendable {
     static let jwt = try! NSRegularExpression(
         pattern: #"(?<![A-Za-z0-9_])eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*"#)
     static let knownKeys = try! NSRegularExpression(
-        pattern: #"(?<![A-Za-z0-9_])(?:(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|bc[is]_[A-Za-z0-9_-]{20,})"#
+        pattern: #"(?<![A-Za-z0-9_])(?:(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|bc(?:[isawpvt]|pd)_[A-Za-z0-9_-]{20,}|bcsdk\.v[0-9]+\.[A-Za-z0-9_-]{20,})"#
     )
     static let quotedPair = try! NSRegularExpression(
         pattern: #"(["'])([^"'\\]{1,100})\1(\s*[:=]\s*)(["'])((?:[^"'\\]|\\.)*)\4"#)

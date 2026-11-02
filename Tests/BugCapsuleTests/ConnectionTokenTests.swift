@@ -25,8 +25,8 @@ final class ConnectionTokenVectorTests: XCTestCase {
 
     func testEveryVector() throws {
         let v = try Self.vectors()
-        XCTAssertEqual(v.valid.count, 6)
-        XCTAssertEqual(v.invalid.count, 18)
+        XCTAssertEqual(v.valid.count, 8)
+        XCTAssertEqual(v.invalid.count, 20)
         for c in v.valid {
             switch BugCapsuleConnectionToken.parse(c.token) {
             case .success(let backend):

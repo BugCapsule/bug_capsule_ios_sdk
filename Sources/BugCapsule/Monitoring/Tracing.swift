@@ -332,7 +332,12 @@ final class Tracer: @unchecked Sendable {
     }
 
     /// Substring targets, or `/regex/`.
-    static func matches(_ url: String, targets: [String]) -> Bool {
+    /// [targets] come from the app. [narrowedBy] (the server's list) can
+    /// only remove destinations: a URL must match both. Its entries are plain
+    /// substrings, never patterns, so a server can't add hosts or run a regex
+    /// on every request URL.
+    static func matches(_ url: String, targets: [String], narrowedBy: [String]? = nil) -> Bool {
+        if let narrowedBy, !narrowedBy.contains(where: { !$0.isEmpty && url.contains($0) }) { return false }
         for t in targets where !t.isEmpty {
             if t.count >= 2 && t.hasPrefix("/") && t.hasSuffix("/") {
                 let pattern = String(t.dropFirst().dropLast())
@@ -374,7 +379,10 @@ final class Tracer: @unchecked Sendable {
             span = s
         }
         var headers: [String: String] = [:]
-        if Self.matches(url, targets: monitoring.tracePropagationTargets) {
+        if Self.matches(
+            url, targets: monitoring.options.tracePropagationTargets,
+            narrowedBy: monitoring.remoteTracePropagationTargets)
+        {
             if request.value(forHTTPHeaderField: "traceparent") == nil {
                 headers["traceparent"] = traceparent(spanId: span?.spanId)
             }

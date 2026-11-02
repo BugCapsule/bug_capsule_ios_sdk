@@ -101,12 +101,89 @@ final class NetworkCaptureTests: XCTestCase {
         XCTAssertNil(httpEvents[0].data["responseBody"])
     }
 
-    func testBinaryBodiesAreBase64WithinTheBinaryLimit() async throws {
+    /// Restarts capture with [config] (the same integration and session).
+    private func restart(_ config: BugCapsuleConfig) async {
+        await BugCapsule.resetForTesting()
+        FakeServerProtocol.reset()
+        BugCapsule.start(
+            config, integrations: [net],
+            overrides: BugCapsuleTestOverrides(storageDirectory: tempDirectory(), random: { 0 }))
+        XCTAssertTrue(BugCapsule.isRecording)
+    }
+
+    func testBinaryBodiesAreSizeAndTypeOnlyByDefault() async throws {
+        FakeServerProtocol.routes["/img"] = .init(headers: ["Content-Type": "image/png"], chunks: [Data([1, 2, 3, 4])])
+        var req = URLRequest(url: URL(string: "https://shop.test/img")!)
+        req.httpMethod = "POST"
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        req.httpBody = Data([9, 8, 7])
+        let (data, _) = try await urlSession.data(for: req)
+        XCTAssertEqual(data, Data([1, 2, 3, 4]), "the app gets the bytes")
+        await waitForEvents(1)
+        let e = httpEvents[0].data
+        XCTAssertEqual(e["bodyEncoding"], "omitted")
+        XCTAssertEqual(e["responseBody"], .null)
+        XCTAssertEqual(e["responseBodyInfo"], ["size": 4, "contentType": "image/png"])
+        XCTAssertEqual(e["requestEncoding"], "omitted")
+        XCTAssertEqual(e["requestBody"], .null)
+        XCTAssertEqual(e["requestBodyInfo"], ["size": 3, "contentType": "application/octet-stream"])
+        XCTAssertFalse(JSON.encode(.object(e)).contains(Data([1, 2, 3, 4]).base64EncodedString()))
+    }
+
+    func testBinaryBodiesAreBase64WithTheOptIn() async throws {
+        await restart(BugCapsuleConfig(appVersion: "1", appBuild: "1", mode: .qa, captureBinaryBodies: true, maxBodyBytes: 128))
         FakeServerProtocol.routes["/img"] = .init(headers: ["Content-Type": "image/png"], chunks: [Data([1, 2, 3, 4])])
         _ = try await urlSession.data(from: URL(string: "https://shop.test/img")!)
         await waitForEvents(1)
         XCTAssertEqual(httpEvents[0].data["bodyEncoding"], "base64")
         XCTAssertEqual(httpEvents[0].data["responseBody"], .string(Data([1, 2, 3, 4]).base64EncodedString()))
+        XCTAssertNil(httpEvents[0].data["responseBodyInfo"])
+    }
+
+    func testProductionModeCapturesNoBodiesByDefault() async throws {
+        let config = BugCapsuleConfig(appVersion: "1", appBuild: "1", mode: .production, productionSampleRate: 1)
+        XCTAssertFalse(config.resolvedCaptureNetworkBodies)
+        await restart(config)
+        XCTAssertFalse(BugCapsuleSession.current!.captureNetworkBodies)
+        FakeServerProtocol.routes["/a"] = .init()
+        var req = URLRequest(url: URL(string: "https://shop.test/a")!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = Data(#"{"email":"a@b.test"}"#.utf8)
+        _ = try await urlSession.data(for: req)
+        await waitForEvents(1)
+        let e = httpEvents[0].data
+        XCTAssertEqual(e["bodyEncoding"], "omitted")
+        XCTAssertEqual(e["responseBody"], .null)
+        XCTAssertEqual(e["requestEncoding"], "omitted")
+        XCTAssertEqual(e["requestBody"], .null)
+        XCTAssertEqual(e["status"], 200, "status and headers are still recorded")
+        let result = await BugCapsule.capture()
+        let r = try XCTUnwrap(result)
+        XCTAssertTrue(r.eligibility.missing.contains { $0.dependency == "network.bodies" }, "eligibility lists the missing bodies")
+    }
+
+    func testDebugAndQAModesCaptureBodiesByDefault() async throws {
+        for mode in [CaptureMode.debug, .qa] {
+            let config = BugCapsuleConfig(appVersion: "1", appBuild: "1", mode: mode)
+            XCTAssertTrue(config.resolvedCaptureNetworkBodies)
+            await restart(config)
+            FakeServerProtocol.routes["/a"] = .init()
+            _ = try await urlSession.data(from: URL(string: "https://shop.test/a")!)
+            await waitForEvents(1)
+            XCTAssertEqual(httpEvents[0].data["bodyEncoding"], "json", "\(mode)")
+            XCTAssertEqual(httpEvents[0].data["responseBody"], ["ok": true])
+        }
+    }
+
+    func testAnExplicitSettingWinsOverTheModeDefault() async throws {
+        XCTAssertFalse(BugCapsuleConfig(mode: .qa, captureNetworkBodies: false).resolvedCaptureNetworkBodies)
+        await restart(BugCapsuleConfig(appVersion: "1", appBuild: "1", mode: .production, productionSampleRate: 1, captureNetworkBodies: true))
+        FakeServerProtocol.routes["/a"] = .init()
+        _ = try await urlSession.data(from: URL(string: "https://shop.test/a")!)
+        await waitForEvents(1)
+        XCTAssertEqual(httpEvents[0].data["bodyEncoding"], "json")
+        XCTAssertEqual(httpEvents[0].data["responseBody"], ["ok": true])
     }
 
     func testConnectionErrorIsRecordedAndRaisedToTheApp() async throws {
@@ -336,6 +413,19 @@ final class NetworkReplayTests: XCTestCase {
         let (_, response) = try await session.data(from: URL(string: "https://shop.test/old")!)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 302)
         XCTAssertTrue(engine.buildReport().divergences.contains { $0.type == "network.unused" && $0.detail == "GET shop.test/new" })
+    }
+
+    func testOmittedBodyFixtureServesStatusAndHeadersAndDiverges() async throws {
+        startReplay([httpEvent(seq: 1, t: 10, key: "GET shop.test/api/prod", status: 201, body: .null, durationMs: 5, encoding: "omitted")])
+        let (data, response) = try await urlSession.data(from: URL(string: "https://shop.test/api/prod")!)
+        let http = try XCTUnwrap(response as? HTTPURLResponse)
+        XCTAssertEqual(http.statusCode, 201)
+        XCTAssertEqual(http.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertEqual(data, Data())
+        let report = engine.buildReport()
+        let noBody = report.divergences.filter { $0.type == "network.noBody" }
+        XCTAssertEqual(noBody.map(\.detail), ["GET shop.test/api/prod"])
+        XCTAssertTrue(noBody.allSatisfy(DivergencePolicy.isMaterial))
     }
 
     func testFixtureWithoutBodyReportsNoBody() async throws {

@@ -109,13 +109,23 @@ public enum BugCapsuleConnectionToken {
         return (16...200).contains(body.count) && body.allSatisfy(isBase64URLScalar)
     }
 
-    /// An absolute http(s) URL without user info, query or fragment;
-    /// trailing slashes removed.
+    /// Hosts plain http may reach: loopback, and the Android emulator's alias
+    /// for the development machine. Anything else must be https, because the
+    /// ingest credential travels in every request.
+    static func isLocalDevelopmentHost(_ host: String) -> Bool {
+        let h = host.lowercased()
+        if h == "localhost" || h == "::1" || h == "[::1]" || h == "10.0.2.2" { return true }
+        return h.range(of: #"^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#, options: .regularExpression) != nil
+    }
+
+    /// An absolute https URL (http only to a local development host) without
+    /// user info, query or fragment; trailing slashes removed.
     static func apiURL(_ api: String?) -> String? {
         guard let api, !api.isEmpty, api.count <= 2000, let c = URLComponents(string: api),
             let scheme = c.scheme?.lowercased(), scheme == "http" || scheme == "https",
             let host = c.host, !host.isEmpty,
-            c.user == nil, c.password == nil, c.query == nil, c.fragment == nil
+            c.user == nil, c.password == nil, c.query == nil, c.fragment == nil,
+            scheme == "https" || isLocalDevelopmentHost(host)
         else { return nil }
         var url = api
         while url.hasSuffix("/") { url.removeLast() }
