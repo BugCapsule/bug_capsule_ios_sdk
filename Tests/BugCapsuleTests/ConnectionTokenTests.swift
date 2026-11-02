@@ -230,7 +230,8 @@ final class TokenSetupTests: XCTestCase {
             // The capture logs once its file is saved: wait for that line, so
             // no capture of this iteration is still running (and logging into
             // the next test's sink) after the reset.
-            await waitUntil { logs.items.contains { $0.contains("[bugcapsule] captured ") } }
+            let captures = dir.path
+            await waitUntil { logs.items.contains { $0.contains("[bugcapsule] captured ") && $0.contains(captures) } }
             XCTAssertEqual(BugCapsule.savedCaptures().count, 1)
             XCTAssertEqual(logs.items.filter { $0.contains("[bugcapsule] the SDK token can't be used (\(state.rawValue))") }.count, 1)
             await BugCapsule.resetForTesting()
@@ -316,10 +317,11 @@ final class TokenSetupTests: XCTestCase {
     }
 
     func testHangingBackendNeverBlocksStartOrTheApp() async throws {
-        // The backend answers only when the test ends.
+        // The backend answers nothing until the test opens it; then every request.
         let answer = DispatchSemaphore(value: 0)
         let server = try TestHTTPServer { _ in
             answer.wait()
+            answer.signal()  // stays open for the next request
             return .init(status: 503)
         }
         defer {
@@ -334,6 +336,11 @@ final class TokenSetupTests: XCTestCase {
         BugCapsule.fail("while_hanging")
         BugCapsule.log("still responsive")
         XCTAssertLessThan(Date().timeIntervalSince(failed), 0.5)
+        // Let the backend answer and the capture finish here, so it never
+        // logs into the next test's sink.
+        answer.signal()
+        let captures = dir.path
+        await waitUntil { self.logs.items.contains { $0.contains("[bugcapsule] captured ") && $0.contains(captures) } }
     }
 
     func testStatusReportsInstalledAdapters() async throws {
