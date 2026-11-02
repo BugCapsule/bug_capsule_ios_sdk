@@ -60,6 +60,8 @@ final class Monitoring: @unchecked Sendable {
     private var spanScopes: [ObjectIdentifier: BugCapsuleSpan?] = [:]
     private var _hangCapturedForTesting: (@Sendable () -> Void)?
     private var _hangsCaptured = 0
+    /// The step `captureAppHang` is in (diagnostics: where a capture blocks).
+    private var hangStep = "idle"
     /// Bumped by `dropPending`: an envelope taken before it is never written.
     private var dataGeneration = 0
     let startDate = Date()
@@ -554,9 +556,17 @@ final class Monitoring: @unchecked Sendable {
 
     func captureAppHang(_ samples: [ThreadSample], threshold: TimeInterval) {
         // A later MetricKit hang diagnostic of this process is the same hang.
+        lock.locked { hangStep = "ledger" }
         ledger.record(.hang, at: Date(), pid: Int(getpid()))
-        capture(CrashEvents.hangDraft(samples, threshold: threshold, stack: stack))
+        lock.locked { hangStep = "draft" }
+        let draft = CrashEvents.hangDraft(samples, threshold: threshold, stack: stack)
+        lock.locked { hangStep = "prepare" }
+        if let payload = prepare(draft, capsuleId: nil) {
+            lock.locked { hangStep = "send" }
+            send(payload, draft: draft, synchronous: false)
+        }
         lock.locked { () -> (@Sendable () -> Void)? in
+            hangStep = "done"
             _hangsCaptured += 1
             return _hangCapturedForTesting
         }?()
@@ -567,8 +577,10 @@ final class Monitoring: @unchecked Sendable {
 
     /// Why a watchdog hang would not be reported (tests).
     var hangDiagnosticsForTesting: String {
-        let (hangs, foreground, owns, stopped) = lock.locked { (self.hangs, self.foreground, ownsCrashHandlers, self.stopped) }
-        return "watchdog=\(hangs?.stateForTesting ?? "none") foreground=\(foreground) ownsCrashHandlers=\(owns) "
+        let (hangs, foreground, owns, stopped, step) = lock.locked {
+            (self.hangs, self.foreground, ownsCrashHandlers, self.stopped, hangStep)
+        }
+        return "watchdog=\(hangs?.stateForTesting ?? "none") captureStep=\(step) foreground=\(foreground) ownsCrashHandlers=\(owns) "
             + "stopped=\(stopped) debugger=\(NativeCrashHandler.debuggerAttached) "
             + "hangTracking=\(options.enableAppHangTracking) threshold=\(options.appHangTimeout)"
     }
