@@ -348,6 +348,28 @@ bugcapsule regress add <id>          # keep it as a regression test
 bugcapsule regress run               # in CI: exit 1 when a regression fails
 ```
 
+**What FIXED needs (verdict v2).** "The failure did not fire" is not enough:
+the capsule's build must reproduce the failure in every baseline attempt (at
+least 3), enough candidate attempts must all run cleanly (8 after a 3/3
+baseline, 6 after 5/5, 5 after 10/10), and each clean attempt must show the
+failing path ran. The SDK reports that evidence with every replay result:
+
+```swift
+BugCapsule.check("cart_total_non_negative", total >= 0)   // passing during replay = strong evidence
+BugCapsule.expect("cart_total_positive") { cart.total > 0 } // postcondition, checked after replay settles
+```
+
+- The capsule's own `check` passing, or every `expect` postcondition holding,
+  gives **FIXED**. A postcondition that fails gives **STILL FAILING**.
+- If replay only got past the recorded failure point, the result is
+  **FIXED (QUALIFIED)**, exit 4. A partial capsule also gives FIXED
+  (QUALIFIED).
+- No evidence (for example, the failing code never ran), a baseline that did
+  not reproduce, or an ineligible capsule gives **INCONCLUSIVE**.
+- Live traffic allowed during replay gives **UNSAFE**, exit 5.
+
+`expect` does nothing outside replay. Reproductions carry no evidence.
+
 The CLI builds once, then for each attempt reinstalls the app on the simulator
 (fresh data) and runs your replay test. Replay on physical devices is not
 supported yet; capture works on any device.
