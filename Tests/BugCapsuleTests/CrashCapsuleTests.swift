@@ -361,7 +361,10 @@ final class CrashCapsuleTests: XCTestCase {
         XCTAssertNotNil(c.header["anchorT"]?.intValue)
         XCTAssertEqual(c.header["session"]?["id"], .string(session.sessionId))
 
-        // Ending normally keeps it; the next launch deletes it (no fatal event).
+        // Ending normally (in the background) keeps it; the next launch
+        // deletes it (no fatal event). A run that ended in the foreground
+        // would be kept for a MetricKit diagnostic where MetricKit runs (iOS).
+        session.record(EventTypes.lifecycle, ["state": "paused"])
         await BugCapsule.resetForTesting()
         XCTAssertTrue(FileManager.default.fileExists(atPath: journal.directory.path))
         BugCapsule.start(

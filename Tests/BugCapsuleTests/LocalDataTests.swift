@@ -195,6 +195,11 @@ final class LocalDataTests: XCTestCase {
 
     func testWritesAreProtectedUntilFirstUnlock() throws {
         #if os(iOS)
+            XCTAssertEqual(FileIO.writeOptions, [.completeFileProtectionUntilFirstUserAuthentication])
+            XCTAssertEqual(FileIO.protection?[.protectionKey] as? FileProtectionType, .completeUntilFirstUserAuthentication)
+        #endif
+        #if os(iOS) && !targetEnvironment(simulator)
+            // The simulator has no data protection: it reports no class.
             let file = dir.appendingPathComponent("p.json")
             try FileIO.writeAtomically(Data("one".utf8), to: file)
             try FileIO.writeAtomically(Data("two".utf8), to: file)
@@ -204,7 +209,7 @@ final class LocalDataTests: XCTestCase {
             try FileIO.ensureDirectory(sub)
             let dirAttributes = try FileManager.default.attributesOfItem(atPath: sub.path)
             XCTAssertEqual(dirAttributes[.protectionKey] as? FileProtectionType, .completeUntilFirstUserAuthentication)
-        #else
+        #elseif !os(iOS)
             XCTAssertNil(FileIO.protection, "macOS has no data protection classes")
         #endif
     }

@@ -20,15 +20,20 @@ enum FileIO {
         #endif
     }
 
+    /// Options of every write: the protection class on iOS.
+    static var writeOptions: Data.WritingOptions {
+        #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+            return [.completeFileProtectionUntilFirstUserAuthentication]
+        #else
+            return []
+        #endif
+    }
+
     static func writeAtomically(_ data: Data, to url: URL) throws {
         let tmp = url.deletingLastPathComponent()
             .appendingPathComponent("\(url.lastPathComponent).\(UInt64(Date().timeIntervalSince1970 * 1_000_000)).tmp")
         do {
-            #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
-                try data.write(to: tmp, options: [.completeFileProtectionUntilFirstUserAuthentication])
-            #else
-                try data.write(to: tmp, options: [])
-            #endif
+            try data.write(to: tmp, options: writeOptions)
             let handle = try FileHandle(forWritingTo: tmp)
             try? handle.synchronize()
             try? handle.close()

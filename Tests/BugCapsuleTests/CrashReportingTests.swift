@@ -212,6 +212,43 @@ final class CrashReportingTests: XCTestCase {
         XCTAssertEqual(r.threads.filter(\.isMain).count, 1)
     }
 
+    func testWrittenReportListsTheImagesOfItsFrames() throws {
+        XCTAssertTrue(NativeCrashHandler.install(directory: dir, mach: false))
+        defer { NativeCrashHandler.uninstallForTesting() }
+        XCTAssertTrue(NativeCrashHandler.writeTestReport(signal: SIGSEGV))
+        let r = try XCTUnwrap(NativeCrashReport.parse(Data(contentsOf: NativeCrashHandler.reportFile(in: dir))))
+        // Every image of this process would not fit the writer's buffer on
+        // the simulator: the list must still be there, app images first.
+        XCTAssertFalse(r.images.isEmpty)
+        let ownImage = try XCTUnwrap(DebugImageCache.shared.image(containing: r.frames[0]))
+        XCTAssertTrue(r.images.contains { $0.debugId == ownImage.debugId }, ownImage.path)
+    }
+
+    func testImagesPayloadKeepsAppImagesFirstWithinTheLimit() throws {
+        func image(_ path: String, _ n: UInt64) -> DebugImage {
+            DebugImage(
+                path: path, debugId: UUID().uuidString.lowercased(), loadAddress: 0x1_0000_0000 + n * 0x10000,
+                vmAddress: 0, size: 0x1000, arch: "arm64")
+        }
+        let system = (0..<50).map { image("/System/Library/Frameworks/F\($0).framework/F\($0)", UInt64($0)) }
+        let simulator = (0..<50).map {
+            image("/Library/Developer/CoreSimulator/Volumes/iOS/RuntimeRoot/usr/lib/l\($0).dylib", UInt64(100 + $0))
+        }
+        let app = [image("/private/var/containers/Bundle/Application/X/Shop.app/Shop", 200),
+                   image("/private/var/containers/Bundle/Application/X/Shop.app/Frameworks/Kit.framework/Kit", 201)]
+        let all = system + app + simulator
+        XCTAssertEqual(NativeCrashHandler.imagesPayload(all), JSON.encodeData(.array(all.map(\.json))), "fits: unchanged")
+
+        let limit = 4 * JSON.encodeData(all[0].json).count
+        let payload = NativeCrashHandler.imagesPayload(all, limit: limit)
+        XCTAssertLessThanOrEqual(payload.count, limit)
+        let kept = try XCTUnwrap(JSON.parse(payload).arrayValue).compactMap(DebugImage.init(json:))
+        XCTAssertEqual(Array(kept.prefix(2)).map(\.debugId), app.map(\.debugId))
+        XCTAssertGreaterThan(kept.count, 2, "system images fill the rest")
+
+        XCTAssertLessThanOrEqual(NativeCrashHandler.imagesPayload(DebugImageCache.shared.all).count, NativeCrashHandler.imagesLimit)
+    }
+
     func testThreadsAreKeptWithinTheServerLimits() {
         let frame: JSONValue = [
             "instructionAddr": "0x1045a0c3c", "imageAddr": "0x104578000", "inApp": false,
