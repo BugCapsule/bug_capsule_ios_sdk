@@ -293,6 +293,22 @@
       "output": "keys [REDACTED] [REDACTED] [REDACTED] [REDACTED]"
     },
     {
+      "input": "bugcapsule keys bcs_abcdefghijklmnopqrstuv bct_abcdefghijklmnopqrstuv bca_abcdefghijklmnopqrstuv",
+      "output": "bugcapsule keys [REDACTED] [REDACTED] [REDACTED]"
+    },
+    {
+      "input": "console tokens bcw_abcdefghijklmnopqrstuv bcp_abcdefghijklmnopqrstuv bcv_abcdefghijklmnopqrstuv",
+      "output": "console tokens [REDACTED] [REDACTED] [REDACTED]"
+    },
+    {
+      "input": "delivery bcpd_abcdefghijklmnopqrstuv and sdk token bcsdk.v1.eyJhcGkiOiJodHRwczovL2FwaS5leGFtcGxlIn0",
+      "output": "delivery [REDACTED] and sdk token [REDACTED]"
+    },
+    {
+      "input": "anchors stay readable bcek.v1.eyJraWRzIjpbImVrX2FiY2RlZmdoIl19 and short bct_abc",
+      "output": "anchors stay readable bcek.v1.eyJraWRzIjpbImVrX2FiY2RlZmdoIl19 and short bct_abc"
+    },
+    {
       "input": "GET /login?password=hunter2&user=qa&loyaltyId=L1",
       "output": "GET /login?password=[REDACTED]&user=qa&loyaltyId=[REDACTED]"
     },
