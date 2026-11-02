@@ -387,6 +387,8 @@ final class CrashCapsuleTests: XCTestCase {
             overrides: BugCapsuleTestOverrides(storageDirectory: dir))
         let next = try XCTUnwrap(BugCapsuleSession.current)
         await waitForQueue(next)
+        // The new journal's directory is created by its writer queue.
+        try XCTUnwrap(next.journalForTesting).waitForWritesForTesting()
         let left = try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("journal").path)
         XCTAssertEqual(left, ["\(getpid())"], "only the new process's journal")
     }
