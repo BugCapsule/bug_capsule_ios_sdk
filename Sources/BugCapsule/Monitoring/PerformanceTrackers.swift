@@ -121,6 +121,23 @@ final class AppHangTracker: @unchecked Sendable {
     private let onHang: @Sendable ([ThreadSample]) -> Void
     private let lock = NSLock()
     private var running = false
+    // What the loop did, for diagnostics (tests).
+    private var phase = "not started"
+    private var pings = 0
+    private var hangs = 0
+    private var backgroundSleeps = 0
+
+    /// The loop's phase and counters (tests).
+    var stateForTesting: String {
+        lock.locked { "phase=\(phase) running=\(running) pings=\(pings) hangs=\(hangs) backgroundSleeps=\(backgroundSleeps)" }
+    }
+
+    private func note(_ p: String, _ update: (AppHangTracker) -> Void = { _ in }) {
+        lock.locked {
+            phase = p
+            update(self)
+        }
+    }
 
     init(
         threshold: TimeInterval, mainThread: UInt32, isForeground: @escaping @Sendable () -> Bool,
@@ -157,21 +174,30 @@ final class AppHangTracker: @unchecked Sendable {
     }
 
     private func loop() {
+        note("looping")
         while isRunning {
             if !isForeground() {
+                note("background") { $0.backgroundSleeps += 1 }
                 Thread.sleep(forTimeInterval: 0.5)
                 continue
             }
             let responded = DispatchSemaphore(value: 0)
+            note("pinging") { $0.pings += 1 }
             DispatchQueue.main.async { responded.signal() }
             if responded.wait(timeout: .now() + threshold) == .timedOut {
                 if isRunning && isForeground() {
-                    onHang(sample())
+                    note("sampling")
+                    let samples = sample()
+                    note("reporting") { $0.hangs += 1 }
+                    onHang(samples)
                 }
                 // One report per hang: wait for the main thread to come back.
+                note("waiting for main")
                 responded.wait()
             }
+            note("sleeping")
             Thread.sleep(forTimeInterval: min(0.5, threshold / 2))
         }
+        note("stopped")
     }
 }

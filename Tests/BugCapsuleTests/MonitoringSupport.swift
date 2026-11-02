@@ -68,7 +68,9 @@ final class StubBackend: URLProtocol, @unchecked Sendable {
         if body.isEmpty, let stream = request.httpBodyStream {
             stream.open()
             var buf = [UInt8](repeating: 0, count: 64 * 1024)
-            while stream.hasBytesAvailable {
+            // Until the end of the body: `hasBytesAvailable` can be false before
+            // all of it has arrived, which cut bodies short.
+            while true {
                 let n = stream.read(&buf, maxLength: buf.count)
                 if n <= 0 { break }
                 body.append(buf, count: n)

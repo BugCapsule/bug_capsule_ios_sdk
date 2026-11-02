@@ -1,0 +1,11 @@
+# Weekly, grouped dependency updates (BC-ENT-042). Security updates are
+# opened as soon as an advisory is published, independent of this schedule.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github_actions:
+        patterns: ['*']

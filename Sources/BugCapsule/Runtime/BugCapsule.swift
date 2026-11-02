@@ -139,6 +139,43 @@ public enum BugCapsule {
     /// Saved capsule files, newest first (at most 20).
     public static func savedCaptures() -> [URL] { BugCapsuleSession.current?.store?.savedCaptures() ?? [] }
 
+    /// Deletes what BugCapsule stored on this device: queued and saved
+    /// capsules, queued monitoring events, crash journals and reports,
+    /// release-health state and the monitoring install id. Recording stops
+    /// for the rest of this run (its buffer is dropped) and starts again on
+    /// the next launch. Kept: the emergency policy cache, so guards keep
+    /// working offline, and the cached remote config (the kill switch).
+    /// Works before `start` too.
+    public static func clearLocalData() {
+        if let session = BugCapsuleSession.current {
+            session.clearLocalData()
+        } else if let root = try? CapsuleStore.defaultRoot() {
+            LocalData.wipe(root: root)
+        }
+    }
+
+    /// Collection consent, persisted across launches. False: nothing is
+    /// captured or uploaded, and what is queued or saved is deleted at once
+    /// (as `clearLocalData`). True: capture starts now when it was off at
+    /// `start`, or on the next launch when it was turned off in this run.
+    /// Can be called before `start`. Until it is first called,
+    /// `BugCapsuleConfig.collectionEnabledByDefault` applies.
+    @MainActor
+    public static func setCollectionEnabled(_ enabled: Bool) {
+        CollectionConsent.store(enabled)
+        if let session = BugCapsuleSession.current {
+            session.setCollectionEnabled(enabled)
+        } else if !enabled {
+            clearLocalData()
+        }
+    }
+
+    /// The persisted consent, else the running session's
+    /// `collectionEnabledByDefault`, else true.
+    public static var isCollectionEnabled: Bool {
+        CollectionConsent.isEnabled(default: BugCapsuleSession.current?.config.collectionEnabledByDefault ?? true)
+    }
+
     /// Fetches the remote capture config now (otherwise refreshed after its
     /// TTL and when the app becomes active).
     public static func refreshRemoteConfig() async {
@@ -153,6 +190,8 @@ public enum BugCapsule {
 
     /// Stops the SDK and forgets the session (tests).
     public static func resetForTesting() async {
+        // A capture still in flight would write and log into the next test.
+        await BugCapsuleSession.current?.waitForCapturesForTesting()
         await BugCapsuleSession.current?.dispose()
         BugCapsuleSession.current = nil
         Postconditions.shared.removeAll()

@@ -329,7 +329,11 @@ final class WebSocketTests: XCTestCase {
         XCTAssertEqual(connects.map { $0.data["attempt"] }, [0, 0])
         let messages = capsule.events(ofType: "ws.message").filter { $0.data["conn"] == connects[0].data["conn"] }
         XCTAssertEqual(messages.count, 2)
-        XCTAssertLessThanOrEqual(messages[1].t - messages[0].t, 2, "duplicate frames back to back")
+        // Back to back: nothing was recorded between the two frames. (Their
+        // `t` gap is the app's own pace between two receive calls, which a
+        // loaded machine stretches; the race below sets it to zero.)
+        XCTAssertEqual(messages[1].seq, messages[0].seq + 1, "duplicate frames back to back")
+        XCTAssertGreaterThanOrEqual(messages[1].t, messages[0].t)
         XCTAssertEqual(messages[0].data["payload"]?["kind"], "text")
         XCTAssertEqual(messages[0].data["payload"]?["mode"], "full")
         let closes = capsule.events(ofType: "ws.close").map { $0.data["initiator"]?.stringValue ?? "" }

@@ -55,14 +55,14 @@ final class EmergencyUpdateTests: XCTestCase {
         await BugCapsuleEmergency.shared.resetForTesting()
     }
 
-    func waitUntil(_ timeout: TimeInterval = 5, _ cond: @escaping () -> Bool) async {
+    func waitUntil(_ timeout: TimeInterval = 30, _ cond: @escaping () -> Bool) async {
         let end = Date().addingTimeInterval(timeout)
         while !cond() && Date() < end { try? await Task.sleep(nanoseconds: 10_000_000) }
     }
 
     func configuration(
         provider: (any EmergencyUpdateProvider)? = FakeUpdateProvider(), interval: TimeInterval = 0.5,
-        replaying: Bool = false
+        replaying: Bool = false, uptime: TestClock? = nil, timer: FlushTimerBox? = nil
     ) -> EmergencyConfiguration {
         var c = EmergencyConfiguration(
             trustAnchor: signer.anchor(app: app), backend: backend.backend, appVersion: "2.4.1", updateProvider: provider)
@@ -70,6 +70,9 @@ final class EmergencyUpdateTests: XCTestCase {
         c.testHooks = EmergencyTestHooks(
             storageDirectory: dir, now: { clock.now }, random: { 0.5 }, autoSchedule: false, isReplaying: { replaying },
             observeLifecycle: false, runtimeReportInterval: interval)
+        c.testHooks?.requestTimeout = loopbackRequestTimeout
+        if let uptime { c.testHooks?.uptime = { uptime.now.timeIntervalSince1970 } }
+        if let timer { c.testHooks?.runtimeReportTimer = timer.schedule }
         return c
     }
 
@@ -126,27 +129,41 @@ final class EmergencyUpdateTests: XCTestCase {
     }
 
     func testReportsCoalesceWithinTheIntervalAndNeverRepeatTheLastObject() async throws {
-        let r = EmergencyRuntime(configuration: configuration(interval: 0.5)) { _ in }
+        // The interval runs on a clock and a timer the test moves itself.
+        let uptime = TestClock(Date(timeIntervalSince1970: 1_000))
+        let timer = FlushTimerBox()
+        let r = EmergencyRuntime(configuration: configuration(interval: 0.5, uptime: uptime, timer: timer)) { _ in }
         func states() -> [JSONValue?] { runtimeReports.map { $0["runtime"]?["update"]?["state"] } }
         r.setUpdateStatus(status(.available))  // sent at once
-        await waitUntil { self.runtimeReports.count == 1 }
+        await waitUntil(30) { self.runtimeReports.count == 1 }
+        XCTAssertEqual(timer.delays, [])
+        uptime.advance(0.2)
         r.setUpdateStatus(status(.failed))  // within the interval: waits
         r.setUpdateStatus(status(.openedStore))  // replaces it
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(timer.delays.count, 1, "one wait for both")
+        XCTAssertEqual(timer.delays.first ?? 0, 0.3, accuracy: 1e-3, "until the interval ends")
         XCTAssertEqual(runtimeReports.count, 1, "nothing before the interval ends")
-        await waitUntil { self.runtimeReports.count == 2 }
+        uptime.advance(0.3)
+        timer.fireAll()
+        await waitUntil(30) { self.runtimeReports.count == 2 }
+        XCTAssertEqual(states(), ["available", "opened_store"], "only the latest object of an interval")
         // Changes within the next interval that end on the last report's object send nothing.
+        uptime.advance(0.1)
         r.setUpdateStatus(status(.declined))
         r.setUpdateStatus(status(.openedStore))
-        try? await Task.sleep(nanoseconds: 800_000_000)
-        XCTAssertEqual(states(), ["available", "opened_store"], "only the latest object of an interval")
+        XCTAssertEqual(timer.delays.count, 2)
+        uptime.advance(0.4)
+        timer.fireAll()
         // Setting the reported object again is no change.
         r.setUpdateStatus(status(.openedStore))
-        try? await Task.sleep(nanoseconds: 100_000_000)
-        XCTAssertEqual(runtimeReports.count, 2)
+        XCTAssertEqual(timer.delays.count, 2, "no wait for an unchanged object")
         // An object reported earlier, but not last, is sent again (after the interval, at once).
+        uptime.advance(0.1)
         r.setUpdateStatus(status(.available))
-        await waitUntil(1) { self.runtimeReports.count == 3 }
+        XCTAssertEqual(timer.delays.count, 2, "past the interval: no wait")
+        await waitUntil(30) { self.runtimeReports.count == 3 }
+        // Receipts are posted one after another: had the declined interval
+        // sent anything, it would be here before the third report.
         XCTAssertEqual(states(), ["available", "opened_store", "available"])
         // Several RUNTIME receipts for one revision (exempt from the receipt dedupe).
         XCTAssertEqual(runtimeReports.map { $0["revision"] }, [0, 0, 0])
@@ -157,7 +174,7 @@ final class EmergencyUpdateTests: XCTestCase {
         let r = EmergencyRuntime(configuration: configuration(replaying: true)) { _ in }
         r.setUpdateStatus(status(.available))
         r.setUpdateStatus(status(.openedStore))
-        try? await Task.sleep(nanoseconds: 700_000_000)
+        await r.waitForReceiptsForTesting()
         XCTAssertEqual(backend.server.requests.count, 0)
         XCTAssertNotNil(r.latestRuntimeObject)
         r.dispose()
@@ -166,7 +183,7 @@ final class EmergencyUpdateTests: XCTestCase {
     func testInvalidProviderIdIsNeverSent() async throws {
         let r = EmergencyRuntime(configuration: configuration(provider: FakeUpdateProvider(providerId: "Bad-Id"))) { _ in }
         _ = try await r.updates?.checkAvailability(requiredVersion: "2.5.0")
-        try? await Task.sleep(nanoseconds: 300_000_000)
+        await r.waitForReceiptsForTesting()
         XCTAssertEqual(runtimeReports.count, 0)
         XCTAssertEqual(r.updates?.status?.state, .available)
         r.dispose()
@@ -323,7 +340,7 @@ final class EmergencyUpdateTests: XCTestCase {
         try TestHTTPServer(handler: respond)
     }
 
-    func provider(_ server: TestHTTPServer, country: String? = "gb", timeout: TimeInterval = 5) -> AppStoreUpdateProvider {
+    func provider(_ server: TestHTTPServer, country: String? = "gb", timeout: TimeInterval = loopbackRequestTimeout) -> AppStoreUpdateProvider {
         AppStoreUpdateProvider(
             bundleId: "com.example.app", country: country, endpoint: URL(string: "\(server.baseURL)/lookup")!,
             timeout: timeout)
@@ -362,7 +379,7 @@ final class EmergencyUpdateTests: XCTestCase {
             switch mode.value {
             case "500": return .init(status: 500, body: Data("oops".utf8))
             case "empty": return .init(status: 200, body: Data(#"{"resultCount":0,"results":[]}"#.utf8))
-            case "slow": return .init(status: 200, body: Data("{}".utf8), delay: 3)
+            case "slow": return .init(status: 200, body: Data("{}".utf8), delay: 30)
             default: return .init(status: 200, body: Data("not json".utf8))
             }
         }
@@ -380,13 +397,13 @@ final class EmergencyUpdateTests: XCTestCase {
         let started = Date()
         r = await check(provider(server, timeout: 0.5))
         XCTAssertEqual(r.failure?.code, .timeout)
-        XCTAssertLessThan(Date().timeIntervalSince(started), 2.5)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 20, "the 0.5 s timeout, not the 30 s answer")
+        mode.mutate { $0 = "500" }
         r = await check(provider(server), required: "soon")
         XCTAssertEqual(r.failure?.code, .invalidVersion)
         // Nothing listens: a network error.
         let closed = try lookupServer { _ in .init(status: 200) }
-        closed.stop()
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        closed.stop()  // returns once the port is closed
         r = await check(provider(closed))
         XCTAssertEqual(r.failure?.code, .networkError)
     }

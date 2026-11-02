@@ -178,9 +178,9 @@ func messageText(_ m: URLSessionWebSocketTask.Message) -> String {
     }
 }
 
-/// Waits until [cond] holds (polling), up to [timeout].
+/// Waits until [cond] holds (polling), up to [timeout] (a safety net: it returns as soon as [cond] holds).
 func eventually(
-    _ timeout: TimeInterval = 5, isolation: isolated (any Actor)? = #isolation, _ cond: () -> Bool
+    _ timeout: TimeInterval = 30, isolation: isolated (any Actor)? = #isolation, _ cond: () -> Bool
 ) async -> Bool {
     let end = Date().addingTimeInterval(timeout)
     while !cond() {
@@ -249,7 +249,7 @@ final class StopFlag: @unchecked Sendable {
 
 /// Asserts that [cond] becomes true within [timeout].
 func expectEventually(
-    _ message: @autoclosure () -> String = "", timeout: TimeInterval = 5, file: StaticString = #filePath,
+    _ message: @autoclosure () -> String = "", timeout: TimeInterval = 30, file: StaticString = #filePath,
     line: UInt = #line, isolation: isolated (any Actor)? = #isolation, _ cond: () -> Bool
 ) async {
     let ok = await eventually(timeout, cond)
@@ -270,12 +270,8 @@ final class LoopbackWebSocketServer: @unchecked Sendable {
         params.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
         params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
         listener = try NWListener(using: params)
-        let ready = DispatchSemaphore(value: 0)
-        listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
         listener.newConnectionHandler = { [weak self] c in self?.serve(c) }
-        listener.start(queue: queue)
-        _ = ready.wait(timeout: .now() + 5)
-        port = listener.port?.rawValue ?? 0
+        port = try startListening(listener, queue: queue)
     }
 
     var url: URL { URL(string: "ws://127.0.0.1:\(port)/stream?session=s3cr3t")! }

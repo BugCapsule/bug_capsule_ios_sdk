@@ -205,9 +205,12 @@ final class EmergencyDecisionCaptureTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        backend.stop()
+        // This test's runtime finishes its receipts against this test's
+        // server, then goes, then the server: nothing outlives the test.
+        await BugCapsuleEmergency.shared.runtimeForTesting?.waitForReceiptsForTesting()
         await BugCapsuleEmergency.shared.resetForTesting()
         await BugCapsule.resetForTesting()
+        backend.stop()
     }
 
     /// A real document blocking [feature], served, fetched and verified.
@@ -220,10 +223,11 @@ final class EmergencyDecisionCaptureTests: XCTestCase {
         let clock = self.clock!
         c.testHooks = EmergencyTestHooks(
             storageDirectory: dir.appendingPathComponent("emergency"), now: { clock.now }, autoSchedule: false,
-            observeLifecycle: false)
+            observeLifecycle: false, requestTimeout: loopbackRequestTimeout)
         BugCapsule.emergency.initialize(c)
         await BugCapsule.emergency.refreshPolicies()
-        XCTAssertEqual(BugCapsule.emergency.status.revision, 5)
+        XCTAssertEqual(
+            BugCapsule.emergency.status.revision, 5, "policy not applied: \(String(describing: BugCapsule.emergency.status.lastError))")
     }
 
     func serve(revision: Int, message: String = "Temporarily unavailable.", ttl: TimeInterval = 3600) {
@@ -717,7 +721,7 @@ final class EmergencyDecisionCaptureTests: XCTestCase {
         var c = EmergencyConfiguration(trustAnchor: signer.anchor(app: app), backend: backend.backend)
         c.testHooks = EmergencyTestHooks(
             storageDirectory: dir.appendingPathComponent("emergency"), autoSchedule: false, isReplaying: { true },
-            observeLifecycle: false)
+            observeLifecycle: false, requestTimeout: loopbackRequestTimeout)
         BugCapsule.emergency.initialize(c)
         let d = BugCapsule.emergency.evaluate(featureKey: feature)
         XCTAssertTrue(d.allowed)
@@ -769,6 +773,23 @@ final class EmergencyDecisionCaptureTests: XCTestCase {
             events: events)
         let action = try await replayedAction(capsule)
         XCTAssertEqual(action, .block)
+    }
+
+    /// A device that runs the action late (here 400 ms, past the next
+    /// recorded decision) still sees the decision recorded before it.
+    func testAnActionDispatchedLateSeesTheDecisionRecordedBeforeIt() async throws {
+        let events = [
+            decision(feature, t: -500, seq: 1, action: "ALLOW"), decision(feature, t: 100, seq: 2),
+            BugCapsuleEvent(seq: 3, t: 150, type: EventTypes.action, data: ["id": "slow_look"]),
+            decision(feature, t: 400, seq: 4, action: "ALLOW"),
+        ]
+        let seen = EventLog()
+        BugCapsule.registerAction("slow_look") { _ in
+            Thread.sleep(forTimeInterval: 0.4)
+            seen.append(["action": .string(BugCapsule.emergency.evaluate(featureKey: feature).action.rawValue)])
+        }
+        _ = try await replay(makeCapsule(events: events))
+        XCTAssertEqual(seen.items.first?["action"]?.stringValue, EmergencyAction.block.rawValue)
     }
 
     func testAnIdleGapSkippedInReplayCountsOnTheClock() async throws {
@@ -824,7 +845,7 @@ final class EmergencyDecisionCaptureTests: XCTestCase {
         let provider = FakeUpdateProvider()
         await initializeGuards(provider: provider)
         let updates = BugCapsule.emergency.updates
-        for _ in 0..<500 where backend.receipts.isEmpty { try await Task.sleep(nanoseconds: 10_000_000) }
+        await BugCapsule.emergency.runtimeForTesting?.waitForReceiptsForTesting()
         XCTAssertEqual(backend.receipts.count, 1, "APPLIED")
         let requests = backend.server.requests.count
 
@@ -839,7 +860,7 @@ final class EmergencyDecisionCaptureTests: XCTestCase {
         XCTAssertEqual(provider.presented.value, 0)
         XCTAssertNil(updates.status)
         XCTAssertNil(updates.lastAvailability)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        await BugCapsule.emergency.runtimeForTesting?.waitForReceiptsForTesting()
         XCTAssertEqual(backend.server.requests.count, requests, "no runtime report")
 
         // The same calls outside a replay reach it.

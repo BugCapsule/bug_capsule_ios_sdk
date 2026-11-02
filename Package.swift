@@ -35,6 +35,8 @@ let package = Package(
             name: "BugCapsule",
             dependencies: ["BugCapsuleCrash"],
             path: "Sources/BugCapsule",
+            // Apple privacy manifest: required-reason APIs and collected data.
+            resources: [.copy("PrivacyInfo.xcprivacy")],
             swiftSettings: [.swiftLanguageMode(.v6)],
             linkerSettings: [.linkedLibrary("z")]
         ),
@@ -50,6 +52,17 @@ let package = Package(
             dependencies: ["BugCapsule"],
             path: "Tests/BugCapsuleTests",
             swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        // The patch API is iOS-only: on macOS these compile to nothing.
+        // Here rather than in Packages/BugCapsulePatch, whose wrapper product
+        // has the same name as this package's: Xcode 26 cannot load a graph
+        // with both ("GUID ... has already been registered", BC-ENT-053).
+        .testTarget(
+            name: "BugCapsulePatchTests",
+            dependencies: ["BugCapsulePatch", .target(name: "BcpatchRuntime", condition: .when(platforms: [.iOS]))],
+            path: "Packages/BugCapsulePatch/Tests/BugCapsulePatchTests",
+            resources: [.copy("Fixtures")],
+            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]
 )

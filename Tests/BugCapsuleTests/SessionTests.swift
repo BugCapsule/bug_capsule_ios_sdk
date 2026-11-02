@@ -29,7 +29,12 @@ final class SessionCaptureTests: XCTestCase {
             overrides: BugCapsuleTestOverrides(storageDirectory: dir, transport: transport, captureSettleDelay: 0.05))
     }
 
-    func waitUntil(_ timeout: TimeInterval = 5, _ cond: @escaping () -> Bool) async {
+    /// Every automatic capture scheduled so far is written, queued and
+    /// uploaded (or refused): the work `BugCapsule.fail` started is done.
+    func capturesDone() async { await BugCapsuleSession.current?.waitForCapturesForTesting() }
+
+    /// Polls [cond]; the timeout is only a safety net.
+    func waitUntil(_ timeout: TimeInterval = 30, _ cond: @escaping () -> Bool) async {
         let end = Date().addingTimeInterval(timeout)
         while !cond() && Date() < end { try? await Task.sleep(nanoseconds: 20_000_000) }
     }
@@ -45,7 +50,7 @@ final class SessionCaptureTests: XCTestCase {
         BugCapsule.textChanged("login.password", value: "hunter2")
         BugCapsule.textChanged("coupon", value: "SAVE10")
         BugCapsule.report(error: DemoError(id: 42))
-        await waitUntil { self.transport.uploadCount == 1 }
+        await capturesDone()
         XCTAssertEqual(transport.uploadCount, 1)
         let capsule = try CapsuleCodec.decode(transport.lastUpload!)
         let m = capsule.manifest
@@ -76,8 +81,7 @@ final class SessionCaptureTests: XCTestCase {
         start()
         for i in 0..<6 { BugCapsule.fail("assert_\(i % 4)") }
         BugCapsule.fail("assert_0")
-        await waitUntil { self.transport.uploadCount >= 3 }
-        try await Task.sleep(nanoseconds: 300_000_000)
+        await capturesDone()
         XCTAssertEqual(transport.uploadCount, 3)
         XCTAssertEqual(Set(try savedCapsules().compactMap { $0.manifest.failure?.signature }).count, 3)
     }
@@ -94,8 +98,8 @@ final class SessionCaptureTests: XCTestCase {
         transport.configResults = [.failed(message: "offline", status: nil, retryAfter: nil)]
         start()
         BugCapsule.fail("offline_failure")
-        await waitUntil { (try? self.savedCapsules().count) == 1 }
-        try await Task.sleep(nanoseconds: 200_000_000)
+        await capturesDone()
+        XCTAssertEqual(try savedCapsules().count, 1)
         XCTAssertEqual(transport.uploadCount, 0, "no config yet: queued, not uploaded")
         let queued = await BugCapsuleSession.current!.outbox!.entries()
         XCTAssertEqual(queued.count, 1)
@@ -110,17 +114,23 @@ final class SessionCaptureTests: XCTestCase {
         transport.configResults = [.failed(message: "offline", status: nil, retryAfter: nil)]
         start()
         BugCapsule.fail("before_kill")
-        await waitUntil { (try? self.savedCapsules().count) == 1 }
+        await capturesDone()
+        XCTAssertEqual(try savedCapsules().count, 1)
         let session = BugCapsuleSession.current!
         session.applyRemote(nil, RemoteCaptureConfig(enabled: false, fetchedAtMs: epochMs()))
         XCTAssertFalse(BugCapsule.isRecording)
-        await waitUntil { BugCapsule.savedCaptures().isEmpty }
+        // The purge runs in the background: the session queue, the outbox actor.
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in session.queue.async { c.resume() } }
         XCTAssertTrue(BugCapsule.savedCaptures().isEmpty)
-        try await Task.sleep(nanoseconds: 100_000_000)
-        let queued = await session.outbox!.entries()
+        var queued = await session.outbox!.entries()
+        let end = Date().addingTimeInterval(30)
+        while !queued.isEmpty && Date() < end {
+            try await Task.sleep(nanoseconds: 20_000_000)
+            queued = await session.outbox!.entries()
+        }
         XCTAssertTrue(queued.isEmpty)
         BugCapsule.fail("after_kill")
-        try await Task.sleep(nanoseconds: 200_000_000)
+        await capturesDone()
         XCTAssertTrue(BugCapsule.savedCaptures().isEmpty, "nothing is captured after the kill switch")
     }
 
@@ -185,7 +195,7 @@ final class SessionCaptureTests: XCTestCase {
         s.record(EventTypes.pointer, ["phase": "down", "pointer": 1, "x": 10.0, "y": 20.0, "kind": "touch"])
         s.record(EventTypes.pointer, ["phase": "up", "pointer": 1, "x": 10.0, "y": 20.0, "kind": "touch"])
         BugCapsule.fail("x")
-        await waitUntil { self.transport.uploadCount == 1 }
+        await capturesDone()
         let c = try CapsuleCodec.decode(transport.lastUpload!)
         XCTAssertEqual(c.manifest.eligibility.status, .partial)
         XCTAssertTrue(c.manifest.eligibility.missing.contains { $0.dependency == "capability.input.pointer.replay" })

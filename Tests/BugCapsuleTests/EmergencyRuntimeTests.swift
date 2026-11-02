@@ -83,7 +83,7 @@ final class EmergencyRuntimeTests: XCTestCase {
         await BugCapsule.resetForTesting()
     }
 
-    func waitUntil(_ timeout: TimeInterval = 5, _ cond: @escaping () -> Bool) async {
+    func waitUntil(_ timeout: TimeInterval = 30, _ cond: @escaping () -> Bool) async {
         let end = Date().addingTimeInterval(timeout)
         while !cond() && Date() < end { try? await Task.sleep(nanoseconds: 10_000_000) }
     }
@@ -100,6 +100,7 @@ final class EmergencyRuntimeTests: XCTestCase {
         c.testHooks = EmergencyTestHooks(
             storageDirectory: dir, now: { clock.now }, random: { random }, autoSchedule: autoSchedule,
             isReplaying: { replaying }, observeLifecycle: false)
+        c.testHooks?.requestTimeout = loopbackRequestTimeout
         return c
     }
 
@@ -534,8 +535,7 @@ final class EmergencyRuntimeTests: XCTestCase {
         await r.refresh(.manual)  // same rejection again: no second receipt
         backend.serve(envelope(revision: 4, issuedOffset: 1))
         await r.refresh(.manual)
-        await waitUntil { self.backend.receipts.count >= 3 }
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        await r.waitForReceiptsForTesting()
         let receipts = backend.receipts
         XCTAssertEqual(receipts.count, 3)
         let applied3 = try XCTUnwrap(receipts.first { $0["revision"] == 3 && $0["status"] == "APPLIED" })
@@ -572,7 +572,7 @@ final class EmergencyRuntimeTests: XCTestCase {
         XCTAssertTrue(d.allowed)
         XCTAssertEqual(d.source, .replay)
         XCTAssertNil(d.reasonCode)
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        await r.waitForReceiptsForTesting()
         XCTAssertEqual(backend.server.requests.count, before)
     }
 

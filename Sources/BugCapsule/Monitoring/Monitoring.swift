@@ -58,6 +58,12 @@ final class Monitoring: @unchecked Sendable {
     private var screen: ScreenLoad?
     private var interaction: BugCapsuleTransaction?
     private var spanScopes: [ObjectIdentifier: BugCapsuleSpan?] = [:]
+    private var _hangCapturedForTesting: (@Sendable () -> Void)?
+    private var _hangsCaptured = 0
+    /// The step `captureAppHang` is in (diagnostics: where a capture blocks).
+    private var hangStep = "idle"
+    /// Bumped by `dropPending`: an envelope taken before it is never written.
+    private var dataGeneration = 0
     let startDate = Date()
     /// How long screen / interaction transactions wait for child spans.
     var idleTimeout: TimeInterval = 3
@@ -249,11 +255,33 @@ final class Monitoring: @unchecked Sendable {
         metricKit?.stop()
         frames.stop()
         scope.onChange = nil
+        // Events still waiting for their batch go to disk now (sent on a
+        // later launch), not to an outbox about to close.
+        writePendingSynchronously()
         if owns {
             if options.enableNativeCrashHandling { NativeCrashHandler.uninstallForTesting() }
             CrashOwnership.release(.sdk)
         }
         if let box { Task { await box.close() } }
+    }
+
+    /// Local data was cleared: nothing pending or queued may leave the
+    /// device, and the breadcrumbs go too.
+    func dropPending() {
+        let box: UploadOutbox? = lock.locked {
+            pending = []
+            pendingBytes = 0
+            dataGeneration += 1
+            return outbox
+        }
+        scope.clearBreadcrumbs()
+        if let box { Task { await box.purge() } }
+    }
+
+    /// Collection was turned off: drops what is pending and stops.
+    func withdraw() {
+        dropPending()
+        stop()
     }
 
     // MARK: lifecycle
@@ -528,8 +556,40 @@ final class Monitoring: @unchecked Sendable {
 
     func captureAppHang(_ samples: [ThreadSample], threshold: TimeInterval) {
         // A later MetricKit hang diagnostic of this process is the same hang.
+        lock.locked { hangStep = "ledger" }
         ledger.record(.hang, at: Date(), pid: Int(getpid()))
-        capture(CrashEvents.hangDraft(samples, threshold: threshold, stack: stack))
+        lock.locked { hangStep = "draft" }
+        let draft = CrashEvents.hangDraft(samples, threshold: threshold, stack: stack)
+        lock.locked { hangStep = "prepare" }
+        if let payload = prepare(draft, capsuleId: nil) {
+            lock.locked { hangStep = "send" }
+            send(payload, draft: draft, synchronous: false)
+        }
+        lock.locked { () -> (@Sendable () -> Void)? in
+            hangStep = "done"
+            _hangsCaptured += 1
+            return _hangCapturedForTesting
+        }?()
+    }
+
+    /// Watchdog hangs captured so far (tests).
+    var hangsCapturedForTesting: Int { lock.locked { _hangsCaptured } }
+
+    /// Why a watchdog hang would not be reported (tests).
+    var hangDiagnosticsForTesting: String {
+        let (hangs, foreground, owns, stopped, step) = lock.locked {
+            (self.hangs, self.foreground, ownsCrashHandlers, self.stopped, hangStep)
+        }
+        return "watchdog=\(hangs?.stateForTesting ?? "none") captureStep=\(step) foreground=\(foreground) ownsCrashHandlers=\(owns) "
+            + "stopped=\(stopped) debugger=\(NativeCrashHandler.debuggerAttached) "
+            + "hangTracking=\(options.enableAppHangTracking) threshold=\(options.appHangTimeout)"
+    }
+
+    /// Called on the watchdog thread once a hang's event is queued, so a
+    /// test can hold the main thread exactly until then. Tests only.
+    var hangCapturedForTesting: (@Sendable () -> Void)? {
+        get { lock.locked { _hangCapturedForTesting } }
+        set { lock.locked { _hangCapturedForTesting = newValue } }
     }
 
     /// One MetricKit diagnostic payload. Failures BugCapsule reported
@@ -697,24 +757,43 @@ final class Monitoring: @unchecked Sendable {
         }
     }
 
-    private func takePending() -> [JSONValue] {
+    private func takePending() -> [JSONValue] { takePendingWithGeneration().items }
+
+    private func takePendingWithGeneration() -> (items: [JSONValue], generation: Int) {
         lock.locked {
             let items = pending
             pending = []
             pendingBytes = 0
             batchScheduled = false
-            return items
+            return (items, dataGeneration)
         }
+    }
+
+    /// Runs [write] under the lock `dropPending` takes, unless data was
+    /// dropped since [generation].
+    private func whileDataKept(_ generation: Int, _ write: () -> Bool) -> Bool {
+        lock.locked { generation == dataGeneration ? write() : false }
     }
 
     /// Moves pending items into the outbox and sends.
     func flushPending(send: Bool = true) async {
-        let items = takePending()
+        let (items, generation) = takePendingWithGeneration()
         let box = lock.locked { outbox }
         if !items.isEmpty, let box {
             if let bytes = try? Gzip.compress(envelopeBody(items)) {
-                if !(await box.enqueue(capsuleId: uuidV4(), bytes: bytes)) {
-                    BugCapsuleLog.warn("envelope not queued (outbox limit or disk error)")
+                let gate: (() -> Bool) -> Bool = { write in self.whileDataKept(generation, write) }
+                if !(await box.enqueue(capsuleId: uuidV4(), bytes: bytes, gate: gate)) {
+                    if !whileDataKept(generation, { true }) {
+                        // Collection turned off meanwhile: dropped, as intended.
+                    } else if lock.locked({ stopped }) {
+                        // Stopped meanwhile and the outbox closed: kept on disk all the same.
+                        _ = whileDataKept(generation) {
+                            UploadOutbox.writeSynchronously(
+                                directory: box.directory, capsuleId: uuidV4(), bytes: bytes, fileExtension: "envelope")
+                        }
+                    } else {
+                        BugCapsuleLog.warn("envelope not queued (outbox limit or disk error)")
+                    }
                 }
             }
         }

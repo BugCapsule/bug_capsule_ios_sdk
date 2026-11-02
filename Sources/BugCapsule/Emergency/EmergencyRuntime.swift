@@ -16,6 +16,12 @@ struct EmergencyTestHooks: @unchecked Sendable {
     var observeLifecycle = true
     /// Seconds between runtime reports (§7.6); nil: 60.
     var runtimeReportInterval: TimeInterval?
+    /// The monotonic clock runtime reports are spaced by; nil: `systemUptime`.
+    var uptime: (@Sendable () -> TimeInterval)?
+    /// Seconds without progress before an emergency request fails; nil: 5 (§3).
+    var requestTimeout: TimeInterval?
+    /// Runs [fire] when a runtime report interval ends, after [delay]; nil: a sleeping task.
+    var runtimeReportTimer: (@Sendable (_ delay: TimeInterval, _ fire: @escaping @Sendable () -> Void) -> Void)?
 }
 
 /// One initialized emergency client (§7): the verified document, the
@@ -82,6 +88,9 @@ final class EmergencyRuntime: @unchecked Sendable {
     private(set) var updates: EmergencyUpdateCoordinator?
     // Runtime reports (§7.6).
     private let runtimeReportInterval: TimeInterval
+    private let uptime: @Sendable () -> TimeInterval
+    private let requestTimeout: TimeInterval
+    private let runtimeReportTimer: (@Sendable (TimeInterval, @escaping @Sendable () -> Void) -> Void)?
     /// The latest `runtime` object, sent or not.
     private var runtimeObject: JSONObject?
     /// The encoded object of the last report: never sent twice in a row.
@@ -91,6 +100,8 @@ final class EmergencyRuntime: @unchecked Sendable {
     /// Sends the latest object when the interval ends.
     private var runtimeTimer: Task<Void, Never>?
     private var warnedInvalidRuntime = false
+    /// Receipts being posted, by id (removed once delivered or failed).
+    private var posting: [UUID: Task<Void, Never>] = [:]
     /// Delay of the last scheduled refresh (tests).
     var scheduledDelay: TimeInterval? { lock.locked { _scheduledDelay } }
     /// A refresh timer is waiting (tests).
@@ -110,6 +121,10 @@ final class EmergencyRuntime: @unchecked Sendable {
         observeLifecycle = hooks?.observeLifecycle ?? true
         replaying = hooks?.isReplaying ?? defaultReplaying
         runtimeReportInterval = hooks?.runtimeReportInterval ?? EmergencyRuntimeReport.interval
+        let defaultUptime: @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+        uptime = hooks?.uptime ?? defaultUptime
+        runtimeReportTimer = hooks?.runtimeReportTimer
+        requestTimeout = hooks?.requestTimeout ?? 5
         environment = c.environment
         refreshInterval = min(max(c.refreshInterval.isFinite ? c.refreshInterval : 60, Self.minRefreshInterval), 86400)
         appVersion = c.appVersion ?? BugCapsuleSession.current?.config.appVersion ?? Self.bundleVersion()
@@ -355,7 +370,7 @@ final class EmergencyRuntime: @unchecked Sendable {
     private func transport(for backend: BugCapsuleBackendConfig) -> EmergencyHTTPTransport {
         lock.locked {
             if let transport, transport.backend == backend { return transport }
-            let t = EmergencyHTTPTransport(backend: backend)
+            let t = EmergencyHTTPTransport(backend: backend, timeout: requestTimeout)
             transport = t
             return t
         }
@@ -605,10 +620,23 @@ final class EmergencyRuntime: @unchecked Sendable {
     ) {
         let transport = transport(for: backend)
         let app = anchor.applicationId
-        Task {
-            if case .failure(let failure) = await transport.sendReceipt(applicationId: app, body: body) {
-                BugCapsuleLog.warn("emergency: receipt \(status) for revision \(revision) not delivered (\(failure.message))")
+        let id = UUID()
+        lock.locked {
+            posting[id] = Task { [weak self] in
+                if case .failure(let failure) = await transport.sendReceipt(applicationId: app, body: body) {
+                    BugCapsuleLog.warn("emergency: receipt \(status) for revision \(revision) not delivered (\(failure.message))")
+                }
+                self?.lock.locked { self?.posting[id] = nil }
             }
+        }
+    }
+
+    /// Returns once every receipt posted so far was delivered or failed. Tests.
+    func waitForReceiptsForTesting() async {
+        while true {
+            let pending = lock.locked { Array(posting.values) }
+            if pending.isEmpty { return }
+            for t in pending { await t.value }
         }
     }
 
@@ -651,13 +679,19 @@ final class EmergencyRuntime: @unchecked Sendable {
             // Without a connection the object stays unsent; `BugCapsule.start`
             // reports it once a backend is known.
             guard backend != nil else { return .none }
-            let t = ProcessInfo.processInfo.systemUptime
+            let t = uptime()
             if let last = lastRuntimeReportAt, t - last < runtimeReportInterval {
                 let delay = runtimeReportInterval - (t - last)
-                runtimeTimer = Task { [weak self] in
-                    try? await Task.sleep(nanoseconds: UInt64(max(delay, 0) * 1_000_000_000))
-                    if Task.isCancelled { return }
-                    self?.runtimeIntervalEnded()
+                if let runtimeReportTimer {
+                    // Marks the wait; the test's timer ends it.
+                    runtimeTimer = Task {}
+                    runtimeReportTimer(delay) { [weak self] in self?.runtimeIntervalEnded() }
+                } else {
+                    runtimeTimer = Task { [weak self] in
+                        try? await Task.sleep(nanoseconds: UInt64(max(delay, 0) * 1_000_000_000))
+                        if Task.isCancelled { return }
+                        self?.runtimeIntervalEnded()
+                    }
                 }
                 return .none
             }

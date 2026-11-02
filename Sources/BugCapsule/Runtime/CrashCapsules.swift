@@ -165,7 +165,7 @@ extension BugCapsuleSession {
         labels.append(("source", "crash_journal"))
         labels.append(("crash.mechanism", failure.crash?["mechanism"]?.stringValue ?? "signal"))
         manifest.capsuleId = capsuleId
-        manifest.createdAt = Date()
+        manifest.createdAt = overrides?.clock?() ?? Date()
         manifest.failure = failure
         manifest.eligibility = eligibility.build()
         manifest.eventCount = events.count

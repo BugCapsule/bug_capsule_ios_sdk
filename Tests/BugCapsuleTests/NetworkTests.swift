@@ -32,9 +32,20 @@ final class NetworkCaptureTests: XCTestCase {
         BugCapsuleSession.current!.recorderForTesting!.window().events.filter { $0.type == EventTypes.http }
     }
 
+    /// Polls until the recorder holds [n] exchanges (30 s safety net).
     private func waitForEvents(_ n: Int, file: StaticString = #filePath, line: UInt = #line) async {
-        for _ in 0..<200 where httpEvents.count < n { try? await Task.sleep(nanoseconds: 10_000_000) }
+        let end = Date().addingTimeInterval(30)
+        while httpEvents.count < n && Date() < end { try? await Task.sleep(nanoseconds: 10_000_000) }
         XCTAssertGreaterThanOrEqual(httpEvents.count, n, file: file, line: line)
+    }
+
+    /// Polls until the fake server has received a request for [path]: the exchange is in flight.
+    private func waitForHit(_ path: String, file: StaticString = #filePath, line: UInt = #line) async {
+        let end = Date().addingTimeInterval(30)
+        while !FakeServerProtocol.lock.locked({ FakeServerProtocol.hits.contains(path) }) && Date() < end {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertTrue(FakeServerProtocol.lock.locked { FakeServerProtocol.hits.contains(path) }, file: file, line: line)
     }
 
     func testRecordsExchangeWithKeyOccurrenceRedactionAndUntouchedStream() async throws {
@@ -209,10 +220,10 @@ final class NetworkCaptureTests: XCTestCase {
     }
 
     func testCancelIsRecorded() async throws {
-        FakeServerProtocol.routes["/hang"] = .init(delay: 5)
+        FakeServerProtocol.routes["/hang"] = .init(delay: 600)
         let task = urlSession.dataTask(with: URL(string: "https://shop.test/hang")!)
         task.resume()
-        try await Task.sleep(nanoseconds: 100_000_000)
+        await waitForHit("/hang")
         task.cancel()
         await waitForEvents(1)
         XCTAssertEqual(httpEvents[0].data["error"]?["type"], "cancel")
@@ -228,10 +239,10 @@ final class NetworkCaptureTests: XCTestCase {
     }
 
     func testInFlightExchangeIsWrittenAsPending() async throws {
-        FakeServerProtocol.routes["/api/profile"] = .init(delay: 5)
+        FakeServerProtocol.routes["/api/profile"] = .init(delay: 600)
         let task = urlSession.dataTask(with: URL(string: "https://shop.test/api/profile")!)
         task.resume()
-        try await Task.sleep(nanoseconds: 150_000_000)
+        await waitForHit("/api/profile")
         let built = BugCapsuleSession.current!.buildCapsule(failure: FailureRecord.assertion("x", message: "", t: 1), labels: [:])!
         let pending = built.capsule.events.filter { $0.type == EventTypes.http }
         XCTAssertEqual(pending.count, 1)
@@ -368,8 +379,9 @@ final class NetworkReplayTests: XCTestCase {
         cancelTask.resume()
         try await Task.sleep(nanoseconds: 100_000_000)
         cancelTask.cancel()
-        await fulfillment(of: [done], timeout: 2)
-        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+        // Well before the recorded 5 s: the cancel ended the delay.
+        await fulfillment(of: [done], timeout: 4)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 4)
         XCTAssertEqual(observed.items, ["cancelled"])
         _ = task
     }

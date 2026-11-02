@@ -143,6 +143,10 @@ final class CrashBridgeRuntime: @unchecked Sendable {
     private var listener: (@Sendable (String) -> Void)?
     private var _lastRunCrashed = false
     private var _nativeInstalled = false
+    /// Runs [fire] after [delay]: the scope file write. Tests replace it.
+    typealias ScopeTimer = @Sendable (_ delay: TimeInterval, _ fire: @escaping @Sendable () -> Void) -> Void
+    /// Nil: `queue.asyncAfter`.
+    private var scopeTimer: ScopeTimer?
 
     var lastRunCrashed: Bool { lock.locked { _lastRunCrashed } }
     var nativeInstalled: Bool { lock.locked { _nativeInstalled } }
@@ -230,6 +234,7 @@ final class CrashBridgeRuntime: @unchecked Sendable {
                 scopeFileScheduled = false
                 generation += 1
                 listener = nil
+                scopeTimer = nil
                 _lastRunCrashed = false
                 _nativeInstalled = false
                 foreground = true
@@ -249,6 +254,17 @@ final class CrashBridgeRuntime: @unchecked Sendable {
 
     func setListener(_ l: (@Sendable (String) -> Void)?) { lock.locked { listener = l } }
 
+    // MARK: testing
+
+    /// Returns once the background queue ran everything handed to it so far
+    /// (the previous runs' reports after `install`, stored hangs).
+    func waitForBackgroundWorkForTesting() { lock.locked { queue }.sync {} }
+
+    /// Replaces the scope file's timer until `reset`.
+    func setScopeTimerForTesting(_ timer: ScopeTimer?) {
+        lock.locked { scopeTimer = timer }
+    }
+
     // MARK: scope
 
     func updateScope(json: String) {
@@ -257,7 +273,7 @@ final class CrashBridgeRuntime: @unchecked Sendable {
     }
 
     private func updateScope(object: JSONObject) {
-        let (next, native, schedule, queue, gen): (JSONObject, Bool, Bool, DispatchQueue, Int) = lock.locked {
+        let (next, native, schedule, queue, gen, timer): (JSONObject, Bool, Bool, DispatchQueue, Int, ScopeTimer?) = lock.locked {
             var next: JSONObject = [
                 "pid": .int(Int(getpid())), "release": .string(release), "environment": .string(environment),
             ]
@@ -266,11 +282,11 @@ final class CrashBridgeRuntime: @unchecked Sendable {
             scope = next
             let schedule = !scopeFileScheduled
             scopeFileScheduled = true
-            return (next, nativeEnabled, schedule, self.queue, generation)
+            return (next, nativeEnabled, schedule, self.queue, generation, scopeTimer)
         }
         if native { NativeCrashHandler.setContext(next) }
         guard schedule else { return }
-        queue.asyncAfter(deadline: .now() + Self.scopeFileInterval) { [weak self] in
+        let write: @Sendable () -> Void = { [weak self] in
             guard let self else { return }
             let pending = self.lock.locked { () -> (JSONObject, URL)? in
                 guard gen == self.generation, let dir = self.directory else { return nil }
@@ -279,6 +295,11 @@ final class CrashBridgeRuntime: @unchecked Sendable {
             }
             guard let (current, file) = pending else { return }
             try? FileIO.writeAtomically(JSON.encodeData(.object(current)), to: file)
+        }
+        if let timer {
+            timer(Self.scopeFileInterval) { queue.async(execute: write) }
+        } else {
+            queue.asyncAfter(deadline: .now() + Self.scopeFileInterval, execute: write)
         }
     }
 
@@ -357,7 +378,10 @@ final class CrashBridgeRuntime: @unchecked Sendable {
         }
         let job = Job()
         let queue = lock.locked { self.queue }
-        queue.async {
+        // The caller waits: at its priority, which also raises the reports
+        // built ahead of this on the serial utility queue (else a busy
+        // launch can starve them past [timeoutMs]).
+        queue.async(qos: .userInitiated, flags: .enforceQoS) {
             let go = job.lock.locked { () -> Bool in
                 if job.cancelled { return false }
                 job.started = true

@@ -154,7 +154,7 @@ enum NativeCrashHandler {
         let path = reportFile(in: directory).path
         let ok = path.withCString { bc_crash_install($0, mach) } == 0
         DebugImageCache.shared.mirror { images in
-            let bytes = JSON.encodeData(.array(images.map(\.json)))
+            let bytes = imagesPayload(images)
             bytes.withUnsafeBytes { raw in
                 bc_crash_set_images(raw.baseAddress?.assumingMemoryBound(to: CChar.self), raw.count)
             }
@@ -163,6 +163,32 @@ enum NativeCrashHandler {
     }
 
     static let contextLimit = Int(BC_CRASH_CONTEXT_MAX)
+    static let imagesLimit = Int(BC_CRASH_IMAGES_MAX)
+
+    /// The image list for the crash writer's buffer, which drops anything
+    /// longer whole. An iOS process easily loads 800 images (over 300 KiB
+    /// of JSON on the simulator, with its long runtime paths): then the
+    /// app's own images go first and system images fill what is left, so
+    /// the frames that matter keep their debug image.
+    static func imagesPayload(_ images: [DebugImage], limit: Int = imagesLimit) -> Data {
+        let all = JSON.encodeData(.array(images.map(\.json)))
+        if all.count <= limit { return all }
+        let ordered = images.filter { !isSystemImage($0.path) } + images.filter { isSystemImage($0.path) }
+        var kept: [JSONValue] = []
+        var size = 2  // []
+        for image in ordered {
+            let n = JSON.encodeData(image.json).count + 1  // and a comma
+            if size + n > limit { continue }
+            kept.append(image.json)
+            size += n
+        }
+        return JSON.encodeData(.array(kept))
+    }
+
+    /// OS libraries (the shared cache on a device, the runtime root on the simulator).
+    static func isSystemImage(_ path: String) -> Bool {
+        path.hasPrefix("/System/") || path.hasPrefix("/usr/lib/") || path.contains("/RuntimeRoot/")
+    }
 
     /// Mirrors [context] into the crash writer's buffer. Too large for it:
     /// the oldest breadcrumbs go first, then the extras.

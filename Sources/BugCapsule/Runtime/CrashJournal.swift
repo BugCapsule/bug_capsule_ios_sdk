@@ -55,9 +55,15 @@ final class CrashJournal: @unchecked Sendable {
     private var evicted = false
     private var lastSeq = 0
 
+    /// Runs [fire] after [delay] (the batching timer). Nil: `queue.asyncAfter`;
+    /// tests pass their own and fire it themselves.
+    typealias FlushTimer = @Sendable (_ delay: TimeInterval, _ fire: @escaping @Sendable () -> Void) -> Void
+    private let flushTimer: FlushTimer?
+
     /// Starts the journal with the header and the launch checkpoint.
-    init(directory: URL, maxBytes: Int, header: JSONObject, launch: Checkpoint) {
+    init(directory: URL, maxBytes: Int, header: JSONObject, launch: Checkpoint, flushTimer: FlushTimer? = nil) {
         self.directory = directory
+        self.flushTimer = flushTimer
         _maxBytes = max(maxBytes, 0)
         lastHeader = header
         pending = [.header(header), .checkpoint(launch)]
@@ -142,10 +148,16 @@ final class CrashJournal: @unchecked Sendable {
         guard let schedule else { return }
         if schedule == 0 {
             queue.async { self.drain() }
+        } else if let flushTimer {
+            flushTimer(schedule) { self.queue.async { self.drain() } }
         } else {
             queue.asyncAfter(deadline: .now() + schedule) { self.drain() }
         }
     }
+
+    /// Returns once every write already handed to the writer queue is done
+    /// (without draining what is still pending). Tests.
+    func waitForWritesForTesting() { queue.sync {} }
 
     // MARK: writer (queue)
 
@@ -269,7 +281,7 @@ final class CrashJournal: @unchecked Sendable {
         if handleStart != start {
             closeHandle()
             if !FileIO.fm.fileExists(atPath: url.path) {
-                guard FileIO.fm.createFile(atPath: url.path, contents: nil, attributes: Self.protection) else { return }
+                guard FileIO.fm.createFile(atPath: url.path, contents: nil, attributes: FileIO.protection) else { return }
             }
             guard let h = try? FileHandle(forWritingTo: url) else { return }
             _ = try? h.seekToEnd()
@@ -313,17 +325,7 @@ final class CrashJournal: @unchecked Sendable {
 
     // MARK: files
 
-    static var protection: [FileAttributeKey: Any]? {
-        #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
-            return [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
-        #else
-            return nil
-        #endif
-    }
-
-    static func ensureDirectory(_ url: URL) throws {
-        try FileIO.fm.createDirectory(at: url, withIntermediateDirectories: true, attributes: protection)
-    }
+    static func ensureDirectory(_ url: URL) throws { try FileIO.ensureDirectory(url) }
 
     /// Temp file + rename.
     static func writeAtomically(_ data: Data, to url: URL) throws {

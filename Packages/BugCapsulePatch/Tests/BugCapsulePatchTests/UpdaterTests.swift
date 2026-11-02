@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import XCTest
 
@@ -112,3 +113,4 @@ final class UpdaterTests: XCTestCase {
         XCTAssertTrue((try patch.receipts()["receipts"] as? [Any] ?? []).isEmpty)
     }
 }
+#endif

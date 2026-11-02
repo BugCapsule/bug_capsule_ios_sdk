@@ -26,6 +26,8 @@ extern "C" {
 #define BC_THREAD_MAX_FRAMES 100
 /// Size of the context buffer; longer contexts are dropped.
 #define BC_CRASH_CONTEXT_MAX (128 * 1024)
+/// Size of the images buffer; longer image lists are dropped.
+#define BC_CRASH_IMAGES_MAX (256 * 1024)
 
 /// One thread's stack (innermost return address first; frames[0] is the pc).
 typedef struct {

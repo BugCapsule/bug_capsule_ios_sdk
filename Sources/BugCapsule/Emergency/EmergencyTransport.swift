@@ -21,14 +21,18 @@ final class EmergencyHTTPTransport: @unchecked Sendable {
     static let maxBodyBytes = 1 << 20
     let backend: BugCapsuleBackendConfig
     private let session: URLSession
+    /// Seconds without progress before a request fails (§3: 5).
+    private let timeout: TimeInterval
 
-    init(backend: BugCapsuleBackendConfig) {
+    /// [timeout]: 5 s (§3); SDK tests on loaded machines pass a longer one.
+    init(backend: BugCapsuleBackendConfig, timeout: TimeInterval = 5) {
         self.backend = backend
+        self.timeout = timeout
         let c = URLSessionConfiguration.ephemeral
         // URLSession has no separate connect timeout: 5 s without progress
         // fails the request, 10 s bounds the whole request (§3).
-        c.timeoutIntervalForRequest = 5
-        c.timeoutIntervalForResource = 10
+        c.timeoutIntervalForRequest = timeout
+        c.timeoutIntervalForResource = 2 * timeout
         c.waitsForConnectivity = false
         c.requestCachePolicy = .reloadIgnoringLocalCacheData
         c.urlCache = nil
@@ -65,7 +69,7 @@ final class EmergencyHTTPTransport: @unchecked Sendable {
         guard let url = url(applicationId: applicationId, path: "policies", query: query) else {
             return .failed(code: "invalid_backend_url", message: "the backend URL is not valid", status: nil, retryAfter: nil)
         }
-        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         req.setValue("Bearer \(backend.ingestKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         if let etag { req.setValue(etag, forHTTPHeaderField: "If-None-Match") }
@@ -117,7 +121,7 @@ final class EmergencyHTTPTransport: @unchecked Sendable {
         guard let url = url(applicationId: applicationId, path: "receipts") else {
             return .failure(.init(code: "invalid_backend_url", message: "the backend URL is not valid"))
         }
-        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         req.httpMethod = "POST"
         req.setValue("Bearer \(backend.ingestKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")

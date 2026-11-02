@@ -631,6 +631,34 @@ under innocuous key names, or binary bodies (recorded only with
 `bugcapsule inspect` before a wider rollout. More:
 [Privacy and redaction](https://docs.bugcapsule.com/privacy.html).
 
+### Consent and local data
+
+```swift
+// Opt-in: nothing is captured or uploaded until the user agrees.
+BugCapsule.start(BugCapsuleConfig(token: "bcsdk.v1.…", collectionEnabledByDefault: false))
+
+BugCapsule.setCollectionEnabled(true)   // the user agreed; persisted across launches
+BugCapsule.setCollectionEnabled(false)  // withdrawn: stops now, deletes what is queued
+BugCapsule.clearLocalData()             // e.g. on sign-out
+```
+
+- `setCollectionEnabled(false)` stops capture and monitoring at once and
+  deletes queued and saved capsules, queued events and crash journals. The
+  choice is stored in the app's `UserDefaults` and applies from the first line
+  of the next launch. Turned back on in the same run, capture starts on the
+  next launch (or now, if consent was off when the app started).
+- `clearLocalData()` deletes everything BugCapsule stored on the device and
+  stops recording for the rest of the run. It keeps the emergency policy cache,
+  so feature guards keep working offline, and the cached remote config, so a
+  kill switch still applies.
+- Saved captures are deleted after 7 days; queued uploads after 7 days
+  (`outboxLimits.maxAge`).
+- On iOS every file is written with
+  `FileProtectionType.completeUntilFirstUserAuthentication`.
+- The SDK ships a privacy manifest (`PrivacyInfo.xcprivacy`) that Xcode adds
+  to your app's privacy report: no tracking; crash, performance, other
+  diagnostic and product interaction data, not linked to the user.
+
 ## Going to production
 
 - Production sessions record a sample of sessions: `productionSampleRate`
@@ -710,6 +738,9 @@ Select **BugCapsulePatch** from the same repository-root SwiftPM dependency at
 XCFramework for iOS arm64 and iOS Simulator arm64/x86_64. It requires iOS15+; the
 core SDK's macOS support is unchanged, but the patch API is iOS-only. No second
 repository, local path dependency or runtime binary download is needed.
+Depend on the repository root, not on `Packages/BugCapsulePatch`: that folder is a
+compatibility wrapper for older local checkouts, and its product shares the root
+product's name, which Xcode 26 cannot load in one package graph.
 
 ```swift
 .package(url: "https://github.com/BugCapsule/bug_capsule_ios_sdk.git", exact: "0.4.1-beta.5")

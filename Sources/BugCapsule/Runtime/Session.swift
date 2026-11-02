@@ -65,7 +65,22 @@ public final class BugCapsuleSession: @unchecked Sendable {
     private(set) var maxCapsuleBytes = 5 * 1024 * 1024
     private var sessionRate = 1.0
     private var captureEpoch = 0
+    /// Bumped when local data is wiped (collection off, kill switch): a
+    /// capture or upload file of an older generation is never written.
+    private var dataGeneration = 0
+    /// Called right before a capsule is saved ("save") or queued ("queue"). Tests.
+    private var _beforeCaptureWriteForTesting: (@Sendable (String) -> Void)?
+    var beforeCaptureWriteForTesting: (@Sendable (String) -> Void)? {
+        get { lock.locked { _beforeCaptureWriteForTesting } }
+        set { lock.locked { _beforeCaptureWriteForTesting = newValue } }
+    }
+    /// Automatic captures scheduled and not finished (tests wait for them).
+    private let capturesInFlight = DispatchGroup()
     private(set) var killed = false
+    /// Collection consent was off at start: capture was never set up.
+    private var awaitingConsent = false
+    /// Collection was turned off during this run: no capture, no upload.
+    private(set) var collectionWithdrawn = false
     private var anchorMs: Int?
     private var wallAtAnchorMs: Int?
     private(set) var lastFailure: FailureRecord?
@@ -374,6 +389,13 @@ public final class BugCapsuleSession: @unchecked Sendable {
     private func prepareCapture() throws {
         lock.locked { _redactor = baseRedactor() }
         guard config.enabled else { return }
+        guard CollectionConsent.isEnabled(default: config.collectionEnabledByDefault) else {
+            // Whatever an earlier run left must not be sent either.
+            if let root = try? overrides?.storageDirectory ?? CapsuleStore.defaultRoot() { LocalData.wipe(root: root) }
+            lock.locked { awaitingConsent = true }
+            BugCapsuleLog.info("collection is off; nothing is captured or uploaded")
+            return
+        }
         let base: BugCapsuleTransport? = overrides?.transport ?? config.backend.map { BugCapsuleBackendClient(config: $0) }
         let transport = base.map { base in
             ObservedTransport(
@@ -397,11 +419,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
             Task { await box.open() }
             let source = connectionSource
             remote = RemoteConfigController(
-                fetch: { [weak self] in
-                    let result = await transport.fetchConfig()
-                    self?.noteConfigFetch(result)
-                    return result
-                }, cache: store.configCache, scope: scope,
+                fetch: { await transport.fetchConfig() }, cache: store.configCache, scope: scope,
                 onChange: { [weak self] previous, next in self?.applyRemote(previous, next) },
                 maxStale: config.maxStaleConfig, initial: cached,
                 onRejected: { failure in
@@ -409,7 +427,10 @@ public final class BugCapsuleSession: @unchecked Sendable {
                     BugCapsuleLog.warn(
                         "the backend refused this app's \(what) (\(failure.reason ?? "HTTP \(failure.status ?? 0)"))"
                             + (failure.detail.map { ": \($0)" } ?? "") + ". Capture and uploads are off for this run.")
-                })
+                },
+                // The status changes once the result is applied: "rejected"
+                // is never seen while capture still runs.
+                onResult: { [weak self] result in self?.noteConfigFetch(result) })
         }
         lock.locked {
             self.store = store
@@ -716,9 +737,12 @@ public final class BugCapsuleSession: @unchecked Sendable {
         let monitoringLink = link
         // Let the failure settle (follow-up events) before writing.
         let delay = overrides?.captureSettleDelay ?? 0.3
+        let inFlight = capturesInFlight
+        inFlight.enter()
         queue.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self else { return }
+            guard let self else { return inFlight.leave() }
             Task {
+                defer { inFlight.leave() }
                 if let r = await self.writeCapsule(failure: failure, capsuleId: capsuleId, monitoring: monitoringLink) {
                     BugCapsuleLog.info(
                         "captured \(r.capsuleId) (\(r.eligibility.status.rawValue)) → \(r.file.path) upload: \(r.upload?.status.rawValue ?? "none")")
@@ -739,6 +763,18 @@ public final class BugCapsuleSession: @unchecked Sendable {
         let bytes: Data
         let file: URL
         let problem: String?
+        /// `dataGeneration` when it was built.
+        let generation: Int
+    }
+
+    /// Runs [write] under the session lock while no wipe happened since
+    /// [generation] (and collection is on): false, and nothing written,
+    /// otherwise. Wipes run under the same lock.
+    private func whileDataKept<T>(_ generation: Int, _ write: () throws -> T?) rethrows -> T? {
+        try lock.locked {
+            guard generation == dataGeneration, !collectionWithdrawn, !killed else { return nil }
+            return try write()
+        }
     }
 
     /// Builds, validates, encodes and saves a capsule synchronously. Used by
@@ -747,15 +783,16 @@ public final class BugCapsuleSession: @unchecked Sendable {
         failure: FailureRecord?, labels: [String: String], crash: Bool = false, capsuleId: String? = nil,
         monitoring link: CapsuleMonitoringLink? = nil
     ) -> BuiltCapsule? {
-        let snapshot: (RecordedWindow, Int, Int, Redactor, PlatformInfo, [String], Int, CapsuleStore)? = lock.locked {
+        let snapshot: (RecordedWindow, Int, Int, Redactor, PlatformInfo, [String], Int, CapsuleStore, Int)? = lock.locked {
             guard recording, let recorder, let store else { return nil }
             capsulesWritten += 1
             let window = recorder.window()
             let anchor = anchorMs ?? now()
             let wallAtAnchor = wallAtAnchorMs ?? (window.checkpoint.wallClockMs + anchor - window.checkpoint.t)
-            return (window, anchor, wallAtAnchor, _redactor, platform, frameworks, recorder.rewriteDropped, store)
+            return (window, anchor, wallAtAnchor, _redactor, platform, frameworks, recorder.rewriteDropped, store, dataGeneration)
         }
-        guard let (window, anchor, wallAtAnchor, redactor, platform, frameworks, rewriteDropped, store) = snapshot else {
+        guard let (window, anchor, wallAtAnchor, redactor, platform, frameworks, rewriteDropped, store, generation) = snapshot
+        else {
             return nil
         }
         var windowEvents = window.events
@@ -826,13 +863,12 @@ public final class BugCapsuleSession: @unchecked Sendable {
         let problem = validateCapsuleDocument(CapsuleCodec.toJSON(capsule))
         do {
             let bytes = try CapsuleCodec.encode(capsule)
-            if lock.locked({ killed }) { return nil }
-            let file = try store.save(capsuleId: capsule.manifest.capsuleId, bytes: bytes)
-            if lock.locked({ killed }) {
-                store.clearSavedCaptures()
-                return nil
-            }
-            return BuiltCapsule(capsule: capsule, bytes: bytes, file: file, problem: problem)
+            beforeCaptureWriteForTesting?("save")
+            // Not after a wipe: collection turned off or the kill switch
+            // while this capsule was being built.
+            guard let file = try whileDataKept(generation, { try store.save(capsuleId: capsule.manifest.capsuleId, bytes: bytes) })
+            else { return nil }
+            return BuiltCapsule(capsule: capsule, bytes: bytes, file: file, problem: problem, generation: generation)
         } catch {
             // Disk full or another I/O error: the capsule is dropped.
             BugCapsuleLog.warn("could not save capsule: \(error)")
@@ -854,6 +890,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
         guard let built else { return nil }
         let id = built.capsule.manifest.capsuleId
         var upload: UploadResult?
+        beforeCaptureWriteForTesting?("queue")
         let (outbox, maxBytes) = lock.locked { (self.outbox, maxCapsuleBytes) }
         if let problem = built.problem {
             BugCapsuleLog.warn("capsule \(id) failed validation, not uploaded: \(problem)")
@@ -861,11 +898,11 @@ public final class BugCapsuleSession: @unchecked Sendable {
         } else if let outbox {
             if built.bytes.count > maxBytes {
                 upload = UploadResult(.rejected, message: "capsule is \(built.bytes.count) bytes, limit \(maxBytes)")
-            } else if !(await outbox.enqueue(capsuleId: id, bytes: built.bytes)) {
+            } else if !(await outbox.enqueue(
+                capsuleId: id, bytes: built.bytes, gate: { write in self.whileDataKept(built.generation, write) ?? false }))
+            {
+                if whileDataKept(built.generation, { true }) == nil { return nil }  // wiped meanwhile: nothing was queued
                 upload = UploadResult(.rejected, message: "not queued (outbox limit or disk error)")
-            } else if lock.locked({ killed }) {
-                await outbox.purge()
-                return nil
             } else {
                 upload = await flushOutbox(onlyId: id)
             }
@@ -921,7 +958,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
 
     var uploadsAllowed: Bool {
         get async {
-            guard !lock.locked({ disposed }), let remote = lock.locked({ remote }) else { return false }
+            guard !lock.locked({ disposed || collectionWithdrawn }), let remote = lock.locked({ remote }) else { return false }
             return await remote.uploadsAllowed
         }
     }
@@ -1075,10 +1112,63 @@ public final class BugCapsuleSession: @unchecked Sendable {
         journal = nil
     }
 
+    // MARK: local data and consent
+
+    /// Deletes what the SDK stored on the device (see `LocalData`). The
+    /// recording of this run stops too, so nothing captured before the
+    /// call is written again; it starts again on the next launch.
+    func clearLocalData() {
+        monitoring?.dropPending()
+        // Under the lock capture writes take (`whileDataKept`): a capsule
+        // being built or queued now is either wiped here or never written.
+        let outbox: UploadOutbox? = lock.locked {
+            if recording { stopRecordingLocked() }
+            lastFailure = nil
+            dataGeneration += 1
+            if let root = store?.root ?? (try? overrides?.storageDirectory ?? CapsuleStore.defaultRoot()) {
+                LocalData.wipe(root: root)
+            }
+            return self.outbox
+        }
+        if let outbox { Task { await outbox.purge() } }
+    }
+
+    /// Turning collection off stops capture and monitoring now and deletes
+    /// what is queued. Turning it on sets capture up now when consent was
+    /// off at start; after it was turned off in this run, capture starts
+    /// again on the next launch.
+    @MainActor
+    func setCollectionEnabled(_ enabled: Bool) {
+        if !enabled {
+            // Capture never set up (consent off at start) can still start in this run.
+            lock.locked { if !awaitingConsent { collectionWithdrawn = true } }
+            monitoring?.withdraw()
+            clearLocalData()
+            BugCapsuleLog.info("collection turned off; queued data deleted")
+            return
+        }
+        let (pending, withdrawn) = lock.locked { () -> (Bool, Bool) in
+            defer { awaitingConsent = false }
+            return (awaitingConsent, collectionWithdrawn)
+        }
+        if withdrawn {
+            BugCapsuleLog.info("collection turned on; capture starts on the next launch")
+        } else if pending, !isReplaying {
+            do {
+                try prepareCapture()
+            } catch {
+                BugCapsuleLog.warn("capture setup failed; the app runs without capture: \(error)")
+                lock.locked { stopRecordingLocked() }
+            }
+            afterAppStarted()
+        }
+    }
+
     /// Kill switch: stop recording, drop the buffer, delete queued and saved captures.
     private func disableCaptureLocked() {
         let was = recording
         killed = true
+        dataGeneration += 1
         stopRecordingLocked()
         if was { BugCapsuleLog.info("capture disabled by remote config") }
         if let outbox { Task { await outbox.purge() } }
@@ -1345,6 +1435,13 @@ public final class BugCapsuleSession: @unchecked Sendable {
     }
 
     // Test helpers
+    /// Returns once every automatic capture scheduled so far has finished
+    /// (written and logged, or dropped).
+    func waitForCapturesForTesting() async {
+        let inFlight = capturesInFlight
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in inFlight.notify(queue: .global()) { c.resume() } }
+    }
+
     var recorderForTesting: FlightRecorder? { lock.locked { recorder } }
     var journalForTesting: CrashJournal? { lock.locked { journal } }
     func setAnchorForTesting(_ ms: Int) { lock.locked { anchorMs = ms; wallAtAnchorMs = epochMs() } }

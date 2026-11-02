@@ -33,7 +33,12 @@ final class CrashReportingTests: XCTestCase {
         await BugCapsule.refreshRemoteConfig()
     }
 
-    func flushUntil(_ timeout: TimeInterval = 5, _ cond: @escaping () -> Bool) async {
+    /// Waits for what `start` handed to the session queue, then flushes
+    /// until [cond]. The deadline is only a safety net.
+    func flushUntil(_ timeout: TimeInterval = 30, _ cond: @escaping () -> Bool) async {
+        if let session = BugCapsuleSession.current {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in session.queue.async { c.resume() } }
+        }
         let end = Date().addingTimeInterval(timeout)
         repeat {
             await BugCapsule.flush(timeout: 2)
@@ -212,6 +217,43 @@ final class CrashReportingTests: XCTestCase {
         XCTAssertEqual(r.threads.filter(\.isMain).count, 1)
     }
 
+    func testWrittenReportListsTheImagesOfItsFrames() throws {
+        XCTAssertTrue(NativeCrashHandler.install(directory: dir, mach: false))
+        defer { NativeCrashHandler.uninstallForTesting() }
+        XCTAssertTrue(NativeCrashHandler.writeTestReport(signal: SIGSEGV))
+        let r = try XCTUnwrap(NativeCrashReport.parse(Data(contentsOf: NativeCrashHandler.reportFile(in: dir))))
+        // Every image of this process would not fit the writer's buffer on
+        // the simulator: the list must still be there, app images first.
+        XCTAssertFalse(r.images.isEmpty)
+        let ownImage = try XCTUnwrap(DebugImageCache.shared.image(containing: r.frames[0]))
+        XCTAssertTrue(r.images.contains { $0.debugId == ownImage.debugId }, ownImage.path)
+    }
+
+    func testImagesPayloadKeepsAppImagesFirstWithinTheLimit() throws {
+        func image(_ path: String, _ n: UInt64) -> DebugImage {
+            DebugImage(
+                path: path, debugId: UUID().uuidString.lowercased(), loadAddress: 0x1_0000_0000 + n * 0x10000,
+                vmAddress: 0, size: 0x1000, arch: "arm64")
+        }
+        let system = (0..<50).map { image("/System/Library/Frameworks/F\($0).framework/F\($0)", UInt64($0)) }
+        let simulator = (0..<50).map {
+            image("/Library/Developer/CoreSimulator/Volumes/iOS/RuntimeRoot/usr/lib/l\($0).dylib", UInt64(100 + $0))
+        }
+        let app = [image("/private/var/containers/Bundle/Application/X/Shop.app/Shop", 200),
+                   image("/private/var/containers/Bundle/Application/X/Shop.app/Frameworks/Kit.framework/Kit", 201)]
+        let all = system + app + simulator
+        XCTAssertEqual(NativeCrashHandler.imagesPayload(all), JSON.encodeData(.array(all.map(\.json))), "fits: unchanged")
+
+        let limit = 4 * JSON.encodeData(all[0].json).count
+        let payload = NativeCrashHandler.imagesPayload(all, limit: limit)
+        XCTAssertLessThanOrEqual(payload.count, limit)
+        let kept = try XCTUnwrap(JSON.parse(payload).arrayValue).compactMap(DebugImage.init(json:))
+        XCTAssertEqual(Array(kept.prefix(2)).map(\.debugId), app.map(\.debugId))
+        XCTAssertGreaterThan(kept.count, 2, "system images fill the rest")
+
+        XCTAssertLessThanOrEqual(NativeCrashHandler.imagesPayload(DebugImageCache.shared.all).count, NativeCrashHandler.imagesLimit)
+    }
+
     func testThreadsAreKeptWithinTheServerLimits() {
         let frame: JSONValue = [
             "instructionAddr": "0x1045a0c3c", "imageAddr": "0x104578000", "inApp": false,
@@ -270,8 +312,9 @@ final class CrashReportingTests: XCTestCase {
         options.enableAppHangTracking = true
         options.appHangTimeout = 0.2
         await start(options)
-        try await Task.sleep(nanoseconds: 300_000_000)
-        blockCurrentThread(0.9)
+        // The main thread hangs until the watchdog has sampled every thread
+        // and queued the event, however long a loaded machine takes.
+        XCTAssertTrue(blockMainThreadUntilAHangIsCaptured(monitoring), "the watchdog reported the hang: \(monitoring.hangDiagnosticsForTesting)")
         await flushUntil { !StubBackend.items("event").isEmpty }
         let hang = try XCTUnwrap(
             StubBackend.items("event").first { $0["exception"]?["values"]?.arrayValue?.last?["type"] == "App Hanging" })
@@ -501,7 +544,15 @@ final class CrashReportingTests: XCTestCase {
     }
 
     func pending() -> [JSONValue] {
-        BugCapsuleCrashBridge.takePendingEvents().compactMap { try? JSON.parse(Data($0.utf8)) }
+        takePending().compactMap { try? JSON.parse(Data($0.utf8)) }
+    }
+
+    /// The pending events once the bridge's background queue built the
+    /// previous runs' reports (`install` starts that): no race with the
+    /// `takePendingEvents` timeout.
+    func takePending() -> [String] {
+        CrashBridgeRuntime.shared.waitForBackgroundWorkForTesting()
+        return BugCapsuleCrashBridge.takePendingEvents()
     }
 
     func testBridgeTakePendingEventsReturnsEachCrashOnce() throws {
@@ -539,7 +590,7 @@ final class CrashReportingTests: XCTestCase {
         XCTAssertEqual(threads.filter { $0["crashed"] == true }.count, 1)
         XCTAssertFalse(event["debugImages"]?.arrayValue?.isEmpty ?? true)
 
-        XCTAssertEqual(BugCapsuleCrashBridge.takePendingEvents(), [], "deleted once returned")
+        XCTAssertEqual(takePending(), [], "deleted once returned")
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("events").path), [])
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("reports").path), [])
     }
@@ -585,7 +636,7 @@ final class CrashReportingTests: XCTestCase {
         try FileManager.default.removeItem(at: events)
         try Data().write(to: events)
         XCTAssertTrue(install())
-        XCTAssertEqual(BugCapsuleCrashBridge.takePendingEvents(), [])
+        XCTAssertEqual(takePending(), [])
         XCTAssertEqual(
             try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("reports").path).count, 1,
             "kept for the next launch")
@@ -631,10 +682,9 @@ final class CrashReportingTests: XCTestCase {
         // Sampled off the main thread, as the watchdog does.
         let samples = await Task.detached { NativeCrashHandler.sampleThreads() }.value
         CrashBridgeRuntime.shared.recordHang(samples, threshold: 2)
-        let end = Date().addingTimeInterval(5)
-        while sink.lock.locked({ sink.events.isEmpty }) && Date() < end { try await Task.sleep(nanoseconds: 20_000_000) }
+        CrashBridgeRuntime.shared.waitForBackgroundWorkForTesting()  // stored, then the listener told
         let heard = try XCTUnwrap(sink.lock.locked { sink.events.first })
-        let events = BugCapsuleCrashBridge.takePendingEvents()
+        let events = takePending()
         XCTAssertEqual(events, [heard])
         let hang = try JSON.parse(Data(heard.utf8))
         XCTAssertEqual(hang["level"], "error")
@@ -677,14 +727,16 @@ final class CrashReportingTests: XCTestCase {
     }
 
     func testBridgeScopeIsMirroredToDiskWithItsProcess() async throws {
+        let timer = FlushTimerBox()
+        CrashBridgeRuntime.shared.setScopeTimerForTesting(timer.schedule)
         XCTAssertTrue(install("com.shop.app@1.4.0+52"))
         BugCapsuleCrashBridge.updateScope(json: #"{"tags":{"screen":"a"}}"#)
         BugCapsuleCrashBridge.updateScope(json: #"{"tags":{"screen":"b"}}"#)
         let file = dir.appendingPathComponent("scope.json")
-        let end = Date().addingTimeInterval(5)
-        while (try? loadJSON(file))?["tags"]?["screen"] != "b" && Date() < end {
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
+        XCTAssertEqual(timer.delays, [CrashBridgeRuntime.scopeFileInterval], "one write for every update within a second")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "not before the timer fires")
+        timer.fireAll()
+        CrashBridgeRuntime.shared.waitForBackgroundWorkForTesting()
         let scope = try loadJSON(file)
         XCTAssertEqual(scope["pid"]?.intValue, Int(getpid()))
         XCTAssertEqual(scope["release"], "com.shop.app@1.4.0+52")
@@ -704,7 +756,7 @@ final class CrashReportingTests: XCTestCase {
         await start(.disabled)
         XCTAssertFalse(install(directory: tempDirectory()))
         XCTAssertFalse(BugCapsuleCrashBridge.nativeCrashHandlerInstalled)
-        XCTAssertEqual(BugCapsuleCrashBridge.takePendingEvents(), [])
+        XCTAssertEqual(takePending(), [])
         await BugCapsule.resetForTesting()
         await start(testMonitoringOptions(nativeCrashes: true))
         XCTAssertEqual(CrashOwnership.current, .sdk)
@@ -720,4 +772,19 @@ final class CrashReportingTests: XCTestCase {
         XCTAssertTrue(NativeCrashHandler.isInstalled, "still the bridge's")
         XCTAssertEqual(CrashOwnership.current, .bridge)
     }
+}
+
+/// Holds the main thread (the caller) until [monitoring]'s watchdog has
+/// captured a hang, which it only does while the main thread is blocked.
+/// A hang it already captured counts: a loaded runner can stall the main
+/// thread past the threshold during `start`, and the watchdog then waits
+/// for the main thread to drain its ping before it reports another one,
+/// so blocking here would wait forever. False when none came within [timeout].
+@MainActor
+func blockMainThreadUntilAHangIsCaptured(_ monitoring: Monitoring, timeout: TimeInterval = 60) -> Bool {
+    let captured = DispatchSemaphore(value: 0)
+    monitoring.hangCapturedForTesting = { captured.signal() }
+    defer { monitoring.hangCapturedForTesting = nil }
+    if monitoring.hangsCapturedForTesting > 0 { return true }
+    return captured.wait(timeout: .now() + timeout) == .success
 }
