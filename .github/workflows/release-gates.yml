@@ -24,16 +24,35 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Pick an iPhone simulator
         id: sim
-        run: |
-          udid=$(xcrun simctl list devices available -j | python3 -c '
-          import json, sys
-          devices = json.load(sys.stdin)["devices"]
-          ios = sorted((r for r in devices if "SimRuntime.iOS" in r), key=lambda r: [int(p) for p in r.rsplit("iOS-", 1)[1].split("-")])
-          phones = [d["udid"] for r in reversed(ios) for d in devices[r] if d["name"].startswith("iPhone")]
-          print(phones[0])')
-          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+        run: python3 scripts/pick-ios-simulator.py >> "$GITHUB_OUTPUT"
+      # A hung test fails on its own after 5 minutes (xcodebuild test
+      # timeouts) and a hung step after 40, with time left for the logs,
+      # instead of the job being cancelled at the 60-minute limit.
       - name: BugCapsule-Package on the iOS Simulator
-        run: xcodebuild -scheme BugCapsule-Package -destination "id=${{ steps.sim.outputs.udid }}" -derivedDataPath "$RUNNER_TEMP/dd" test
+        timeout-minutes: 40
+        run: >-
+          xcodebuild -scheme BugCapsule-Package -destination "id=${{ steps.sim.outputs.udid }}"
+          -derivedDataPath "$RUNNER_TEMP/dd"
+          -test-timeouts-enabled YES -default-test-execution-time-allowance 120 -maximum-test-execution-time-allowance 300
+          test
+  # Its own runner: a second xcodebuild package build in the same job
+  # failed to load its PIF ("GUID ... has already been registered") from the
+  # build service the first one left running, and a patch build problem must
+  # never hide or block the SDK tests' result.
+  ios-simulator-patch:
+    name: ios-simulator-patch
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Pick an iPhone simulator
+        id: sim
+        run: python3 scripts/pick-ios-simulator.py >> "$GITHUB_OUTPUT"
       - name: BugCapsulePatchLocal on the iOS Simulator
+        timeout-minutes: 30
         working-directory: Packages/BugCapsulePatch
-        run: xcodebuild -scheme BugCapsulePatchLocal -destination "id=${{ steps.sim.outputs.udid }}" -derivedDataPath "$RUNNER_TEMP/dd-patch" test
+        run: >-
+          xcodebuild -scheme BugCapsulePatchLocal -destination "id=${{ steps.sim.outputs.udid }}"
+          -derivedDataPath "$RUNNER_TEMP/dd-patch"
+          -test-timeouts-enabled YES -default-test-execution-time-allowance 120 -maximum-test-execution-time-allowance 300
+          test
