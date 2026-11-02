@@ -13,9 +13,12 @@ let package = Package(
             dependencies: [.product(name: "BugCapsulePatch", package: "BugCapsule")],
             path: "Compatibility"
         ),
+        // Through the compatibility target, not the root product again: Xcode 26.6
+        // registered the product's dynamic variant once per dependent and failed
+        // with "GUID … has already been registered" (BC-ENT-053).
         .testTarget(
             name: "BugCapsulePatchTests",
-            dependencies: [.product(name: "BugCapsulePatch", package: "BugCapsule")],
+            dependencies: ["BugCapsulePatchCompatibility"],
             resources: [.copy("Fixtures")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
