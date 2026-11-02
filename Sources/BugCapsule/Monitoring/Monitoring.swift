@@ -130,7 +130,9 @@ final class Monitoring: @unchecked Sendable {
     /// The remote rate when fetched, else the app's (`tracesSampler` wins over both).
     var tracesSampleRate: Double { min(max(lock.locked { remote?.tracesSampleRate } ?? options.tracesSampleRate ?? 0, 0), 1) }
 
-    var tracePropagationTargets: [String] { lock.locked { remote?.tracePropagationTargets } ?? options.tracePropagationTargets }
+    /// The server's list, which can only narrow the app's
+    /// `options.tracePropagationTargets` (see `Tracer.matches`).
+    var remoteTracePropagationTargets: [String]? { lock.locked { remote?.tracePropagationTargets } }
 
     var sessionTrackingEnabled: Bool { options.enableAutoSessionTracking && lock.locked { remote?.sessionTracking ?? true } }
 

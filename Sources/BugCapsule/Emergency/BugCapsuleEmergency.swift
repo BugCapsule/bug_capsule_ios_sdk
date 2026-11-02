@@ -62,7 +62,8 @@ public struct EmergencyStatus: Sendable, Equatable {
         /// A rejection reason (`bad_signature`, `stale_revision`, …),
         /// `credential_rejected`, `network_error`, `http_error`,
         /// `body_too_large`, `emergency_not_configured`, `no_backend`,
-        /// `invalid_token`, `invalid_anchor` or `invalid_environment`.
+        /// `invalid_token`, `invalid_backend`, `invalid_anchor` or
+        /// `invalid_environment`.
         public var code: String
         public var message: String
         public var httpStatus: Int?

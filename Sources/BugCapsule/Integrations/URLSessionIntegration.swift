@@ -13,7 +13,11 @@ import Foundation
 /// Capture streams every chunk to the app as it arrives and keeps only a
 /// bounded prefix (`maxBodyBytes`, 256 KiB text / `maxBinaryBytes` 64 KiB
 /// binary); a larger body, or one still streaming after `maxBodyWait`, is
-/// recorded as `truncated`. Request bodies set with `httpBody` are hashed
+/// recorded as `truncated`. Binary bodies are recorded as
+/// `{size, contentType}` (`requestBodyInfo` / `responseBodyInfo`, encoding
+/// `omitted`) unless `BugCapsuleConfig.captureBinaryBodies`; in production
+/// mode no bodies are recorded unless `captureNetworkBodies` is set.
+/// Request bodies set with `httpBody` are hashed
 /// into the key when ≤ `maxKeyBodyBytes` (64 KiB); `httpBodyStream` bodies
 /// (one-shot) are keyed without a hash and recorded as `omitted`.
 ///
@@ -77,7 +81,7 @@ public final class BugCapsuleURLSession: BugCapsuleIntegration, @unchecked Senda
         if !missing.isEmpty {
             eligibility.missing(
                 "network.bodies",
-                "\(missing.count) recorded responses have no body (capture disabled, excluded or too large)")
+                "\(missing.count) recorded responses have no body (capture disabled, binary, excluded or too large)")
         }
     }
 
@@ -138,6 +142,19 @@ public final class BugCapsuleURLSession: BugCapsuleIntegration, @unchecked Senda
             return (.string(redactor.scrubText(text)), "text")
         }
         return binary(bytes)
+    }
+
+    /// `decode` for the recorded event. Binary (and non-UTF-8 text) bodies
+    /// are kept only as `{size, contentType}` (encoding `omitted`, the info
+    /// in the third value) unless [captureBinary]. Keys still use `decode`.
+    func decodeForRecording(_ bytes: Data, contentType: String?, redactor: Redactor, captureBinary: Bool)
+        -> (JSONValue, String, JSONValue?)
+    {
+        let (value, encoding) = decode(bytes, contentType: contentType, redactor: redactor)
+        // `decode` returns base64 / truncated only for binary bodies.
+        guard !captureBinary, encoding == "base64" || encoding == "truncated" else { return (value, encoding, nil) }
+        let info: JSONObject = ["size": .int(bytes.count), "contentType": contentType.map { .string($0) } ?? .null]
+        return (.null, "omitted", .object(info))
     }
 
     private func binary(_ bytes: Data) -> (JSONValue, String) {

@@ -180,6 +180,15 @@ let session = URLSession(configuration: config)
 // URLSession.shared: BugCapsule.instrumentSharedSession() (opt-in)
 ```
 
+Request and response bodies are recorded in `.debug` and `.qa` modes and
+**not in `.production`**, where exchanges keep method, URL, status, headers
+and timing. Set `captureNetworkBodies: true` or `false` to choose yourself;
+an explicit value always wins over the mode. Binary (non-UTF-8) bodies are
+recorded as `{size, contentType}` only, in every mode, unless you set
+`captureBinaryBodies: true`. Replay serves an exchange without a body with
+its recorded status and headers and an empty body, reports
+`network.noBody`, and the capsule lists `network.bodies` in eligibility.
+
 ### WebSockets
 
 `URLSessionWebSocketTask` can't be intercepted, so open sockets through
@@ -338,6 +347,28 @@ bugcapsule verify <id> -n 3          # builds your working tree; FIXED when the 
 bugcapsule regress add <id>          # keep it as a regression test
 bugcapsule regress run               # in CI: exit 1 when a regression fails
 ```
+
+**What FIXED needs (verdict v2).** "The failure did not fire" is not enough:
+the capsule's build must reproduce the failure in every baseline attempt (at
+least 3), enough candidate attempts must all run cleanly (8 after a 3/3
+baseline, 6 after 5/5, 5 after 10/10), and each clean attempt must show the
+failing path ran. The SDK reports that evidence with every replay result:
+
+```swift
+BugCapsule.check("cart_total_non_negative", total >= 0)   // passing during replay = strong evidence
+BugCapsule.expect("cart_total_positive") { cart.total > 0 } // postcondition, checked after replay settles
+```
+
+- The capsule's own `check` passing, or every `expect` postcondition holding,
+  gives **FIXED**. A postcondition that fails gives **STILL FAILING**.
+- If replay only got past the recorded failure point, the result is
+  **FIXED (QUALIFIED)**, exit 4. A partial capsule also gives FIXED
+  (QUALIFIED).
+- No evidence (for example, the failing code never ran), a baseline that did
+  not reproduce, or an ineligible capsule gives **INCONCLUSIVE**.
+- Live traffic allowed during replay gives **UNSAFE**, exit 5.
+
+`expect` does nothing outside replay. Reproductions carry no evidence.
 
 The CLI builds once, then for each attempt reinstalls the app on the simulator
 (fresh data) and runs your replay test. Replay on physical devices is not
@@ -595,7 +626,8 @@ capture off remotely.
 
 Redaction is best effort. It does **not** find secrets in URL path segments,
 personal data that isn't a credential (names, emails, addresses), secrets
-under innocuous key names, or binary bodies. Inspect real capsules with
+under innocuous key names, or binary bodies (recorded only with
+`captureBinaryBodies: true`). Inspect real capsules with
 `bugcapsule inspect` before a wider rollout. More:
 [Privacy and redaction](https://docs.bugcapsule.com/privacy.html).
 
@@ -604,6 +636,9 @@ under innocuous key names, or binary bodies. Inspect real capsules with
 - Production sessions record a sample of sessions: `productionSampleRate`
   (default `0.1`), capped by your project's rate. Monitoring sessions are not
   sampled.
+- Network bodies are not recorded in production unless you set
+  `captureNetworkBodies: true`; replay of those capsules has no response
+  bodies to serve.
 - Learn the kill switch before you need it: `bugcapsule capture --on` stops
   capture for every device and deletes queued capsules; `--off` resumes it.
 - Upload dSYMs for every release build.

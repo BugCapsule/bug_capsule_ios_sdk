@@ -361,6 +361,7 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
 
         var requestBody: JSONValue = .null
         var requestEncoding = "json"
+        var requestBodyInfo: JSONValue?
         if oneShot {
             requestEncoding = "omitted"
         } else if let body, !body.isEmpty {
@@ -369,7 +370,8 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
             } else if body.count > session.maxBodyBytes {
                 requestEncoding = "truncated"
             } else {
-                (requestBody, requestEncoding) = net.decode(body, contentType: requestType, redactor: redactor)
+                (requestBody, requestEncoding, requestBodyInfo) = net.decodeForRecording(
+                    body, contentType: requestType, redactor: redactor, captureBinary: session.captureBinaryBodies)
             }
         }
         var base: JSONObject = [
@@ -383,6 +385,7 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
         }
         base["requestBody"] = requestBody
         base["requestEncoding"] = .string(requestEncoding)
+        if let requestBodyInfo { base["requestBodyInfo"] = requestBodyInfo }
         if excluded { base["excluded"] = true }
         lock.locked {
             self.started = started
@@ -612,8 +615,12 @@ public final class BugCapsuleURLProtocol: URLProtocol, @unchecked Sendable {
             } else if hadResponse {
                 let (bytes, type) = lock.locked { (retained, contentType) }
                 if let bytes, let net = BugCapsuleURLSession.active, let redactor {
-                    let (body, encoding) = net.decode(bytes, contentType: type, redactor: redactor)
-                    finishRecording(["responseBody": body, "bodyEncoding": .string(encoding)])
+                    let (body, encoding, info) = net.decodeForRecording(
+                        bytes, contentType: type, redactor: redactor,
+                        captureBinary: BugCapsuleSession.current?.captureBinaryBodies ?? false)
+                    var extra: JSONObject = ["responseBody": body, "bodyEncoding": .string(encoding)]
+                    if let info { extra["responseBodyInfo"] = info }
+                    finishRecording(extra)
                 } else {
                     finishRecording(["bodyEncoding": "truncated"])
                 }
