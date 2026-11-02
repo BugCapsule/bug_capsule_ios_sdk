@@ -50,6 +50,9 @@ final class EmergencyRuntime: @unchecked Sendable {
     private let prefixModes: [(prefix: String, mode: EmergencyFailureMode)]
     private let explicitBackend: BugCapsuleBackendConfig?
     private let tokenError: BugCapsuleTokenError?
+    /// Why `EmergencyConfiguration.backend` was refused (no fallback to
+    /// `BugCapsule.start`'s connection then).
+    private let backendRefusal: String?
     private let store: EmergencyStore?
     private let now: @Sendable () -> Date
     private let random: @Sendable () -> Double
@@ -126,8 +129,15 @@ final class EmergencyRuntime: @unchecked Sendable {
 
         // Connection: explicit backend, else the token, else BugCapsule.start's.
         var tokenError: BugCapsuleTokenError?
+        var backendRefusal: String?
         if let backend = c.backend {
-            explicitBackend = backend
+            backendRefusal = backend.refusal
+            if let backendRefusal {
+                explicitBackend = nil
+                BugCapsuleLog.warn("emergency: backend config refused: \(backendRefusal)")
+            } else {
+                explicitBackend = backend
+            }
         } else if let token = c.token {
             switch BugCapsuleConnectionToken.parse(token) {
             case .success(let backend): explicitBackend = backend
@@ -140,6 +150,7 @@ final class EmergencyRuntime: @unchecked Sendable {
             explicitBackend = nil
         }
         self.tokenError = tokenError
+        self.backendRefusal = backendRefusal
 
         // Anchor and environment.
         var anchor: EmergencyTrustAnchor?
@@ -338,7 +349,7 @@ final class EmergencyRuntime: @unchecked Sendable {
     }
 
     private func resolveBackend() -> BugCapsuleBackendConfig? {
-        explicitBackend ?? (tokenError == nil ? BugCapsuleSession.current?.config.backend : nil)
+        explicitBackend ?? (tokenError == nil && backendRefusal == nil ? BugCapsuleSession.current?.config.backend : nil)
     }
 
     private func transport(for backend: BugCapsuleBackendConfig) -> EmergencyHTTPTransport {
@@ -355,6 +366,7 @@ final class EmergencyRuntime: @unchecked Sendable {
         guard let backend = resolveBackend() else {
             let failure: EmergencyStatus.Failure =
                 tokenError.map { .init(code: "invalid_token", message: "the SDK token can't be used: \($0.message)") }
+                ?? backendRefusal.map { .init(code: "invalid_backend", message: "the backend config can't be used: \($0)") }
                 ?? .init(
                     code: "no_backend",
                     message: "no backend: pass token or backend to EmergencyConfiguration, or call BugCapsule.start")

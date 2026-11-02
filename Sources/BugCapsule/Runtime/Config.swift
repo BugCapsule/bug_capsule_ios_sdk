@@ -14,6 +14,22 @@ public struct BugCapsuleBackendConfig: Sendable, Equatable {
     }
 }
 
+extension BugCapsuleBackendConfig {
+    /// Why this explicit config can't be used, or nil when it can. The ingest
+    /// key travels in every request, so it needs https except on a local
+    /// development host, and a `bcs_` secret key must never ship in an app.
+    var refusal: String? {
+        if ingestKey.hasPrefix("bcs_") { return "a bcs_ secret key is not an ingest key; use an SDK token" }
+        guard let c = URLComponents(string: url), let scheme = c.scheme?.lowercased(),
+            scheme == "https" || scheme == "http", let host = c.host, !host.isEmpty
+        else { return "url must be an absolute https URL" }
+        if scheme == "http" && !BugCapsuleConnectionToken.isLocalDevelopmentHost(host) {
+            return "plain http is only allowed to localhost, 127.0.0.1 or 10.0.2.2; use https"
+        }
+        return nil
+    }
+}
+
 /// Bounds on the upload outbox: 10 capsules, 10 MiB, 7 days by default;
 /// whichever is hit first evicts the oldest capsules.
 public struct OutboxLimits: Sendable, Equatable {
@@ -49,6 +65,9 @@ public struct BugCapsuleConfig: @unchecked Sendable {
     /// Local master switch. The backend kill switch can also disable capture.
     public var enabled: Bool
     /// Explicit backend URL + ingest key (self-hosted / advanced). Wins over `token`.
+    /// Must be https (plain http only to localhost, 127.0.0.0/8, [::1] or
+    /// 10.0.2.2) with an ingest key, never a `bcs_` secret key; otherwise it
+    /// is refused and the app runs without a backend.
     public var backend: BugCapsuleBackendConfig?
     /// `nil`: the `BugCapsuleGitSHA` Info.plist key (set from the
     /// `BUGCAPSULE_GIT_SHA` build setting).

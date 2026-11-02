@@ -37,6 +37,8 @@ public final class BugCapsuleSession: @unchecked Sendable {
     public let connectionSource: BugCapsuleConnectionSource?
     /// Why `config.token` could not be used.
     public let tokenError: BugCapsuleTokenError?
+    /// Why the explicit `backend` was refused (it is then nil in `config`).
+    let backendRefusal: String?
     let integrations: [BugCapsuleIntegration]
     let overrides: BugCapsuleTestOverrides?
     public let mode: CaptureMode
@@ -105,6 +107,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
         self.config = config
         connectionSource = source
         self.tokenError = tokenError
+        backendRefusal = input.backend?.refusal
         self.integrations = integrations
         self.overrides = overrides
         mode = config.resolvedMode
@@ -125,14 +128,21 @@ public final class BugCapsuleSession: @unchecked Sendable {
     }
 
     /// Turns `token` into `backend` (connection token v1). An explicit
-    /// `backend` wins; a token that cannot be used leaves no backend, so the
+    /// `backend` wins; a token or explicit backend that cannot be used (plain
+    /// http to a remote host, a `bcs_` secret key) leaves no backend, so the
     /// app runs without one instead of failing. Never throws.
     static func resolveConnection(
         _ input: BugCapsuleConfig
     ) -> (BugCapsuleConfig, BugCapsuleConnectionSource?, BugCapsuleTokenError?) {
-        if input.backend != nil {
+        if let backend = input.backend {
             if input.token != nil {
                 BugCapsuleLog.warn("both token and backend are set; using backend and ignoring token")
+            }
+            if let refusal = backend.refusal {
+                BugCapsuleLog.warn("backend config refused: \(refusal). The app runs without a BugCapsule backend.")
+                var config = input
+                config.backend = nil
+                return (config, .backend, nil)
             }
             return (input, .backend, nil)
         }
@@ -409,7 +419,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
             captureBodies = config.captureNetworkBodies && (cached?.captureNetworkBodies ?? true)
             interactions.setDisabledAdapters(Set(cached?.disabledAdapters ?? []))
             interactions.setMaxPayloadBytes(cached?.maxInteractionPayloadBytes)
-            maxCapsuleBytes = cached?.maxCapsuleBytes ?? maxCapsuleBytes
+            maxCapsuleBytes = cached.map { RemoteCaptureConfig.clampCapsuleBytes($0.maxCapsuleBytes) } ?? maxCapsuleBytes
             recording = decideRecording(cached)
         }
         if config.monitoring.enabled {
@@ -969,8 +979,9 @@ public final class BugCapsuleSession: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         remoteDisabled = !next.enabled
-        maxCapsuleBytes = next.maxCapsuleBytes
-        journal?.maxBytes = 2 * next.maxCapsuleBytes
+        // Clamped (also for a config built in code), so 2x can't overflow.
+        maxCapsuleBytes = RemoteCaptureConfig.clampCapsuleBytes(next.maxCapsuleBytes)
+        journal?.maxBytes = 2 * maxCapsuleBytes
         var rewrote = false
         // Whatever the recorder rewrote, the journal is written again from it.
         defer { if rewrote { resetJournalLocked() } }
@@ -1142,6 +1153,9 @@ public final class BugCapsuleSession: @unchecked Sendable {
             message = "the backend could not be reached; data is kept and retried"
         } else if state == .disabled {
             message = config.enabled ? "capture is disabled by the project's remote configuration" : "capture is disabled (enabled: false)"
+        } else if state == .notConfigured, let backendRefusal {
+            reason = "invalid_backend"
+            message = "the backend config can't be used: \(backendRefusal); capsules are only saved on the device"
         } else if state == .notConfigured {
             message = "no token or backend configured; capsules are only saved on the device"
         }
