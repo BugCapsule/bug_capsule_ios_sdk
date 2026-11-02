@@ -87,7 +87,12 @@ final class CrashCapsuleTests: XCTestCase {
     func bareSession(maxCapsulesPerSession: Int = 5) -> BugCapsuleSession {
         var config = BugCapsuleConfig(appVersion: "1.4.0", appBuild: "52", appId: "com.shop.app", mode: .qa)
         config.maxCapsulesPerSession = maxCapsulesPerSession
-        return BugCapsuleSession(config: config, integrations: [], overrides: BugCapsuleTestOverrides(storageDirectory: dir))
+        var overrides = BugCapsuleTestOverrides(storageDirectory: dir)
+        // A fixed `createdAt`: capsule sizes compared across builds must not
+        // depend on how many milliseconds passed between them (gzip).
+        let createdAt = Date(timeIntervalSince1970: Double(Self.wallAtStart + 60_000) / 1000)
+        overrides.clock = { createdAt }
+        return BugCapsuleSession(config: config, integrations: [], overrides: overrides)
     }
 
     let link = CapsuleMonitoringLink(eventId: "0f0e0d0c0b0a49088706050403020100", release: "com.shop.app@1.4.0+52", environment: "qa")
@@ -182,16 +187,26 @@ final class CrashCapsuleTests: XCTestCase {
     }
 
     func testJournalFlushesWithoutBeingAskedWithin250ms() throws {
-        let j = journal()
+        let timer = FlushTimerBox()
+        let j = CrashJournal(
+            directory: dir.appendingPathComponent("journal/4242"), maxBytes: 10_000_000, header: header(), launch: launch(),
+            flushTimer: timer.schedule)
+        j.flushSynchronously()  // the header and the launch checkpoint
         j.append(action(1, t: 101))
-        let deadline = Date().addingTimeInterval(1)
-        var events: [BugCapsuleEvent] = []
-        while Date() < deadline {
-            events = CrashJournalContents.load(j.directory)?.events ?? []
-            if !events.isEmpty { break }
-            Thread.sleep(forTimeInterval: 0.05)
-        }
-        XCTAssertEqual(events.map(\.seq), [1])
+        j.append(action(2, t: 102))
+        XCTAssertEqual(timer.delays, [CrashJournal.flushInterval], "one batch timer for both events")
+        XCTAssertEqual(CrashJournal.flushInterval, 0.25)
+        j.waitForWritesForTesting()
+        XCTAssertEqual(CrashJournalContents.load(j.directory)?.events.map(\.seq), [], "nothing written before the timer fires")
+
+        timer.fireAll()  // nobody calls flush: the timer alone writes them
+        j.waitForWritesForTesting()
+        XCTAssertEqual(CrashJournalContents.load(j.directory)?.events.map(\.seq), [1, 2])
+        j.append(action(3, t: 103))
+        XCTAssertEqual(timer.delays.count, 2, "the next event starts a new batch")
+        timer.fireAll()
+        j.waitForWritesForTesting()
+        XCTAssertEqual(CrashJournalContents.load(j.directory)?.events.map(\.seq), [1, 2, 3])
     }
 
     func testJournalRotatesAtEachCheckpoint() throws {
@@ -604,7 +619,12 @@ final class CrashCapsuleTests: XCTestCase {
         await BugCapsule.refreshRemoteConfig()
     }
 
-    func flushUntil(_ timeout: TimeInterval = 8, _ cond: @escaping () -> Bool) async {
+    /// Waits for what `start` handed to the session queue (the previous
+    /// run's crash capsule is built there), then flushes until [cond]. The
+    /// deadline is only a safety net: once the queue is drained a flush
+    /// delivers everything.
+    func flushUntil(_ timeout: TimeInterval = 30, _ cond: @escaping () -> Bool) async {
+        if let session = BugCapsuleSession.current { await waitForQueue(session) }
         let end = Date().addingTimeInterval(timeout)
         repeat {
             await BugCapsule.flush(timeout: 2)
@@ -826,7 +846,9 @@ final class CrashCapsuleTests: XCTestCase {
             bareSession().startReplayForTesting(
                 capsule: crashCapsule("ApplicationNotResponding", t: 3_000), settings: ReplaySettings(settleTimeoutMs: 100),
                 onReport: { reports.add($0) }))
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { Thread.sleep(forTimeInterval: 2.6) }
+        // The main thread hangs until the watchdog reports it (2 s by its
+        // clock, however long the machine takes to get there).
+        DispatchQueue.main.async { XCTAssertTrue(reports.waitForFirst(timeout: 60), "the watchdog reported the hang") }
         let late = await engine.run()
         engine.complete(late)
         let report = try XCTUnwrap(reports.all.first)
@@ -868,6 +890,31 @@ final class CrashCapsuleTests: XCTestCase {
 final class CrashReportBox: @unchecked Sendable {
     private let lock = NSLock()
     private var reports: [ReplayReport] = []
-    func add(_ r: ReplayReport) { lock.locked { reports.append(r) } }
+    private let added = DispatchSemaphore(value: 0)
+    func add(_ r: ReplayReport) {
+        lock.locked { reports.append(r) }
+        added.signal()
+    }
     var all: [ReplayReport] { lock.locked { reports } }
+    /// Blocks the calling thread until a report was added (false after [timeout]).
+    func waitForFirst(timeout: TimeInterval) -> Bool { added.wait(timeout: .now() + timeout) == .success }
+}
+
+/// A `CrashJournal.FlushTimer` the test fires by hand.
+final class FlushTimerBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var scheduled: [(delay: TimeInterval, fire: @Sendable () -> Void)] = []
+    private var fired = 0
+
+    var schedule: CrashJournal.FlushTimer { { delay, fire in self.lock.locked { self.scheduled.append((delay, fire)) } } }
+    var delays: [TimeInterval] { lock.locked { scheduled.map(\.delay) } }
+
+    /// Fires every timer not fired yet.
+    func fireAll() {
+        let due = lock.locked { () -> [@Sendable () -> Void] in
+            defer { fired = scheduled.count }
+            return scheduled[fired...].map(\.fire)
+        }
+        for fire in due { fire() }
+    }
 }

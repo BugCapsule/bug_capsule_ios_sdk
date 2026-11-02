@@ -55,9 +55,15 @@ final class CrashJournal: @unchecked Sendable {
     private var evicted = false
     private var lastSeq = 0
 
+    /// Runs [fire] after [delay] (the batching timer). Nil: `queue.asyncAfter`;
+    /// tests pass their own and fire it themselves.
+    typealias FlushTimer = @Sendable (_ delay: TimeInterval, _ fire: @escaping @Sendable () -> Void) -> Void
+    private let flushTimer: FlushTimer?
+
     /// Starts the journal with the header and the launch checkpoint.
-    init(directory: URL, maxBytes: Int, header: JSONObject, launch: Checkpoint) {
+    init(directory: URL, maxBytes: Int, header: JSONObject, launch: Checkpoint, flushTimer: FlushTimer? = nil) {
         self.directory = directory
+        self.flushTimer = flushTimer
         _maxBytes = max(maxBytes, 0)
         lastHeader = header
         pending = [.header(header), .checkpoint(launch)]
@@ -142,10 +148,16 @@ final class CrashJournal: @unchecked Sendable {
         guard let schedule else { return }
         if schedule == 0 {
             queue.async { self.drain() }
+        } else if let flushTimer {
+            flushTimer(schedule) { self.queue.async { self.drain() } }
         } else {
             queue.asyncAfter(deadline: .now() + schedule) { self.drain() }
         }
     }
+
+    /// Returns once every write already handed to the writer queue is done
+    /// (without draining what is still pending). Tests.
+    func waitForWritesForTesting() { queue.sync {} }
 
     // MARK: writer (queue)
 

@@ -225,7 +225,10 @@ final class TokenSetupTests: XCTestCase {
             XCTAssertNil(BugCapsule.session?.outbox, "no backend, nothing queued for upload")
             // The app keeps working: failures are still saved on the device.
             BugCapsule.fail("still_fine")
-            await waitUntil { !BugCapsule.savedCaptures().isEmpty }
+            // The capture logs once its file is saved: wait for that line, so
+            // no capture of this iteration is still running (and logging into
+            // the next test's sink) after the reset.
+            await waitUntil(30) { logs.items.contains { $0.contains("[bugcapsule] captured ") } }
             XCTAssertEqual(BugCapsule.savedCaptures().count, 1)
             XCTAssertEqual(logs.items.filter { $0.contains("[bugcapsule] the SDK token can't be used (\(state.rawValue))") }.count, 1)
             await BugCapsule.resetForTesting()

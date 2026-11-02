@@ -58,6 +58,7 @@ final class Monitoring: @unchecked Sendable {
     private var screen: ScreenLoad?
     private var interaction: BugCapsuleTransaction?
     private var spanScopes: [ObjectIdentifier: BugCapsuleSpan?] = [:]
+    private var _hangCapturedForTesting: (@Sendable () -> Void)?
     let startDate = Date()
     /// How long screen / interaction transactions wait for child spans.
     var idleTimeout: TimeInterval = 3
@@ -548,6 +549,14 @@ final class Monitoring: @unchecked Sendable {
         // A later MetricKit hang diagnostic of this process is the same hang.
         ledger.record(.hang, at: Date(), pid: Int(getpid()))
         capture(CrashEvents.hangDraft(samples, threshold: threshold, stack: stack))
+        lock.locked { _hangCapturedForTesting }?()
+    }
+
+    /// Called on the watchdog thread once a hang's event is queued, so a
+    /// test can hold the main thread exactly until then. Tests only.
+    var hangCapturedForTesting: (@Sendable () -> Void)? {
+        get { lock.locked { _hangCapturedForTesting } }
+        set { lock.locked { _hangCapturedForTesting = newValue } }
     }
 
     /// One MetricKit diagnostic payload. Failures BugCapsule reported

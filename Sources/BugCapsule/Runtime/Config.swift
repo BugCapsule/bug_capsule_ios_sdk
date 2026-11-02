@@ -218,6 +218,8 @@ public struct BugCapsuleTestOverrides: @unchecked Sendable {
     public var transport: BugCapsuleTransport?
     public var random: (@Sendable () -> Double)?
     public var captureSettleDelay: TimeInterval?
+    /// The wall clock capsules are stamped with (`manifest.createdAt`); SDK tests only.
+    var clock: (@Sendable () -> Date)?
 
     public init(
         storageDirectory: URL? = nil, transport: BugCapsuleTransport? = nil, random: (@Sendable () -> Double)? = nil,

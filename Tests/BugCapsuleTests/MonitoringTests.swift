@@ -473,8 +473,8 @@ final class MonitoringTests: XCTestCase {
         options.appHangTimeout = 0.2
         await start(monitoring: options)
         if NativeCrashHandler.debuggerAttached { throw XCTSkip("the watchdog is off under a debugger") }
-        try await Task.sleep(nanoseconds: 300_000_000)
-        blockCurrentThread(0.9)  // the main thread
+        let monitoring = try XCTUnwrap(BugCapsuleSession.current?.monitoring)
+        XCTAssertTrue(blockMainThreadUntilAHangIsCaptured(monitoring), "the watchdog reported the hang")
         await flushUntil { !StubBackend.items("event").isEmpty }
         let hangs = StubBackend.items("event").filter {
             $0["exception"]?["values"]?.arrayValue?.last?["type"] == "App Hanging"
@@ -502,7 +502,6 @@ final class MonitoringTests: XCTestCase {
     }
 }
 
-func blockCurrentThread(_ seconds: TimeInterval) { Thread.sleep(forTimeInterval: seconds) }
 
 /// Units below the session: transport, outbox, parsing, redaction, health.
 final class MonitoringUnitTests: XCTestCase {
