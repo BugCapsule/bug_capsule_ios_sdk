@@ -636,6 +636,14 @@ final class CrashCapsuleTests: XCTestCase {
         } while Date() < end
     }
 
+    /// What reached the stub backend, for failure messages.
+    func backendTrace() -> String {
+        let session = BugCapsuleSession.current
+        return StubBackend.requests.map { "\($0.method) \($0.path) \($0.body.count)B" }.joined(separator: ", ")
+            + " | outbox: \(session?.outbox.map { UploadOutbox.entries(in: $0.directory).count } ?? -1)"
+            + " remoteDisabled: \(session?.remoteDisabled ?? false) killed: \(session?.killed ?? false)"
+    }
+
     func uploadedCapsules() -> [Capsule] {
         StubBackend.requests("/v1/capsules").compactMap { r in
             (try? CapsuleCodec.decode(r.body)) ?? (try? CapsuleCodec.decode(Gzip.compress(r.body)))
@@ -657,7 +665,8 @@ final class CrashCapsuleTests: XCTestCase {
         StubBackend.reset()
         await start(dir, maxCapsulesPerSession: 0)
         await flushUntil { !self.uploadedCapsules().isEmpty && !StubBackend.items("event").isEmpty }
-        let capsule = try XCTUnwrap(uploadedCapsules().first, "crash capsules do not count against maxCapsulesPerSession")
+        let capsule = try XCTUnwrap(
+            uploadedCapsules().first, "crash capsules do not count against maxCapsulesPerSession: \(backendTrace())")
         let event = try XCTUnwrap(StubBackend.items("event").first { $0["level"] == "fatal" })
         XCTAssertEqual(event["capsuleId"], .string(capsule.manifest.capsuleId))
         XCTAssertEqual(capsule.manifest.monitoring?.eventId, event["eventId"]?.stringValue)
@@ -712,8 +721,8 @@ final class CrashCapsuleTests: XCTestCase {
         session.monitoring?.receiveMetricKit(payload, end: nil)
         XCTAssertFalse(FileManager.default.fileExists(atPath: j.directory.path), "used once")
         await flushUntil { !self.uploadedCapsules().isEmpty && !StubBackend.items("event").isEmpty }
-        let capsule = try XCTUnwrap(uploadedCapsules().first)
-        let event = try XCTUnwrap(StubBackend.items("event").first)
+        let capsule = try XCTUnwrap(uploadedCapsules().first, backendTrace())
+        let event = try XCTUnwrap(StubBackend.items("event").first, backendTrace())
         XCTAssertEqual(event["capsuleId"], .string(capsule.manifest.capsuleId))
         XCTAssertEqual(capsule.manifest.failure?.signature, "crash:EXC_BAD_ACCESS")
         XCTAssertEqual(Dictionary(uniqueKeysWithValues: capsule.manifest.labels)["crash.mechanism"], "metrickit")

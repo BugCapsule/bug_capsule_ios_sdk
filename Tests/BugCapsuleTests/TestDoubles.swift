@@ -233,7 +233,9 @@ final class FakeServerProtocol: URLProtocol, @unchecked Sendable {
             stream.open()
             var d = Data()
             var buf = [UInt8](repeating: 0, count: 4096)
-            while stream.hasBytesAvailable {
+            // Until the end of the body: `hasBytesAvailable` can be false before
+            // all of it has arrived, which cut bodies short.
+            while true {
                 let n = stream.read(&buf, maxLength: buf.count)
                 if n <= 0 { break }
                 d.append(buf, count: n)
