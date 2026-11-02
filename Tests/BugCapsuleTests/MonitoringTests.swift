@@ -474,12 +474,16 @@ final class MonitoringTests: XCTestCase {
         await start(monitoring: options)
         if NativeCrashHandler.debuggerAttached { throw XCTSkip("the watchdog is off under a debugger") }
         let monitoring = try XCTUnwrap(BugCapsuleSession.current?.monitoring)
-        XCTAssertTrue(blockMainThreadUntilAHangIsCaptured(monitoring), "the watchdog reported the hang")
-        await flushUntil { !StubBackend.items("event").isEmpty }
-        let hangs = StubBackend.items("event").filter {
-            $0["exception"]?["values"]?.arrayValue?.last?["type"] == "App Hanging"
+        XCTAssertTrue(blockMainThreadUntilAHangIsCaptured(monitoring), "the watchdog reported the hang: \(monitoring.hangDiagnosticsForTesting)")
+        func hangs() -> [JSONObject] {
+            StubBackend.items("event").filter { $0["exception"]?["values"]?.arrayValue?.last?["type"] == "App Hanging" }
         }
-        XCTAssertEqual(hangs.count, 1)
+        await flushUntil { hangs().count >= monitoring.hangsCapturedForTesting }
+        // One event per hang the watchdog saw (a loaded runner may stall the
+        // main thread past 200 ms more than once): never two for one hang.
+        let hangs = hangs()
+        XCTAssertGreaterThanOrEqual(hangs.count, 1)
+        XCTAssertEqual(hangs.count, monitoring.hangsCapturedForTesting)
         let value = hangs[0]["exception"]?["values"]?.arrayValue?.last
         XCTAssertEqual(value?["mechanism"]?["type"], "app_hang")
         XCTAssertEqual(value?["value"], "App hanging for at least 200 ms.")

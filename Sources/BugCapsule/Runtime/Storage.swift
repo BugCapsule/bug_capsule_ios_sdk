@@ -258,14 +258,25 @@ public actor UploadOutbox {
 
     /// Queues a capsule. False when not queued (closed, too large, I/O error).
     public func enqueue(capsuleId: String, bytes: Data) -> Bool {
+        enqueue(capsuleId: capsuleId, bytes: bytes, gate: { $0() })
+    }
+
+    /// Queues a capsule if [gate] runs the write it is given (it may refuse:
+    /// collection was turned off). The gate holds the caller's lock around
+    /// the write, so a wipe under that lock never misses a file.
+    func enqueue(capsuleId: String, bytes: Data, gate: (() -> Bool) -> Bool) -> Bool {
         if closed || bytes.count > limits.maxBytes { return false }
         let url = directory.appendingPathComponent("\(Int64(now().timeIntervalSince1970 * 1000))_\(capsuleId).\(fileExtension)")
-        do {
-            try FileIO.writeAtomically(bytes, to: url)
-        } catch {
-            BugCapsuleLog.warn("could not queue capsule \(capsuleId): \(error.localizedDescription)")
-            return false
+        let written = gate {
+            do {
+                try FileIO.writeAtomically(bytes, to: url)
+                return true
+            } catch {
+                BugCapsuleLog.warn("could not queue capsule \(capsuleId): \(error.localizedDescription)")
+                return false
+            }
         }
+        guard written else { return false }
         enforceLimits()
         return FileIO.fm.fileExists(atPath: url.path)
     }

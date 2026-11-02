@@ -59,6 +59,9 @@ final class Monitoring: @unchecked Sendable {
     private var interaction: BugCapsuleTransaction?
     private var spanScopes: [ObjectIdentifier: BugCapsuleSpan?] = [:]
     private var _hangCapturedForTesting: (@Sendable () -> Void)?
+    private var _hangsCaptured = 0
+    /// Bumped by `dropPending`: an envelope taken before it is never written.
+    private var dataGeneration = 0
     let startDate = Date()
     /// How long screen / interaction transactions wait for child spans.
     var idleTimeout: TimeInterval = 3
@@ -266,6 +269,7 @@ final class Monitoring: @unchecked Sendable {
         let box: UploadOutbox? = lock.locked {
             pending = []
             pendingBytes = 0
+            dataGeneration += 1
             return outbox
         }
         scope.clearBreadcrumbs()
@@ -552,7 +556,21 @@ final class Monitoring: @unchecked Sendable {
         // A later MetricKit hang diagnostic of this process is the same hang.
         ledger.record(.hang, at: Date(), pid: Int(getpid()))
         capture(CrashEvents.hangDraft(samples, threshold: threshold, stack: stack))
-        lock.locked { _hangCapturedForTesting }?()
+        lock.locked { () -> (@Sendable () -> Void)? in
+            _hangsCaptured += 1
+            return _hangCapturedForTesting
+        }?()
+    }
+
+    /// Watchdog hangs captured so far (tests).
+    var hangsCapturedForTesting: Int { lock.locked { _hangsCaptured } }
+
+    /// Why a watchdog hang would not be reported (tests).
+    var hangDiagnosticsForTesting: String {
+        let (hangs, foreground, owns, stopped) = lock.locked { (self.hangs, self.foreground, ownsCrashHandlers, self.stopped) }
+        return "watchdog=\(hangs?.stateForTesting ?? "none") foreground=\(foreground) ownsCrashHandlers=\(owns) "
+            + "stopped=\(stopped) debugger=\(NativeCrashHandler.debuggerAttached) "
+            + "hangTracking=\(options.enableAppHangTracking) threshold=\(options.appHangTimeout)"
     }
 
     /// Called on the watchdog thread once a hang's event is queued, so a
@@ -727,27 +745,40 @@ final class Monitoring: @unchecked Sendable {
         }
     }
 
-    private func takePending() -> [JSONValue] {
+    private func takePending() -> [JSONValue] { takePendingWithGeneration().items }
+
+    private func takePendingWithGeneration() -> (items: [JSONValue], generation: Int) {
         lock.locked {
             let items = pending
             pending = []
             pendingBytes = 0
             batchScheduled = false
-            return items
+            return (items, dataGeneration)
         }
+    }
+
+    /// Runs [write] under the lock `dropPending` takes, unless data was
+    /// dropped since [generation].
+    private func whileDataKept(_ generation: Int, _ write: () -> Bool) -> Bool {
+        lock.locked { generation == dataGeneration ? write() : false }
     }
 
     /// Moves pending items into the outbox and sends.
     func flushPending(send: Bool = true) async {
-        let items = takePending()
+        let (items, generation) = takePendingWithGeneration()
         let box = lock.locked { outbox }
         if !items.isEmpty, let box {
             if let bytes = try? Gzip.compress(envelopeBody(items)) {
-                if !(await box.enqueue(capsuleId: uuidV4(), bytes: bytes)) {
-                    if lock.locked({ stopped }) {
+                let gate: (() -> Bool) -> Bool = { write in self.whileDataKept(generation, write) }
+                if !(await box.enqueue(capsuleId: uuidV4(), bytes: bytes, gate: gate)) {
+                    if !whileDataKept(generation, { true }) {
+                        // Collection turned off meanwhile: dropped, as intended.
+                    } else if lock.locked({ stopped }) {
                         // Stopped meanwhile and the outbox closed: kept on disk all the same.
-                        _ = UploadOutbox.writeSynchronously(
-                            directory: box.directory, capsuleId: uuidV4(), bytes: bytes, fileExtension: "envelope")
+                        _ = whileDataKept(generation) {
+                            UploadOutbox.writeSynchronously(
+                                directory: box.directory, capsuleId: uuidV4(), bytes: bytes, fileExtension: "envelope")
+                        }
                     } else {
                         BugCapsuleLog.warn("envelope not queued (outbox limit or disk error)")
                     }

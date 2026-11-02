@@ -153,6 +153,30 @@ final class LocalDataTests: XCTestCase {
         XCTAssertTrue(BugCapsule.isRecording)
     }
 
+    /// Collection turned off while a capsule is being saved, or queued:
+    /// nothing of it is left on disk (BC-ENT-038, seen on CI).
+    func testTurningCollectionOffDuringACaptureLeavesNothingBehind() async throws {
+        for stage in ["save", "queue"] {
+            await BugCapsule.resetForTesting()
+            CollectionConsent.defaults.removeObject(forKey: CollectionConsent.key)
+            dir = tempDirectory()
+            start()
+            transport.uploadResults = [UploadResult(.retryLater)]
+            let session = try XCTUnwrap(BugCapsuleSession.current)
+            session.beforeCaptureWriteForTesting = { at in
+                guard at == stage else { return }
+                DispatchQueue.main.sync { MainActor.assumeIsolated { BugCapsule.setCollectionEnabled(false) } }
+            }
+            BugCapsule.fail("checkout.total", "negative")
+            _ = await BugCapsule.capture()
+            await session.waitForCapturesForTesting()
+            XCTAssertFalse(BugCapsule.isCollectionEnabled, stage)
+            XCTAssertEqual(files("outbox"), [], stage)
+            XCTAssertEqual(files("captures"), [], stage)
+            XCTAssertEqual(BugCapsule.savedCaptures(), [], stage)
+        }
+    }
+
     func testConsentPersistsAcrossLaunches() async throws {
         BugCapsule.setCollectionEnabled(false)
         start()

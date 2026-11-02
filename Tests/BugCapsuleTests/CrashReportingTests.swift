@@ -314,7 +314,7 @@ final class CrashReportingTests: XCTestCase {
         await start(options)
         // The main thread hangs until the watchdog has sampled every thread
         // and queued the event, however long a loaded machine takes.
-        XCTAssertTrue(blockMainThreadUntilAHangIsCaptured(monitoring), "the watchdog reported the hang")
+        XCTAssertTrue(blockMainThreadUntilAHangIsCaptured(monitoring), "the watchdog reported the hang: \(monitoring.hangDiagnosticsForTesting)")
         await flushUntil { !StubBackend.items("event").isEmpty }
         let hang = try XCTUnwrap(
             StubBackend.items("event").first { $0["exception"]?["values"]?.arrayValue?.last?["type"] == "App Hanging" })
@@ -776,11 +776,15 @@ final class CrashReportingTests: XCTestCase {
 
 /// Holds the main thread (the caller) until [monitoring]'s watchdog has
 /// captured a hang, which it only does while the main thread is blocked.
-/// False when none came within [timeout].
+/// A hang it already captured counts: a loaded runner can stall the main
+/// thread past the threshold during `start`, and the watchdog then waits
+/// for the main thread to drain its ping before it reports another one,
+/// so blocking here would wait forever. False when none came within [timeout].
 @MainActor
 func blockMainThreadUntilAHangIsCaptured(_ monitoring: Monitoring, timeout: TimeInterval = 60) -> Bool {
     let captured = DispatchSemaphore(value: 0)
     monitoring.hangCapturedForTesting = { captured.signal() }
     defer { monitoring.hangCapturedForTesting = nil }
+    if monitoring.hangsCapturedForTesting > 0 { return true }
     return captured.wait(timeout: .now() + timeout) == .success
 }

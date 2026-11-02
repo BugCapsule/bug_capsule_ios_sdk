@@ -190,6 +190,8 @@ public enum BugCapsule {
 
     /// Stops the SDK and forgets the session (tests).
     public static func resetForTesting() async {
+        // A capture still in flight would write and log into the next test.
+        await BugCapsuleSession.current?.waitForCapturesForTesting()
         await BugCapsuleSession.current?.dispose()
         BugCapsuleSession.current = nil
         Postconditions.shared.removeAll()
