@@ -175,6 +175,8 @@ public struct ConfigFetchFailure: Sendable, Equatable {
 public actor RemoteConfigController {
     public typealias OnChange = @Sendable (RemoteCaptureConfig?, RemoteCaptureConfig) -> Void
     public typealias OnRejected = @Sendable (ConfigFetchFailure) -> Void
+    /// Told each fetch's result once it was applied (`onChange` / `onRejected` ran).
+    public typealias OnResult = @Sendable (ConfigFetchResult) -> Void
 
     private let fetch: @Sendable () async -> ConfigFetchResult
     private let cache: RemoteConfigCache
@@ -187,6 +189,7 @@ public actor RemoteConfigController {
     private let random: @Sendable () -> Double
     private let autoSchedule: Bool
     private let onRejected: OnRejected?
+    private let onResult: OnResult?
 
     public private(set) var current: RemoteCaptureConfig?
     public private(set) var keyRejected = false
@@ -197,6 +200,10 @@ public actor RemoteConfigController {
     private var failures = 0
     private var timer: Task<Void, Never>?
     private var inFlight: Task<Void, Never>?
+    /// Fetches started / finished in this run: `refresh` waits for one that
+    /// started after it was called.
+    private var fetchesStarted = 0
+    private var fetchesFinished = 0
     private var paused = false
     private var disposed = false
     /// Delay of the last scheduled refresh (tests).
@@ -207,10 +214,11 @@ public actor RemoteConfigController {
         onChange: @escaping OnChange, maxStale: TimeInterval = 7 * 24 * 3600, minInterval: TimeInterval = 30,
         maxBackoff: TimeInterval = 1800, now: @escaping @Sendable () -> Date = { Date() },
         random: @escaping @Sendable () -> Double = { Double.random(in: 0..<1) }, autoSchedule: Bool = true,
-        initial: RemoteCaptureConfig? = nil, onRejected: OnRejected? = nil
+        initial: RemoteCaptureConfig? = nil, onRejected: OnRejected? = nil, onResult: OnResult? = nil
     ) {
         current = initial
         self.onRejected = onRejected
+        self.onResult = onResult
         self.fetch = fetch
         self.cache = cache
         self.scope = scope
@@ -256,21 +264,38 @@ public actor RemoteConfigController {
         current = cache.read(scope: scope)
     }
 
-    /// Fetches now unless a fetch is already running (then waits for it).
+    /// Returns once a fetch that started after this call has been applied.
+    /// A fetch already running (started before: it may carry an older
+    /// answer) is waited for, then another one runs; callers that arrive
+    /// together share one fetch.
     public func refresh() async {
-        if disposed { return }
-        if let inFlight {
-            await inFlight.value
-            return
+        let needed = fetchesStarted + 1
+        while !disposed && fetchesFinished < needed {
+            if let inFlight {
+                await inFlight.value
+            } else {
+                fetchesStarted += 1
+                let task = Task {
+                    await self.doRefresh()
+                    self.fetchFinished()
+                }
+                inFlight = task
+                await task.value
+            }
         }
-        let task = Task { await self.doRefresh() }
-        inFlight = task
-        await task.value
+    }
+
+    /// Cleared by the fetch itself, so nobody waits on a finished fetch
+    /// in place of a new one.
+    private func fetchFinished() {
+        fetchesFinished += 1
         inFlight = nil
     }
 
-    /// Refreshes first when the config is missing or older than its TTL.
+    /// Refreshes first when the config is missing or older than its TTL
+    /// (a fetch already running is waited for first).
     public func ensureFresh() async {
+        if let inFlight { await inFlight.value }
         if !isFresh { await refresh() }
     }
 
@@ -292,6 +317,7 @@ public actor RemoteConfigController {
                 BugCapsuleLog.warn("could not cache remote config: \(error)")
             }
             onChange(previous, config)
+            onResult?(result)
             schedule(ttl)
         case .failed(let message, let status, let retryAfter, let reason, let detail):
             failures += 1
@@ -308,6 +334,7 @@ public actor RemoteConfigController {
                 let previous = current
                 onChange(previous, Self.disabledLike(previous))
             }
+            onResult?(result)
             var delay = min(minInterval * pow(2, Double(min(failures - 1, 16))), maxBackoff)
             if let retryAfter, retryAfter > delay { delay = retryAfter }
             schedule(delay * (0.8 + random() * 0.4))

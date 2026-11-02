@@ -110,7 +110,9 @@ final class TokenSetupTests: XCTestCase {
 
     var overrides: BugCapsuleTestOverrides { BugCapsuleTestOverrides(storageDirectory: dir, captureSettleDelay: 0.05) }
 
-    func waitUntil(_ timeout: TimeInterval = 8, _ cond: @escaping () -> Bool) async {
+    /// Polls [cond], the observable end of work the SDK does in the
+    /// background; the timeout is only a safety net for a broken build.
+    func waitUntil(_ timeout: TimeInterval = 30, _ cond: @escaping () -> Bool) async {
         let end = Date().addingTimeInterval(timeout)
         while !cond() && Date() < end { try? await Task.sleep(nanoseconds: 20_000_000) }
     }
@@ -228,7 +230,7 @@ final class TokenSetupTests: XCTestCase {
             // The capture logs once its file is saved: wait for that line, so
             // no capture of this iteration is still running (and logging into
             // the next test's sink) after the reset.
-            await waitUntil(30) { logs.items.contains { $0.contains("[bugcapsule] captured ") } }
+            await waitUntil { logs.items.contains { $0.contains("[bugcapsule] captured ") } }
             XCTAssertEqual(BugCapsule.savedCaptures().count, 1)
             XCTAssertEqual(logs.items.filter { $0.contains("[bugcapsule] the SDK token can't be used (\(state.rawValue))") }.count, 1)
             await BugCapsule.resetForTesting()
@@ -255,7 +257,9 @@ final class TokenSetupTests: XCTestCase {
         await BugCapsule.refreshRemoteConfig()
         BugCapsule.fail("after_revocation")
         await BugCapsule.flushUploads()
-        try await Task.sleep(nanoseconds: 200_000_000)
+        if let session = BugCapsule.session {  // anything `fail` handed to the session queue
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in session.queue.async { c.resume() } }
+        }
         XCTAssertTrue(server.requests.allSatisfy { $0.path == "/v1/sdk/config" }, "\(server.requests.map(\.path))")
         XCTAssertTrue(BugCapsule.savedCaptures().isEmpty)
         let refused = logs.items.filter { $0.contains("refused this app's SDK token (token_revoked): \(detail)") }
@@ -272,13 +276,19 @@ final class TokenSetupTests: XCTestCase {
         XCTAssertEqual(s.state, .offline)
         XCTAssertTrue(s.message?.contains("could not be reached") ?? false)
         BugCapsule.fail("while_offline")
-        var pending = 0
-        for _ in 0..<100 where pending == 0 {
-            try await Task.sleep(nanoseconds: 30_000_000)
-            pending = await BugCapsule.session?.outbox?.entries().count ?? 0
-        }
+        let pending = await outboxEntries { $0 > 0 }
         XCTAssertEqual(pending, 1, "the capsule waits in the outbox")
         XCTAssertTrue(BugCapsule.isRecording)
+    }
+
+    /// The outbox's entry count once [cond] holds for it (or the safety deadline passed).
+    func outboxEntries(_ cond: @escaping (Int) -> Bool) async -> Int {
+        let end = Date().addingTimeInterval(30)
+        while true {
+            let n = await BugCapsule.session?.outbox?.entries().count ?? 0
+            if cond(n) || Date() >= end { return n }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
     }
 
     func testServerErrorsThenRecoveryUploadsTheOutbox() async throws {
@@ -292,11 +302,7 @@ final class TokenSetupTests: XCTestCase {
         XCTAssertEqual(BugCapsule.status.connection.state, .offline)
         XCTAssertEqual(BugCapsule.status.connection.reason, "HTTP 503")
         BugCapsule.fail("while_down")
-        var pending = 0
-        for _ in 0..<100 where pending == 0 {
-            try await Task.sleep(nanoseconds: 30_000_000)
-            pending = await BugCapsule.session?.outbox?.entries().count ?? 0
-        }
+        let pending = await outboxEntries { $0 > 0 }
         XCTAssertEqual(pending, 1)
 
         mode.value = "up"
@@ -310,15 +316,19 @@ final class TokenSetupTests: XCTestCase {
     }
 
     func testHangingBackendNeverBlocksStartOrTheApp() async throws {
+        // The backend answers only when the test ends.
+        let answer = DispatchSemaphore(value: 0)
         let server = try TestHTTPServer { _ in
-            Thread.sleep(forTimeInterval: 3)
+            answer.wait()
             return .init(status: 503)
         }
-        defer { server.stop() }
+        defer {
+            answer.signal()
+            server.stop()
+        }
         let started = Date()
         BugCapsule.start(BugCapsuleConfig(token: makeConnectionToken(api: server.baseURL, key: key), mode: .qa), overrides: overrides)
         XCTAssertLessThan(Date().timeIntervalSince(started), 1, "start does not wait for the network")
-        try await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertEqual(BugCapsule.status.connection.state, .connecting)
         let failed = Date()
         BugCapsule.fail("while_hanging")

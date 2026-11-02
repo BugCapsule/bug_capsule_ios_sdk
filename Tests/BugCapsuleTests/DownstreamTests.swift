@@ -77,7 +77,7 @@ final class DownstreamSessionTests: XCTestCase {
     private func url(_ path: String) -> URL { URL(string: server.baseURL + path)! }
 
     private func instrumented(_ config: URLSessionConfiguration = .ephemeral) -> URLSessionConfiguration {
-        config.timeoutIntervalForRequest = 5  // a lost response fails the test instead of hanging it
+        config.timeoutIntervalForRequest = 30  // a lost response fails the test instead of hanging it
         BugCapsule.instrument(config)
         return config
     }
@@ -85,7 +85,7 @@ final class DownstreamSessionTests: XCTestCase {
     func testConcurrentRequestsOnTwoSessionsGetTheirOwnResponses() async throws {
         let a = URLSession(configuration: instrumented())
         let slow = Task { try await a.data(from: self.url("/slow")).0 }
-        try await Task.sleep(nanoseconds: 200_000_000)
+        await waitUntil { self.server.requests.contains { $0.path == "/slow" } }  // in flight (answered after 0.6 s)
         // Each downstream session numbers its tasks from 1, so both requests
         // below run as task 1 of their session.
         let b = URLSession(configuration: instrumented())
@@ -143,10 +143,16 @@ final class DownstreamSessionTests: XCTestCase {
 
     func testIdleDownstreamSessionIsClosedAndReopened() async throws {
         DownstreamSession.idleTimeout = 0.1
-        defer { DownstreamSession.idleTimeout = 60 }
+        let closed = expectation(description: "the idle downstream session was closed")
+        closed.assertForOverFulfill = false
+        DownstreamSession.idleSessionClosedForTesting = { closed.fulfill() }
+        defer {
+            DownstreamSession.idleTimeout = 60
+            DownstreamSession.idleSessionClosedForTesting = nil
+        }
         let session = URLSession(configuration: instrumented())
         let (first, _) = try await session.data(from: url("/fast"))
-        try await Task.sleep(nanoseconds: 400_000_000)
+        await fulfillment(of: [closed], timeout: 60)
         let (second, _) = try await session.data(from: url("/fast"))
         XCTAssertEqual(String(decoding: first, as: UTF8.self), "fast")
         XCTAssertEqual(String(decoding: second, as: UTF8.self), "fast")
@@ -158,9 +164,15 @@ final class DownstreamSessionTests: XCTestCase {
         BugCapsuleSession.current!.recorderForTesting!.window().events.filter { $0.type == EventTypes.http }
     }
 
+    /// Polls until the recorder holds [n] exchanges (30 s safety net).
     private func waitForEvents(_ n: Int, file: StaticString = #filePath, line: UInt = #line) async {
-        for _ in 0..<200 where httpEvents.count < n { try? await Task.sleep(nanoseconds: 10_000_000) }
+        await waitUntil { self.httpEvents.count >= n }
         XCTAssertGreaterThanOrEqual(httpEvents.count, n, file: file, line: line)
+    }
+
+    private func waitUntil(_ cond: @escaping () -> Bool) async {
+        let end = Date().addingTimeInterval(30)
+        while !cond() && Date() < end { try? await Task.sleep(nanoseconds: 10_000_000) }
     }
 
     func testAuthChallengeReachesTheAppsSessionDelegate() async throws {

@@ -277,6 +277,8 @@ public final class BugCapsuleURLSession: BugCapsuleIntegration, @unchecked Senda
 final class DownstreamSession: @unchecked Sendable {
     /// Changed by tests only.
     nonisolated(unsafe) static var idleTimeout: TimeInterval = 60
+    /// Told after an idle session was invalidated. Tests only.
+    nonisolated(unsafe) static var idleSessionClosedForTesting: (@Sendable () -> Void)?
 
     private let configuration: URLSessionConfiguration
     private let lock = NSLock()
@@ -310,7 +312,9 @@ final class DownstreamSession: @unchecked Sendable {
                 defer { session = nil }
                 return session
             }
-            s?.finishTasksAndInvalidate()
+            guard let s else { return }
+            s.finishTasksAndInvalidate()
+            DownstreamSession.idleSessionClosedForTesting?()
         }
     }
 }

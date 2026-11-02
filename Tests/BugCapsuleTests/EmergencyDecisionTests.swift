@@ -824,7 +824,7 @@ final class EmergencyDecisionCaptureTests: XCTestCase {
         let provider = FakeUpdateProvider()
         await initializeGuards(provider: provider)
         let updates = BugCapsule.emergency.updates
-        for _ in 0..<500 where backend.receipts.isEmpty { try await Task.sleep(nanoseconds: 10_000_000) }
+        await BugCapsule.emergency.runtimeForTesting?.waitForReceiptsForTesting()
         XCTAssertEqual(backend.receipts.count, 1, "APPLIED")
         let requests = backend.server.requests.count
 
@@ -839,7 +839,7 @@ final class EmergencyDecisionCaptureTests: XCTestCase {
         XCTAssertEqual(provider.presented.value, 0)
         XCTAssertNil(updates.status)
         XCTAssertNil(updates.lastAvailability)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        await BugCapsule.emergency.runtimeForTesting?.waitForReceiptsForTesting()
         XCTAssertEqual(backend.server.requests.count, requests, "no runtime report")
 
         // The same calls outside a replay reach it.

@@ -408,11 +408,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
             Task { await box.open() }
             let source = connectionSource
             remote = RemoteConfigController(
-                fetch: { [weak self] in
-                    let result = await transport.fetchConfig()
-                    self?.noteConfigFetch(result)
-                    return result
-                }, cache: store.configCache, scope: scope,
+                fetch: { await transport.fetchConfig() }, cache: store.configCache, scope: scope,
                 onChange: { [weak self] previous, next in self?.applyRemote(previous, next) },
                 maxStale: config.maxStaleConfig, initial: cached,
                 onRejected: { failure in
@@ -420,7 +416,10 @@ public final class BugCapsuleSession: @unchecked Sendable {
                     BugCapsuleLog.warn(
                         "the backend refused this app's \(what) (\(failure.reason ?? "HTTP \(failure.status ?? 0)"))"
                             + (failure.detail.map { ": \($0)" } ?? "") + ". Capture and uploads are off for this run.")
-                })
+                },
+                // The status changes once the result is applied: "rejected"
+                // is never seen while capture still runs.
+                onResult: { [weak self] result in self?.noteConfigFetch(result) })
         }
         lock.locked {
             self.store = store

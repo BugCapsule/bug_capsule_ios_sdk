@@ -34,12 +34,12 @@ final class MonitoringTests: XCTestCase {
 
     var monitoring: Monitoring { BugCapsuleSession.current!.monitoring! }
 
-    func waitUntil(_ timeout: TimeInterval = 5, _ cond: @escaping () -> Bool) async {
+    func waitUntil(_ timeout: TimeInterval = 30, _ cond: @escaping () -> Bool) async {
         let end = Date().addingTimeInterval(timeout)
         while !cond() && Date() < end { try? await Task.sleep(nanoseconds: 20_000_000) }
     }
 
-    func flushUntil(_ timeout: TimeInterval = 5, _ cond: @escaping () -> Bool) async {
+    func flushUntil(_ timeout: TimeInterval = 30, _ cond: @escaping () -> Bool) async {
         let end = Date().addingTimeInterval(timeout)
         repeat {
             await BugCapsule.flush(timeout: 2)

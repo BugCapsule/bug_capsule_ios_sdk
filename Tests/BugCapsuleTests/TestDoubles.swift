@@ -36,14 +36,8 @@ final class TestHTTPServer: @unchecked Sendable {
         let params = NWParameters.tcp
         params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
         listener = try NWListener(using: params)
-        let ready = DispatchSemaphore(value: 0)
-        listener.stateUpdateHandler = { state in
-            if case .ready = state { ready.signal() }
-        }
         listener.newConnectionHandler = { [weak self] conn in self?.serve(conn) }
-        listener.start(queue: queue)
-        _ = ready.wait(timeout: .now() + 5)
-        port = listener.port?.rawValue ?? 0
+        port = try startListening(listener, queue: queue)
     }
 
     var baseURL: String { "http://127.0.0.1:\(port)" }
@@ -94,6 +88,41 @@ final class TestHTTPServer: @unchecked Sendable {
         guard body.count >= length else { return nil }
         return Request(method: first[0], path: first.count > 1 ? first[1] : "/", headers: headers, body: Data(body.prefix(length)))
     }
+}
+
+struct ListenerNotReady: Error, CustomStringConvertible {
+    let state: String
+    var description: String { "loopback listener not ready: \(state)" }
+}
+
+/// Starts [listener] and returns its port once it is ready. A loaded runner
+/// can take seconds to get there: waiting less used to hand tests port 0
+/// (`connect` then fails with EADDRNOTAVAIL). Throws when the listener
+/// fails, or after 120 s.
+func startListening(_ listener: NWListener, queue: DispatchQueue) throws -> UInt16 {
+    final class Outcome: @unchecked Sendable {
+        let lock = NSLock()
+        var state = "not started"
+        let settled = DispatchSemaphore(value: 0)
+    }
+    let outcome = Outcome()
+    listener.stateUpdateHandler = { state in
+        switch state {
+        case .ready, .failed, .cancelled:
+            outcome.lock.locked { outcome.state = "\(state)" }
+            outcome.settled.signal()
+        default:
+            break
+        }
+    }
+    listener.start(queue: queue)
+    let waited = outcome.settled.wait(timeout: .now() + 120)
+    let state = outcome.lock.locked { outcome.state }
+    guard waited == .success, state == "ready", let port = listener.port?.rawValue, port != 0 else {
+        listener.cancel()
+        throw ListenerNotReady(state: waited == .success ? state : "timed out after 120 s")
+    }
+    return port
 }
 
 /// Backend transport double.
