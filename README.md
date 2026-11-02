@@ -180,6 +180,15 @@ let session = URLSession(configuration: config)
 // URLSession.shared: BugCapsule.instrumentSharedSession() (opt-in)
 ```
 
+Request and response bodies are recorded in `.debug` and `.qa` modes and
+**not in `.production`**, where exchanges keep method, URL, status, headers
+and timing. Set `captureNetworkBodies: true` or `false` to choose yourself;
+an explicit value always wins over the mode. Binary (non-UTF-8) bodies are
+recorded as `{size, contentType}` only, in every mode, unless you set
+`captureBinaryBodies: true`. Replay serves an exchange without a body with
+its recorded status and headers and an empty body, reports
+`network.noBody`, and the capsule lists `network.bodies` in eligibility.
+
 ### WebSockets
 
 `URLSessionWebSocketTask` can't be intercepted, so open sockets through
@@ -595,7 +604,8 @@ capture off remotely.
 
 Redaction is best effort. It does **not** find secrets in URL path segments,
 personal data that isn't a credential (names, emails, addresses), secrets
-under innocuous key names, or binary bodies. Inspect real capsules with
+under innocuous key names, or binary bodies (recorded only with
+`captureBinaryBodies: true`). Inspect real capsules with
 `bugcapsule inspect` before a wider rollout. More:
 [Privacy and redaction](https://docs.bugcapsule.com/privacy.html).
 
@@ -604,6 +614,9 @@ under innocuous key names, or binary bodies. Inspect real capsules with
 - Production sessions record a sample of sessions: `productionSampleRate`
   (default `0.1`), capped by your project's rate. Monitoring sessions are not
   sampled.
+- Network bodies are not recorded in production unless you set
+  `captureNetworkBodies: true`; replay of those capsules has no response
+  bodies to serve.
 - Learn the kill switch before you need it: `bugcapsule capture --on` stops
   capture for every device and deletes queued capsules; `--off` resumes it.
 - Upload dSYMs for every release build.
