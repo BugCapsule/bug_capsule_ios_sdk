@@ -269,7 +269,7 @@ final class CrashJournal: @unchecked Sendable {
         if handleStart != start {
             closeHandle()
             if !FileIO.fm.fileExists(atPath: url.path) {
-                guard FileIO.fm.createFile(atPath: url.path, contents: nil, attributes: Self.protection) else { return }
+                guard FileIO.fm.createFile(atPath: url.path, contents: nil, attributes: FileIO.protection) else { return }
             }
             guard let h = try? FileHandle(forWritingTo: url) else { return }
             _ = try? h.seekToEnd()
@@ -313,17 +313,7 @@ final class CrashJournal: @unchecked Sendable {
 
     // MARK: files
 
-    static var protection: [FileAttributeKey: Any]? {
-        #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
-            return [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
-        #else
-            return nil
-        #endif
-    }
-
-    static func ensureDirectory(_ url: URL) throws {
-        try FileIO.fm.createDirectory(at: url, withIntermediateDirectories: true, attributes: protection)
-    }
+    static func ensureDirectory(_ url: URL) throws { try FileIO.ensureDirectory(url) }
 
     /// Temp file + rename.
     static func writeAtomically(_ data: Data, to url: URL) throws {

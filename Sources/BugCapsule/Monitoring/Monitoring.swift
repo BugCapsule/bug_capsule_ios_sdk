@@ -256,6 +256,24 @@ final class Monitoring: @unchecked Sendable {
         if let box { Task { await box.close() } }
     }
 
+    /// Local data was cleared: nothing pending or queued may leave the
+    /// device, and the breadcrumbs go too.
+    func dropPending() {
+        let box: UploadOutbox? = lock.locked {
+            pending = []
+            pendingBytes = 0
+            return outbox
+        }
+        scope.clearBreadcrumbs()
+        if let box { Task { await box.purge() } }
+    }
+
+    /// Collection was turned off: drops what is pending and stops.
+    func withdraw() {
+        dropPending()
+        stop()
+    }
+
     // MARK: lifecycle
 
     @MainActor

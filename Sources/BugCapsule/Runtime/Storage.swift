@@ -1,20 +1,45 @@
 import Foundation
 
 /// File helpers that never throw into the app: atomic writes (temp file +
-/// rename), quiet deletes, cleanup of temp files left by an interrupted write.
+/// replace), quiet deletes, cleanup of temp files left by an interrupted write.
+///
+/// On iOS every file and directory written here is protected until the
+/// first unlock after a reboot (`completeUntilFirstUserAuthentication`):
+/// readable in the background once the user has unlocked the device, so
+/// launches in the background and uploads keep working.
 enum FileIO {
     static var fm: FileManager { FileManager.default }
+
+    /// `completeUntilFirstUserAuthentication` on iOS; nil elsewhere (macOS
+    /// has no data protection classes for these files).
+    static var protection: [FileAttributeKey: Any]? {
+        #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+            return [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
+        #else
+            return nil
+        #endif
+    }
 
     static func writeAtomically(_ data: Data, to url: URL) throws {
         let tmp = url.deletingLastPathComponent()
             .appendingPathComponent("\(url.lastPathComponent).\(UInt64(Date().timeIntervalSince1970 * 1_000_000)).tmp")
         do {
-            try data.write(to: tmp, options: [])
+            #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+                try data.write(to: tmp, options: [.completeFileProtectionUntilFirstUserAuthentication])
+            #else
+                try data.write(to: tmp, options: [])
+            #endif
             let handle = try FileHandle(forWritingTo: tmp)
             try? handle.synchronize()
             try? handle.close()
-            if fm.fileExists(atPath: url.path) { try fm.removeItem(at: url) }
-            try fm.moveItem(at: tmp, to: url)
+            // One rename: readers see the old file or the new one, never none.
+            if fm.fileExists(atPath: url.path) {
+                _ = try fm.replaceItemAt(url, withItemAt: tmp)
+            } else {
+                try fm.moveItem(at: tmp, to: url)
+            }
+            // replaceItemAt keeps the original's attributes: set the class again.
+            if let protection { try? fm.setAttributes(protection, ofItemAtPath: url.path) }
         } catch {
             deleteQuietly(tmp)
             throw error
@@ -30,8 +55,10 @@ enum FileIO {
         for url in items where url.pathExtension == "tmp" { deleteQuietly(url) }
     }
 
+    /// Files created in it later (also by the native crash writer) inherit
+    /// its protection class.
     static func ensureDirectory(_ url: URL) throws {
-        try fm.createDirectory(at: url, withIntermediateDirectories: true)
+        try fm.createDirectory(at: url, withIntermediateDirectories: true, attributes: protection)
     }
 
     static func modified(_ url: URL) -> Date {
@@ -44,11 +71,14 @@ enum FileIO {
     }
 }
 
-/// On-device files: saved capsules (the newest 20) and the cached remote
-/// config, under `Application Support/bugcapsule` (excluded from backup).
-/// Uploads go through `UploadOutbox` (`bugcapsule/outbox`).
+/// On-device files: saved capsules (the newest 20, at most 7 days old) and
+/// the cached remote config, under `Application Support/bugcapsule`
+/// (excluded from backup). Uploads go through `UploadOutbox`
+/// (`bugcapsule/outbox`).
 public final class CapsuleStore: @unchecked Sendable {
     public static let maxSavedCaptures = 20
+    /// Saved capsules older than this are deleted (on open, save and list).
+    public static let maxSavedCaptureAge: TimeInterval = 7 * 24 * 3600
     public let root: URL
     private let lock = NSLock()
 
@@ -69,6 +99,7 @@ public final class CapsuleStore: @unchecked Sendable {
         try? r.setResourceValues(values)
         FileIO.removeTemporaryFiles(in: capturesDirectory)
         FileIO.removeTemporaryFiles(in: root)
+        _ = savedCaptures()
     }
 
     public var capturesDirectory: URL { root.appendingPathComponent("captures", isDirectory: true) }
@@ -93,9 +124,16 @@ public final class CapsuleStore: @unchecked Sendable {
         return savedCapturesLocked()
     }
 
-    private func savedCapturesLocked() -> [URL] {
+    /// Deletes the expired ones on the way.
+    private func savedCapturesLocked(now: Date = Date()) -> [URL] {
         let items = (try? FileIO.fm.contentsOfDirectory(at: capturesDirectory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        return items.filter { $0.pathExtension == "bugcapsule" }.sorted { FileIO.modified($0) > FileIO.modified($1) }
+        let cutoff = now.addingTimeInterval(-Self.maxSavedCaptureAge)
+        var kept: [(URL, Date)] = []
+        for url in items where url.pathExtension == "bugcapsule" {
+            let modified = FileIO.modified(url)
+            if modified < cutoff { FileIO.deleteQuietly(url) } else { kept.append((url, modified)) }
+        }
+        return kept.sorted { $0.1 > $1.1 }.map(\.0)
     }
 
     /// Kill switch: nothing captured before it may leave the device later.

@@ -64,6 +64,10 @@ public struct BugCapsuleConfig: @unchecked Sendable {
     public var mode: CaptureMode?
     /// Local master switch. The backend kill switch can also disable capture.
     public var enabled: Bool
+    /// Collection consent until the app calls `BugCapsule.setCollectionEnabled`
+    /// (which is persisted and wins from then on). Set false for opt-in:
+    /// nothing is captured or uploaded until the user agrees.
+    public var collectionEnabledByDefault: Bool
     /// Explicit backend URL + ingest key (self-hosted / advanced). Wins over `token`.
     /// Must be https (plain http only to localhost, 127.0.0.0/8, [::1] or
     /// 10.0.2.2) with an ingest key, never a `bcs_` secret key; otherwise it
@@ -118,7 +122,8 @@ public struct BugCapsuleConfig: @unchecked Sendable {
 
     public init(
         token: String? = nil, appVersion: String? = nil, appBuild: String? = nil, appId: String? = nil, appName: String? = nil,
-        flavor: String? = nil, mode: CaptureMode? = nil, enabled: Bool = true, backend: BugCapsuleBackendConfig? = nil,
+        flavor: String? = nil, mode: CaptureMode? = nil, enabled: Bool = true,
+        collectionEnabledByDefault: Bool = true, backend: BugCapsuleBackendConfig? = nil,
         gitSha: String? = nil, gitDirty: Bool? = nil, stateSchemaVersion: Int = 1, checkpointInterval: TimeInterval = 30,
         window: TimeInterval = 300, maxEvents: Int = 20000, productionSampleRate: Double = 0.1,
         autoCaptureOnFailure: Bool = true, maxCapsulesPerSession: Int = 3, captureNetworkBodies: Bool? = nil,
@@ -139,6 +144,7 @@ public struct BugCapsuleConfig: @unchecked Sendable {
         self.flavor = flavor
         self.mode = mode
         self.enabled = enabled
+        self.collectionEnabledByDefault = collectionEnabledByDefault
         self.backend = backend
         self.gitSha = gitSha
         self.gitDirty = gitDirty

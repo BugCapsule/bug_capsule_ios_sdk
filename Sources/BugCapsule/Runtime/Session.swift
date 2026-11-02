@@ -66,6 +66,10 @@ public final class BugCapsuleSession: @unchecked Sendable {
     private var sessionRate = 1.0
     private var captureEpoch = 0
     private(set) var killed = false
+    /// Collection consent was off at start: capture was never set up.
+    private var awaitingConsent = false
+    /// Collection was turned off during this run: no capture, no upload.
+    private(set) var collectionWithdrawn = false
     private var anchorMs: Int?
     private var wallAtAnchorMs: Int?
     private(set) var lastFailure: FailureRecord?
@@ -374,6 +378,13 @@ public final class BugCapsuleSession: @unchecked Sendable {
     private func prepareCapture() throws {
         lock.locked { _redactor = baseRedactor() }
         guard config.enabled else { return }
+        guard CollectionConsent.isEnabled(default: config.collectionEnabledByDefault) else {
+            // Whatever an earlier run left must not be sent either.
+            if let root = try? overrides?.storageDirectory ?? CapsuleStore.defaultRoot() { LocalData.wipe(root: root) }
+            lock.locked { awaitingConsent = true }
+            BugCapsuleLog.info("collection is off; nothing is captured or uploaded")
+            return
+        }
         let base: BugCapsuleTransport? = overrides?.transport ?? config.backend.map { BugCapsuleBackendClient(config: $0) }
         let transport = base.map { base in
             ObservedTransport(
@@ -921,7 +932,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
 
     var uploadsAllowed: Bool {
         get async {
-            guard !lock.locked({ disposed }), let remote = lock.locked({ remote }) else { return false }
+            guard !lock.locked({ disposed || collectionWithdrawn }), let remote = lock.locked({ remote }) else { return false }
             return await remote.uploadsAllowed
         }
     }
@@ -1073,6 +1084,55 @@ public final class BugCapsuleSession: @unchecked Sendable {
         checkpointTimer = nil
         journal?.delete()
         journal = nil
+    }
+
+    // MARK: local data and consent
+
+    /// Deletes what the SDK stored on the device (see `LocalData`). The
+    /// recording of this run stops too, so nothing captured before the
+    /// call is written again; it starts again on the next launch.
+    func clearLocalData() {
+        let (store, outbox) = lock.locked { () -> (CapsuleStore?, UploadOutbox?) in
+            if recording { stopRecordingLocked() }
+            lastFailure = nil
+            return (self.store, self.outbox)
+        }
+        monitoring?.dropPending()
+        if let outbox { Task { await outbox.purge() } }
+        if let root = store?.root ?? (try? overrides?.storageDirectory ?? CapsuleStore.defaultRoot()) {
+            LocalData.wipe(root: root)
+        }
+    }
+
+    /// Turning collection off stops capture and monitoring now and deletes
+    /// what is queued. Turning it on sets capture up now when consent was
+    /// off at start; after it was turned off in this run, capture starts
+    /// again on the next launch.
+    @MainActor
+    func setCollectionEnabled(_ enabled: Bool) {
+        if !enabled {
+            // Capture never set up (consent off at start) can still start in this run.
+            lock.locked { if !awaitingConsent { collectionWithdrawn = true } }
+            monitoring?.withdraw()
+            clearLocalData()
+            BugCapsuleLog.info("collection turned off; queued data deleted")
+            return
+        }
+        let (pending, withdrawn) = lock.locked { () -> (Bool, Bool) in
+            defer { awaitingConsent = false }
+            return (awaitingConsent, collectionWithdrawn)
+        }
+        if withdrawn {
+            BugCapsuleLog.info("collection turned on; capture starts on the next launch")
+        } else if pending, !isReplaying {
+            do {
+                try prepareCapture()
+            } catch {
+                BugCapsuleLog.warn("capture setup failed; the app runs without capture: \(error)")
+                lock.locked { stopRecordingLocked() }
+            }
+            afterAppStarted()
+        }
     }
 
     /// Kill switch: stop recording, drop the buffer, delete queued and saved captures.
