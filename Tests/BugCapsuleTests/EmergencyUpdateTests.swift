@@ -379,7 +379,7 @@ final class EmergencyUpdateTests: XCTestCase {
             switch mode.value {
             case "500": return .init(status: 500, body: Data("oops".utf8))
             case "empty": return .init(status: 200, body: Data(#"{"resultCount":0,"results":[]}"#.utf8))
-            case "slow": return .init(status: 200, body: Data("{}".utf8), delay: 3)
+            case "slow": return .init(status: 200, body: Data("{}".utf8), delay: 30)
             default: return .init(status: 200, body: Data("not json".utf8))
             }
         }
@@ -397,13 +397,13 @@ final class EmergencyUpdateTests: XCTestCase {
         let started = Date()
         r = await check(provider(server, timeout: 0.5))
         XCTAssertEqual(r.failure?.code, .timeout)
-        XCTAssertLessThan(Date().timeIntervalSince(started), 2.5)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 20, "the 0.5 s timeout, not the 30 s answer")
+        mode.mutate { $0 = "500" }
         r = await check(provider(server), required: "soon")
         XCTAssertEqual(r.failure?.code, .invalidVersion)
         // Nothing listens: a network error.
         let closed = try lookupServer { _ in .init(status: 200) }
-        closed.stop()
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        closed.stop()  // returns once the port is closed
         r = await check(provider(closed))
         XCTAssertEqual(r.failure?.code, .networkError)
     }

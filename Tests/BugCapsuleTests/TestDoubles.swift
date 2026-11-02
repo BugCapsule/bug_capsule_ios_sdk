@@ -37,12 +37,26 @@ final class TestHTTPServer: @unchecked Sendable {
         params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
         listener = try NWListener(using: params)
         listener.newConnectionHandler = { [weak self] conn in self?.serve(conn) }
-        port = try startListening(listener, queue: queue)
+        port = try startListening(listener, queue: queue, cancelled: cancelled)
     }
+
+    private let cancelled = DispatchSemaphore(value: 0)
+    private let stopLock = NSLock()
+    private var isStopped = false
 
     var baseURL: String { "http://127.0.0.1:\(port)" }
 
-    func stop() { listener.cancel() }
+    /// Stops listening; returns once the port no longer accepts connections
+    /// (a request right after then fails at once, not after a timeout).
+    func stop() {
+        let first = stopLock.locked { () -> Bool in
+            defer { isStopped = true }
+            return !isStopped
+        }
+        guard first else { return }
+        listener.cancel()
+        _ = cancelled.wait(timeout: .now() + 30)
+    }
 
     private func serve(_ conn: NWConnection) {
         conn.start(queue: queue)
@@ -103,7 +117,7 @@ struct ListenerNotReady: Error, CustomStringConvertible {
 /// can take seconds to get there: waiting less used to hand tests port 0
 /// (`connect` then fails with EADDRNOTAVAIL). Throws when the listener
 /// fails, or after 120 s.
-func startListening(_ listener: NWListener, queue: DispatchQueue) throws -> UInt16 {
+func startListening(_ listener: NWListener, queue: DispatchQueue, cancelled: DispatchSemaphore? = nil) throws -> UInt16 {
     final class Outcome: @unchecked Sendable {
         let lock = NSLock()
         var state = "not started"
@@ -111,6 +125,7 @@ func startListening(_ listener: NWListener, queue: DispatchQueue) throws -> UInt
     }
     let outcome = Outcome()
     listener.stateUpdateHandler = { state in
+        if case .cancelled = state { cancelled?.signal() }
         switch state {
         case .ready, .failed, .cancelled:
             outcome.lock.locked { outcome.state = "\(state)" }
