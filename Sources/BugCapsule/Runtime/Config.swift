@@ -86,7 +86,14 @@ public struct BugCapsuleConfig: @unchecked Sendable {
     public var productionSampleRate: Double
     public var autoCaptureOnFailure: Bool
     public var maxCapsulesPerSession: Int
-    public var captureNetworkBodies: Bool
+    /// Record request/response bodies. `nil` (the default): on in `.debug`
+    /// and `.qa`, off in `.production` (see `resolvedMode`); an explicit
+    /// true or false always wins. The backend can turn it off, never on.
+    public var captureNetworkBodies: Bool?
+    /// Record binary (and non-UTF-8) bodies as base64. Off by default in
+    /// every mode: such bodies are recorded as `{size, contentType}` only
+    /// (`bodyEncoding: omitted`). Has no effect while bodies are not captured.
+    public var captureBinaryBodies: Bool
     public var maxBodyBytes: Int
     public var redactKeys: [String]
     public var redactHeaders: [String]
@@ -114,8 +121,8 @@ public struct BugCapsuleConfig: @unchecked Sendable {
         flavor: String? = nil, mode: CaptureMode? = nil, enabled: Bool = true, backend: BugCapsuleBackendConfig? = nil,
         gitSha: String? = nil, gitDirty: Bool? = nil, stateSchemaVersion: Int = 1, checkpointInterval: TimeInterval = 30,
         window: TimeInterval = 300, maxEvents: Int = 20000, productionSampleRate: Double = 0.1,
-        autoCaptureOnFailure: Bool = true, maxCapsulesPerSession: Int = 3, captureNetworkBodies: Bool = true,
-        maxBodyBytes: Int = 256 * 1024, redactKeys: [String] = [], redactHeaders: [String] = [],
+        autoCaptureOnFailure: Bool = true, maxCapsulesPerSession: Int = 3, captureNetworkBodies: Bool? = nil,
+        captureBinaryBodies: Bool = false, maxBodyBytes: Int = 256 * 1024, redactKeys: [String] = [], redactHeaders: [String] = [],
         redactPatterns: [NSRegularExpression] = [],
         beforeRecord: (@Sendable (String, JSONObject) throws -> JSONObject?)? = nil,
         beforeCheckpoint: (@Sendable (String, JSONValue) throws -> JSONValue?)? = nil,
@@ -143,6 +150,7 @@ public struct BugCapsuleConfig: @unchecked Sendable {
         self.autoCaptureOnFailure = autoCaptureOnFailure
         self.maxCapsulesPerSession = maxCapsulesPerSession
         self.captureNetworkBodies = captureNetworkBodies
+        self.captureBinaryBodies = captureBinaryBodies
         self.maxBodyBytes = maxBodyBytes
         self.redactKeys = redactKeys
         self.redactHeaders = redactHeaders
@@ -156,6 +164,10 @@ public struct BugCapsuleConfig: @unchecked Sendable {
         self.replayURL = replayURL
         self.monitoring = monitoring
     }
+
+    /// Whether bodies are recorded locally: `captureNetworkBodies` when set,
+    /// else true except in `.production`.
+    public var resolvedCaptureNetworkBodies: Bool { captureNetworkBodies ?? (resolvedMode != .production) }
 
     /// The effective capture mode.
     public var resolvedMode: CaptureMode {

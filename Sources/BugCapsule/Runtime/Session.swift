@@ -168,6 +168,8 @@ public final class BugCapsuleSession: @unchecked Sendable {
     public var redactor: Redactor { lock.locked { _redactor } }
     public var captureNetworkBodies: Bool { lock.locked { captureBodies } }
     public var maxBodyBytes: Int { config.maxBodyBytes }
+    /// Binary bodies as base64 (`BugCapsuleConfig.captureBinaryBodies`).
+    public var captureBinaryBodies: Bool { config.captureBinaryBodies }
     public var random: BugCapsuleRandom { lock.locked { _random } }
     var monitoring: Monitoring? { lock.locked { _monitoring } }
 
@@ -416,7 +418,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
             self.remote = remote
             _redactor = baseRedactor(remote: cached?.redactKeys ?? [])
             remoteDisabled = cached?.enabled == false
-            captureBodies = config.captureNetworkBodies && (cached?.captureNetworkBodies ?? true)
+            captureBodies = config.resolvedCaptureNetworkBodies && (cached?.captureNetworkBodies ?? true)
             interactions.setDisabledAdapters(Set(cached?.disabledAdapters ?? []))
             interactions.setMaxPayloadBytes(cached?.maxInteractionPayloadBytes)
             maxCapsuleBytes = cached.map { RemoteCaptureConfig.clampCapsuleBytes($0.maxCapsuleBytes) } ?? maxCapsuleBytes
@@ -1010,7 +1012,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
                 }
             }
         }
-        let bodies = config.captureNetworkBodies && next.captureNetworkBodies
+        let bodies = config.resolvedCaptureNetworkBodies && next.captureNetworkBodies
         if captureBodies && !bodies {
             rewrote = true
             recorder?.rewrite(event: { e in
