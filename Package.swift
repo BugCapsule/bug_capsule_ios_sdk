@@ -35,6 +35,8 @@ let package = Package(
             name: "BugCapsule",
             dependencies: ["BugCapsuleCrash"],
             path: "Sources/BugCapsule",
+            // Apple privacy manifest: required-reason APIs and collected data.
+            resources: [.copy("PrivacyInfo.xcprivacy")],
             swiftSettings: [.swiftLanguageMode(.v6)],
             linkerSettings: [.linkedLibrary("z")]
         ),
