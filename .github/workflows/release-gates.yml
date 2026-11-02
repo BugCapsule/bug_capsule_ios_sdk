@@ -34,11 +34,12 @@ jobs:
           xcodebuild -scheme BugCapsule-Package -destination "id=${{ steps.sim.outputs.udid }}"
           -derivedDataPath "$RUNNER_TEMP/dd"
           -test-timeouts-enabled YES -default-test-execution-time-allowance 120 -maximum-test-execution-time-allowance 300
+          -skip-testing:BugCapsulePatchTests
           test
-  # Its own runner: a second xcodebuild package build in the same job
-  # failed to load its PIF ("GUID ... has already been registered") from the
-  # build service the first one left running, and a patch build problem must
-  # never hide or block the SDK tests' result.
+  # The patch tests, from the root package, on their own runner: a patch
+  # build problem never hides or blocks the SDK tests' result. (The
+  # Packages/BugCapsulePatch wrapper declares a product with the root
+  # product's name; Xcode 26 cannot load both in one graph.)
   ios-simulator-patch:
     name: ios-simulator-patch
     runs-on: macos-latest
@@ -48,11 +49,11 @@ jobs:
       - name: Pick an iPhone simulator
         id: sim
         run: python3 scripts/pick-ios-simulator.py >> "$GITHUB_OUTPUT"
-      - name: BugCapsulePatchLocal on the iOS Simulator
+      - name: BugCapsulePatchTests on the iOS Simulator
         timeout-minutes: 30
-        working-directory: Packages/BugCapsulePatch
         run: >-
-          xcodebuild -scheme BugCapsulePatchLocal -destination "id=${{ steps.sim.outputs.udid }}"
+          xcodebuild -scheme BugCapsule-Package -destination "id=${{ steps.sim.outputs.udid }}"
           -derivedDataPath "$RUNNER_TEMP/dd-patch"
           -test-timeouts-enabled YES -default-test-execution-time-allowance 120 -maximum-test-execution-time-allowance 300
+          -only-testing:BugCapsulePatchTests
           test

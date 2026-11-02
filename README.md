@@ -738,6 +738,9 @@ Select **BugCapsulePatch** from the same repository-root SwiftPM dependency at
 XCFramework for iOS arm64 and iOS Simulator arm64/x86_64. It requires iOS15+; the
 core SDK's macOS support is unchanged, but the patch API is iOS-only. No second
 repository, local path dependency or runtime binary download is needed.
+Depend on the repository root, not on `Packages/BugCapsulePatch`: that folder is a
+compatibility wrapper for older local checkouts, and its product shares the root
+product's name, which Xcode 26 cannot load in one package graph.
 
 ```swift
 .package(url: "https://github.com/BugCapsule/bug_capsule_ios_sdk.git", exact: "0.4.1-beta.5")

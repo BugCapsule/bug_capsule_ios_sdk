@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import Network
 import XCTest
@@ -207,3 +208,4 @@ final class HttpTransportTests: XCTestCase {
         XCTAssertThrowsError(try HttpPatchTransport(baseURL: "http://example.com", deliveryToken: "x", applicationId: "a", platform: "p", distributionProfile: "d", baseBuildId: "b", installationId: "i"))
     }
 }
+#endif
