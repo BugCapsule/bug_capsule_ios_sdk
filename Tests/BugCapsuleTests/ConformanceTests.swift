@@ -98,26 +98,30 @@ final class ConformanceTests: XCTestCase {
         }
     }
 
+    /// A fixture report: divergences by type, other failures by signature.
+    private func fixtureReport(_ r: JSONValue) -> ReplayReport {
+        var o = r.objectValue!
+        if o["attempt"] == nil { o["attempt"] = 1 }
+        if let ds = o["divergences"]?.arrayValue {
+            o["divergences"] = .array(ds.map { $0.stringValue.map { ["type": .string($0), "detail": ""] } ?? $0 })
+        }
+        if let fs = o["otherFailures"]?.arrayValue {
+            o["otherFailures"] = .array(
+                fs.map { f in
+                    f.stringValue.map { ["kind": "exception", "signature": .string($0), "type": "E"] } ?? f
+                })
+        }
+        return ReplayReport(json: o)
+    }
+
     func testVerdicts() throws {
         let f = try conformance("verdicts")
         XCTAssertEqual(Set(f["expectedDivergences"]!.arrayValue!.compactMap(\.stringValue)), DivergencePolicy.expected)
-        for c in f["cases"]!.arrayValue! {
+        let cases = f["cases"]!.arrayValue!
+        XCTAssertGreaterThanOrEqual(cases.count, 31)
+        for c in cases {
             let name = c["name"]!.stringValue!
-            let reports = c["reports"]!.arrayValue!.map { r -> ReplayReport in
-                var o = r.objectValue!
-                if o["attempt"] == nil { o["attempt"] = 1 }
-                // The fixture lists divergences by type and other failures by signature.
-                if let ds = o["divergences"]?.arrayValue {
-                    o["divergences"] = .array(ds.map { $0.stringValue.map { ["type": .string($0), "detail": ""] } ?? $0 })
-                }
-                if let fs = o["otherFailures"]?.arrayValue {
-                    o["otherFailures"] = .array(
-                        fs.map { f in
-                            f.stringValue.map { ["kind": "exception", "signature": .string($0), "type": "E"] } ?? f
-                        })
-                }
-                return ReplayReport(json: o)
-            }
+            let reports = c["reports"]!.arrayValue!.map(fixtureReport)
             let kind = RunKind(rawValue: c["kind"]!.stringValue!)!
             let e = evaluateRun(kind, requestedAttempts: c["requested"]!.intValue!, reports: reports)
             XCTAssertEqual(e.verdict.rawValue, c["verdict"]!.stringValue!, name)
@@ -127,6 +131,37 @@ final class ConformanceTests: XCTestCase {
             XCTAssertEqual(e.attempts.map(\.status.rawValue), c["attemptStatuses"]!.arrayValue!.compactMap(\.stringValue), name)
             XCTAssertEqual(e.reasonCodes, c["reasonCodes"]!.arrayValue!.compactMap(\.stringValue), name)
         }
+    }
+
+    func testVerifyV2() throws {
+        let cases = try conformance("verdicts")["verifyV2"]!.arrayValue!
+        XCTAssertGreaterThanOrEqual(cases.count, 15)
+        var verdicts = Set<String>()
+        for c in cases {
+            let name = c["name"]!.stringValue!
+            let e = evaluateVerifyV2(
+                requestedAttempts: c["requested"]!.intValue!, candidate: c["reports"]!.arrayValue!.map(fixtureReport),
+                baseline: c["baseline"]?.objectValue.flatMap(BaselineResult.init(json:)),
+                eligibility: EligibilityStatus(rawValue: c["eligibility"]!.stringValue!)!)
+            XCTAssertEqual(e.verdict.rawValue, c["verdict"]!.stringValue!, name)
+            XCTAssertEqual(e.verdict.wire, c["wire"]!.stringValue!, name)
+            XCTAssertEqual(e.exitCode, c["exitCode"]!.intValue!, name)
+            XCTAssertEqual(e.reasonCodes, c["reasonCodes"]!.arrayValue!.compactMap(\.stringValue), name)
+            verdicts.insert(e.verdict.rawValue)
+        }
+        XCTAssertTrue(verdicts.isSuperset(of: ["fixed", "fixedQualified", "unsafe", "flaky", "inconclusive", "stillFailing"]))
+    }
+
+    func testRequiredAttempts() throws {
+        let cases = try conformance("verdicts")["requiredAttempts"]!.arrayValue!
+        XCTAssertGreaterThanOrEqual(cases.count, 6)
+        for c in cases {
+            let r = c["baselineReproduced"]!.intValue!, n = c["baselineAttempts"]!.intValue!
+            XCTAssertEqual(wilsonLower(r, n), c["wilsonLower"]!.doubleValue!, accuracy: 0.00005, "\(r)/\(n)")
+            XCTAssertEqual(requiredCandidateAttempts(r, n), c["required"]!.intValue!, "\(r)/\(n)")
+        }
+        XCTAssertNotEqual(Verdict.fixedQualified.wire, Verdict.fixed.wire)
+        XCTAssertNotEqual(Verdict.unsafe.wire, Verdict.fixed.wire)
     }
 
     // MARK: interactions.json (capsule-v2)

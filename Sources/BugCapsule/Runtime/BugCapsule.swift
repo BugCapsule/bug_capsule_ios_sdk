@@ -81,9 +81,26 @@ public enum BugCapsule {
         s.handleFailure(FailureRecord.assertion(assertionId, message: message, t: s.now(), scrub: s.redactor.scrubText))
     }
 
-    /// Raises [assertionId] when [condition] is false.
+    /// Raises [assertionId] when [condition] is false. During replay a
+    /// passing check of the capsule's assertion is the evidence a fix
+    /// verification needs (verdict-v2).
     public static func check(_ assertionId: String, _ condition: Bool, _ message: @autoclosure () -> String = "") {
-        if !condition { fail(assertionId, message()) }
+        if !condition {
+            fail(assertionId, message())
+        } else {
+            BugCapsuleSession.current?.engine?.checkPassed(assertionId)
+        }
+    }
+
+    /// Registers a postcondition: what must be true after the scenario of a
+    /// capsule replays without its failure ("the cart total is positive").
+    /// Evaluated only in replay, on the main thread, after the replay
+    /// settled; every registered postcondition is reported, and
+    /// `bugcapsule verify` needs them to hold (or the capsule's own `check`
+    /// to pass) to call a fix FIXED. Registering the same [name] again
+    /// replaces it. A no-op outside replay.
+    public static func expect(_ name: String, _ condition: @escaping @MainActor () -> Bool) {
+        Postconditions.shared.set(name, condition)
     }
 
     /// Reports an error the app caught as a failure (deduplicated by signature):
@@ -138,6 +155,21 @@ public enum BugCapsule {
     public static func resetForTesting() async {
         await BugCapsuleSession.current?.dispose()
         BugCapsuleSession.current = nil
+        Postconditions.shared.removeAll()
     }
 }
 
+/// `BugCapsule.expect` registrations (process-wide, like the Dart SDK's).
+final class Postconditions: @unchecked Sendable {
+    static let shared = Postconditions()
+    private let lock = NSLock()
+    private var conditions: [String: @MainActor () -> Bool] = [:]
+
+    func set(_ name: String, _ condition: @escaping @MainActor () -> Bool) { lock.locked { conditions[name] = condition } }
+    func removeAll() { lock.locked { conditions.removeAll() } }
+
+    @MainActor func evaluate() -> [String: Bool] {
+        let all = lock.locked { conditions }
+        return all.mapValues { $0() }
+    }
+}

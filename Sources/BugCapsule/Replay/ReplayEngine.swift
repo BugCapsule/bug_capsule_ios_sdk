@@ -55,6 +55,14 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
     private var finishHooks: [@Sendable (ReplayEngine) -> Void] = []
     /// Called with the final report (tests).
     var onReport: (@Sendable (ReplayReport) -> Void)?
+    private var passedChecks = Set<String>()
+    /// Evaluates the app's `BugCapsule.expect` postconditions; set by the
+    /// session. Called once on the main thread, after replay settled without
+    /// the failure.
+    var postconditions: (@MainActor () -> [String: Bool])?
+
+    /// `BugCapsule.check(assertionId, true)` ran during this replay.
+    func checkPassed(_ assertionId: String) { lock.locked { _ = passedChecks.insert(assertionId) } }
     /// Recorded interaction dependencies (empty when the capsule has none:
     /// adapters still fail unrecorded operations instead of going live).
     private(set) var interactions: InteractionReplay?
@@ -325,10 +333,12 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
                 try? await Task.sleep(nanoseconds: UInt64(max(min(deadline - elapsed(), 50), 1)) * 1_000_000)
             }
         }
-        return buildReport()
+        // Postconditions only after settling without the failure.
+        let results = expectedFailure != nil && !isReproduced ? (postconditions?() ?? [:]) : [:]
+        return buildReport(postconditionResults: results)
     }
 
-    func buildReport(message: String? = nil) -> ReplayReport {
+    func buildReport(message: String? = nil, postconditionResults: [String: Bool] = [:]) -> ReplayReport {
         let hooks = lock.locked { finishHooks }
         for hook in hooks { hook(self) }
         for key in fixtures.unusedKeys() { diverge("network.unused", key) }
@@ -344,14 +354,22 @@ public final class ReplayEngine: ReplayContext, @unchecked Sendable {
             observed = different
             codes = ["failure.different"]
         }
+        // Verdict v2 positive evidence; a reproduction carries none.
+        let clean = outcome == .notReproduced
+        let pastFailurePoint = expectedFailure.map { elapsed() >= $0.t - base } ?? false
         return lock.locked {
-            ReplayReport(
+            let evidence = ReplayEvidence(
+                assertionPassed: clean && expectedFailure?.kind == .assertion
+                    && expectedFailure?.assertionId.map(passedChecks.contains) == true ? true : nil,
+                postconditions: clean ? postconditionResults : [:],
+                failurePointPassed: clean && dispatched == expected && pastFailurePoint)
+            return ReplayReport(
                 outcome: outcome, attempt: settings.attempt, durationMs: runStart.map { Int((uptime() - $0) * 1000) } ?? 0,
                 strategy: strategy, expectedSignature: expectedFailure?.signature, observed: observed,
                 otherFailures: otherFailures, divergences: divergences, eventsDispatched: dispatched,
                 eventsExpected: expected, fixturesServed: fixturesServedCount, compressedMs: skippedMs,
                 gapsCompressed: gapsCompressed, buildGitSha: buildGitSha, message: message,
-                attemptId: settings.attemptId, runtime: "ios", reasonCodes: codes)
+                attemptId: settings.attemptId, runtime: "ios", reasonCodes: codes, evidence: evidence)
         }
     }
 

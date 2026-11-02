@@ -109,6 +109,58 @@ public struct Divergence: Sendable, Equatable {
     }
 }
 
+/// How strongly a clean attempt shows the failing path ran and now behaves
+/// (verdict-v2).
+public enum EvidenceLevel: String, Sendable { case none, weak, strong }
+
+/// What a v2 SDK observed beyond "the failure did not fire" (verdict-v2).
+public struct ReplayEvidence: Sendable, Equatable {
+    /// The capsule's failure assertion was evaluated during replay and held
+    /// (`BugCapsule.check`); nil when it was never evaluated or the failure
+    /// is not an assertion.
+    public var assertionPassed: Bool?
+    /// `BugCapsule.expect` postconditions, evaluated after replay settled.
+    public var postconditions: [String: Bool]
+    /// Every recorded input was dispatched and replay settled past the
+    /// recorded failure point: the path was reached, nothing more.
+    public var failurePointPassed: Bool
+
+    public init(assertionPassed: Bool? = nil, postconditions: [String: Bool] = [:], failurePointPassed: Bool = false) {
+        self.assertionPassed = assertionPassed
+        self.postconditions = postconditions
+        self.failurePointPassed = failurePointPassed
+    }
+
+    public init(json j: JSONObject) {
+        assertionPassed = j["assertionPassed"]?.boolValue
+        var p: [String: Bool] = [:]
+        for (k, v) in j["postconditions"]?.objectValue ?? [:] { p[k] = v == .bool(true) }
+        postconditions = p
+        failurePointPassed = j["failurePointPassed"] == .bool(true)
+    }
+
+    /// Postconditions that did not hold, sorted.
+    public var failedPostconditions: [String] { postconditions.filter { !$0.value }.map(\.key).sorted() }
+
+    public var level: EvidenceLevel {
+        if !failedPostconditions.isEmpty { return .none }
+        if assertionPassed == true || !postconditions.isEmpty { return .strong }
+        return failurePointPassed ? .weak : .none
+    }
+
+    public var json: JSONValue {
+        var o: JSONObject = [:]
+        if let assertionPassed { o["assertionPassed"] = .bool(assertionPassed) }
+        if !postconditions.isEmpty {
+            var p = JSONObject()
+            for (k, v) in postconditions.sorted(by: { $0.key < $1.key }) { p[k] = .bool(v) }
+            o["postconditions"] = .object(p)
+        }
+        o["failurePointPassed"] = .bool(failurePointPassed)
+        return .object(o)
+    }
+}
+
 public struct ReplayReport: Sendable, Equatable {
     public var outcome: ReplayOutcome
     public var attempt: Int
@@ -132,13 +184,16 @@ public struct ReplayReport: Sendable, Equatable {
     public var reasonCodes: [String]
     /// What this attempt actually ran; nil when the app has no patch runtime.
     public var patch: PatchIdentity?
+    /// Positive evidence (verdict-v2); nil from SDKs that predate it.
+    public var evidence: ReplayEvidence?
 
     public init(
         outcome: ReplayOutcome, attempt: Int, durationMs: Int, strategy: ReplayStrategy,
         expectedSignature: String? = nil, observed: FailureRecord? = nil, otherFailures: [FailureRecord] = [],
         divergences: [Divergence] = [], eventsDispatched: Int = 0, eventsExpected: Int? = nil,
         fixturesServed: Int = 0, compressedMs: Int = 0, gapsCompressed: Int = 0, buildGitSha: String? = nil,
-        message: String? = nil, attemptId: String? = nil, runtime: String? = nil, reasonCodes: [String] = []
+        message: String? = nil, attemptId: String? = nil, runtime: String? = nil, reasonCodes: [String] = [],
+        evidence: ReplayEvidence? = nil
     ) {
         self.outcome = outcome
         self.attempt = attempt
@@ -158,6 +213,7 @@ public struct ReplayReport: Sendable, Equatable {
         self.attemptId = attemptId
         self.runtime = runtime
         self.reasonCodes = reasonCodes
+        self.evidence = evidence
     }
 
     public init(json j: JSONObject) {
@@ -182,6 +238,7 @@ public struct ReplayReport: Sendable, Equatable {
         runtime = j["runtime"]?.stringValue
         reasonCodes = (j["reasonCodes"]?.arrayValue ?? []).compactMap(\.stringValue)
         patch = j["patch"]?.objectValue.flatMap(PatchIdentity.init(json:))
+        evidence = j["evidence"]?.objectValue.map(ReplayEvidence.init(json:))
     }
 
     public var json: JSONValue {
@@ -205,6 +262,7 @@ public struct ReplayReport: Sendable, Equatable {
         if let attemptId { o["attemptId"] = .string(attemptId) }
         if let runtime { o["runtime"] = .string(runtime) }
         if !reasonCodes.isEmpty { o["reasonCodes"] = .array(reasonCodes.map { .string($0) }) }
+        if let evidence { o["evidence"] = evidence.json }
         return .object(o)
     }
 }

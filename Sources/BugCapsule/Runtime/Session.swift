@@ -1250,6 +1250,7 @@ public final class BugCapsuleSession: @unchecked Sendable {
         onReport: (@Sendable (ReplayReport) -> Void)? = nil
     ) -> ReplayEngine? {
         let replay = ReplayEngine(capsule: capsule, settings: settings, buildGitSha: gitSha, channel: channel, session: self)
+        replay.postconditions = { Postconditions.shared.evaluate() }
         replay.onReport = onReport
         lock.locked {
             _engine = replay
