@@ -292,11 +292,11 @@ The standalone `bugcapsule` CLI replays capsules from every BugCapsule SDK.
 Install it with Node.js 20 or newer; Dart and Flutter are not required.
 
 ```bash
-npm install -g @bugcapsule/cli@0.4.0-beta.3
+npm install -g @bugcapsule/cli@0.4.0-beta.6
 bugcapsule --version
 ```
 
-Direct executables are also available from the [CLI release](https://github.com/BugCapsule/bug_capsule_flutter_sdk/releases/tag/v0.4.1-beta.7).
+Direct executables are also available from the [CLI release](https://github.com/BugCapsule/bug_capsule_flutter_sdk/releases/tag/v0.4.1-beta.11).
 
 Log in with a personal token from **Project settings → Keys & CLI access**.
 In CI, use a service token in `BUGCAPSULE_TOKEN` instead.
