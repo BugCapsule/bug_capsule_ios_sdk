@@ -8,10 +8,10 @@ GitHub release for publication status.
 
 ## Standalone CLI
 
-Install `npm install -g @bugcapsule/cli@0.4.0-beta.3`, then `bugcapsule login`.
+Install `npm install -g @bugcapsule/cli@0.4.0-beta.6`, then `bugcapsule login`.
 The CLI downloads and checks a native executable; it does not require Dart or
 Flutter. Direct macOS, Linux and Windows executables are attached to the
-Flutter repository's v0.4.1-beta.7 release. Replay needs only its app's toolchain.
+Flutter repository's v0.4.1-beta.11 release. Replay needs only its app's toolchain.
 
 ## Release checks
 
