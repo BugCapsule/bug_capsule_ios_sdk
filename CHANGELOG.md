@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1-beta.6 — 2026-11-03
+
+- Add Verdict v2 evaluation and positive replay evidence.
+- Redact all BugCapsule credential formats and omit network bodies in production by default.
+- Apply app storage policy on restore; remote settings can only narrow local collection policy.
+- Refuse credentials over plain HTTP.
+
 ## 0.4.1-beta.5
 
 - Expose the optional iOS `BugCapsulePatch` product directly from the canonical
