@@ -2,6 +2,7 @@ import BugCapsule
 import BugCapsulePatch
 import Foundation
 import SwiftUI
+import UIKit
 
 /// The base build compiled into this binary. Acceptance runs build a second
 /// binary with another value (`BCPATCH_BASE_BUILD`) to exercise a base upgrade.
@@ -227,9 +228,16 @@ private func run() -> Run {
             if monitored {
                 // Telemetry runs end the release-health session in order and send
                 // it before the result is recorded: the harness then terminates
-                // the process, which must not read as an abnormal session.
+                // the process, which must not read as an abnormal session. Wait
+                // until the app is active (so no later "resumed" opens another
+                // session), end and send it, then close the SDK so nothing restarts.
+                for _ in 0..<100 {
+                    if await MainActor.run(body: { UIApplication.shared.applicationState == .active }) { break }
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
                 BugCapsule.endSession()
                 doc["sessionFlushed"] = await BugCapsule.flush(timeout: 10)
+                await BugCapsule.close(timeout: 5)
             }
             append(doc, to: results)
         }
