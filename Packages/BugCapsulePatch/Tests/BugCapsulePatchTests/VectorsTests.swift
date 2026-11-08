@@ -1,3 +1,4 @@
+#if os(iOS)
 import BcpatchRuntime
 import Foundation
 import XCTest
@@ -74,3 +75,5 @@ final class VectorsTests: XCTestCase {
         }
     }
 }
+
+#endif

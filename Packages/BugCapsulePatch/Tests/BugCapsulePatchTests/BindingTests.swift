@@ -1,3 +1,4 @@
+#if os(iOS)
 import BugCapsule
 import Foundation
 import XCTest
@@ -69,3 +70,5 @@ final class BindingTests: XCTestCase {
         XCTAssertTrue(held.available)
     }
 }
+
+#endif
