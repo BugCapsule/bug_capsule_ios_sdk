@@ -1,3 +1,4 @@
+import BugCapsule
 import BugCapsulePatch
 import Foundation
 import SwiftUI
@@ -111,9 +112,8 @@ private func run() -> Run {
     // this file the lab uses its file inbox. The base build id stays the binary's.
     let remote = (try? Data(contentsOf: exchange.appendingPathComponent("patch-config.json")))
         .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] }
-    func openPatch() -> BugCapsulePatch {
-        BugCapsulePatch.open(
-        config: PatchConfig(
+    func patchConfig() -> PatchConfig {
+        PatchConfig(
             storeDir: support.appendingPathComponent("bcpatch").path,
             projectId: remote?["projectId"] ?? "demo",
             applicationId: "dev.bugcapsule.patchlab.ios",
@@ -122,10 +122,27 @@ private func run() -> Run {
             baseBuildId: baseBuildId,
             installationId: "device-1",
             trustRoots: [remote?["trustRoot"] ?? trustAnchor]
-        ),
-        modules: [coupon.contract],
-        surfaces: [summarySurface]
-    )
+        )
+    }
+    func openPatch() -> BugCapsulePatch {
+        BugCapsulePatch.open(config: patchConfig(), modules: [coupon.contract], surfaces: [summarySurface])
+    }
+    // Test-only, opt-in: a local acceptance run turns on BugCapsule monitoring so
+    // the SDK's own release-health sessions carry the running patch identity.
+    // The binding then owns the one runtime of this process.
+    let monitoring = (try? Data(contentsOf: exchange.appendingPathComponent("monitoring-config.json")))
+        .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] }
+    var binding: BugCapsulePatchBinding?
+    if let monitoring, let url = monitoring["backendUrl"], let key = monitoring["ingestKey"], !PerformanceHarness.enabled(exchange: exchange) {
+        let b = BugCapsulePatchBinding(config: patchConfig(), modules: [coupon.contract], surfaces: [summarySurface])
+        var options = BugCapsuleMonitoringOptions()
+        options.release = monitoring["release"] ?? "dev.bugcapsule.patchlab.ios@1.0+1"
+        options.environment = "staging"
+        var config = BugCapsuleConfig(mode: .qa, gitSha: "patchlab", autoCaptureOnFailure: false, monitoring: options)
+        config.backend = BugCapsuleBackendConfig(url: url, ingestKey: key)
+        config.patchBinding = b
+        MainActor.assumeIsolated { BugCapsule.start(config) }
+        binding = b
     }
     if PerformanceHarness.enabled(exchange: exchange) {
         try? fm.removeItem(at: exchange.appendingPathComponent("benchmark-result.json"))
@@ -141,7 +158,7 @@ private func run() -> Run {
             return Run(priced: bundledCoupon(sample), source: "benchmark_failed", state: "FAILED", micros: 0, patch: nil)
         }
     }
-    let patch = openPatch()
+    let patch = binding?.patch ?? openPatch()
     let start = DispatchTime.now().uptimeNanoseconds
     let result = patch.call(coupon, sample)
     let micros = Int((DispatchTime.now().uptimeNanoseconds - start) / 1000)
@@ -174,6 +191,7 @@ private func run() -> Run {
         "running": before["running"] ?? NSNull(),
         "inbox": inbox,
         "health": health,
+        "monitoring": binding == nil ? "off" : "on",
         "status": (try? patch.status()) ?? NSNull(),
     ]
     let results = exchange.appendingPathComponent("results.jsonl")
