@@ -156,6 +156,12 @@ final class UpdaterTests: XCTestCase {
         }
     }
 
+    /// The shipped runtime carries E1 (engine ddced0a): status reports `degraded`.
+    func testShippedRuntimeReportsDegradedField() throws {
+        let patch = open(dir())
+        XCTAssertEqual(try patch.status()["degraded"] as? Bool, false)
+    }
+
     func testNextCheckAfterA503RetriesTheChannel() async throws {
         let r = try rings()
         let patch = open(dir())
