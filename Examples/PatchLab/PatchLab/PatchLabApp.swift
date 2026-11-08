@@ -2,12 +2,12 @@ import BugCapsulePatch
 import Foundation
 import SwiftUI
 
-private let baseBuildId = "ios-demo-1"
+/// The base build compiled into this binary. Acceptance runs build a second
+/// binary with another value (`BCPATCH_BASE_BUILD`) to exercise a base upgrade.
+private let baseBuildId = (Bundle.main.object(forInfoDictionaryKey: "BCPatchBaseBuild") as? String)
+    .flatMap { $0.isEmpty || $0.hasPrefix("$(") ? nil : $0 } ?? "ios-demo-1"
 private let trustAnchor = "bcpk.v1.dev-root-1.BA4PNvbk7UmdPR93U56lG_Bpqwq3WgzIrI3zk7IuT-hKhRymUfOY4eQFQGei0tjUkzmpyqaHCZf3MtgxbBxq68U"
 
-struct Line { let sku: String; let qty: Int; let unitCents: Int }
-struct Cart { let lines: [Line]; let couponPercent: Int }
-struct Priced { let subtotal: String; let discount: String; let total: String; let label: String }
 
 private func money(_ cents: Int) -> String {
     let abs = Swift.abs(cents)
@@ -147,7 +147,15 @@ private func run() -> Run {
     let micros = Int((DispatchTime.now().uptimeNanoseconds - start) / 1000)
     let before = (try? patch.status()) ?? ["state": "UNAVAILABLE"]
     let inbox = patch.available ? processInbox(patch, exchange) : []
-    if patch.available { _ = try? patch.markHealthy("first_screen") }
+    var health: [String: Any] = ["checked": false]
+    if patch.available && result.source.rawValue == "patched" {
+        if let why = smokeFailure(sample, result.value) {
+            health = ["checked": true, "ok": false, "reason": why]
+        } else {
+            do { health = ["checked": true, "ok": true, "markHealthy": try patch.markHealthy("first_screen")] }
+            catch { health = ["checked": true, "ok": true, "markHealthyError": "\(error)"] }
+        }
+    }
     #if DEBUG
     let mode = "debug"
     #else
@@ -165,6 +173,7 @@ private func run() -> Run {
         "state": before["state"] ?? "?",
         "running": before["running"] ?? NSNull(),
         "inbox": inbox,
+        "health": health,
         "status": (try? patch.status()) ?? NSNull(),
     ]
     let results = exchange.appendingPathComponent("results.jsonl")
