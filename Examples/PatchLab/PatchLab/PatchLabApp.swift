@@ -205,6 +205,7 @@ private func run() -> Run {
         let updater = PatchUpdater(patch: patch, transport: timedTransport)
         let measurePerformance = remote["measurePerformance"] == "true"
         let monitored = binding != nil
+        let crashFlag = exchange.appendingPathComponent("crash-once")
         let snapshot = Sendable_(record)
         Task.detached {
             let updateStart = DispatchTime.now().uptimeNanoseconds
@@ -234,6 +235,13 @@ private func run() -> Run {
                 for _ in 0..<100 {
                     if await MainActor.run(body: { UIApplication.shared.applicationState == .active }) { break }
                     try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                // Acceptance only, telemetry mode only: a one-shot deliberate crash
+                // while this session is open. The flag is removed first, so the
+                // next launch runs normally and the SDK reports the crash.
+                if FileManager.default.fileExists(atPath: crashFlag.path) {
+                    try? FileManager.default.removeItem(at: crashFlag)
+                    fatalError("PatchLab acceptance: deliberate one-shot crash")
                 }
                 BugCapsule.endSession()
                 doc["sessionFlushed"] = await BugCapsule.flush(timeout: 10)
