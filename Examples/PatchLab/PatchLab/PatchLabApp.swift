@@ -203,6 +203,7 @@ private func run() -> Run {
         let timedTransport = TimedPatchTransport(transport)
         let updater = PatchUpdater(patch: patch, transport: timedTransport)
         let measurePerformance = remote["measurePerformance"] == "true"
+        let monitored = binding != nil
         let snapshot = Sendable_(record)
         Task.detached {
             let updateStart = DispatchTime.now().uptimeNanoseconds
@@ -223,6 +224,13 @@ private func run() -> Run {
             }
             doc["update"] = ["state": "\(r.state)", "artifactDigest": r.artifactDigest as Any? ?? NSNull(), "reason": r.reason as Any? ?? NSNull(), "receiptsSent": sent]
             doc["status"] = (try? patch.status()) ?? NSNull()
+            if monitored {
+                // Telemetry runs end the release-health session in order and send
+                // it before the result is recorded: the harness then terminates
+                // the process, which must not read as an abnormal session.
+                BugCapsule.endSession()
+                doc["sessionFlushed"] = await BugCapsule.flush(timeout: 10)
+            }
             append(doc, to: results)
         }
     } else {
