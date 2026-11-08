@@ -36,11 +36,14 @@ public struct PatchUpdateResult: Sendable {
     public let state: PatchUpdateState
     public let artifactDigest: String?
     public let reason: String?
+    /// The server's hint for the next check, when it gave one.
+    public let retryAfter: TimeInterval?
 
-    init(_ state: PatchUpdateState, artifactDigest: String? = nil, reason: String? = nil) {
+    init(_ state: PatchUpdateState, artifactDigest: String? = nil, reason: String? = nil, retryAfter: TimeInterval? = nil) {
         self.state = state
         self.artifactDigest = artifactDigest
         self.reason = reason
+        self.retryAfter = retryAfter
     }
 }
 
@@ -67,8 +70,16 @@ public actor PatchUpdater {
             return result
         } catch let e as PatchError {
             return PatchUpdateResult(.failed, reason: e.code)
+        } catch let e as PatchHTTPError where e.reason == "channel_invalidated" {
+            // No channel, so nothing is staged or activated; only trust can
+            // change, and only through a keyring the pinned roots verify.
+            var reason = "channel_invalidated"
+            if let k = e.keyringDocument, let s = e.keyringSignature {
+                do { try patch.applyKeyring(k, signature: s) } catch let p as PatchError { reason = "channel_invalidated; keyring_rejected:\(p.code)" } catch { reason = "channel_invalidated; keyring_rejected:internal" }
+            }
+            return PatchUpdateResult(.failed, reason: reason, retryAfter: e.retryAfter)
         } catch let e as PatchHTTPError {
-            return PatchUpdateResult(.failed, reason: e.reason)
+            return PatchUpdateResult(.failed, reason: e.reason, retryAfter: e.retryAfter)
         } catch {
             return PatchUpdateResult(.failed, reason: "transport: \(error)")
         }
