@@ -5,10 +5,19 @@ import Foundation
 public struct PatchHTTPError: Error, Sendable, Equatable {
     public let reason: String
     public let status: Int?
+    /// From `Retry-After` (seconds), when the server sent one.
+    public let retryAfter: TimeInterval?
+    /// A keyring delivered with a `503 channel_invalidated`. Untrusted bytes:
+    /// the runtime verifies it against the pinned roots before anything changes.
+    public let keyringDocument: Data?
+    public let keyringSignature: Data?
 
-    public init(_ reason: String, status: Int? = nil) {
+    public init(_ reason: String, status: Int? = nil, retryAfter: TimeInterval? = nil, keyringDocument: Data? = nil, keyringSignature: Data? = nil) {
         self.reason = reason
         self.status = status
+        self.retryAfter = retryAfter
+        self.keyringDocument = keyringDocument
+        self.keyringSignature = keyringSignature
     }
 }
 
@@ -23,6 +32,7 @@ private final class BoundedRequest: NSObject, URLSessionDataDelegate, @unchecked
     private var failure: PatchHTTPError?
     private var status = 0
     private var etag: String?
+    private(set) var retryAfter: String?
     /// The body isn't needed: the status alone is the answer.
     private var bodySkipped = false
     private var continuation: CheckedContinuation<(Int, Data, String?), Error>?
@@ -55,6 +65,7 @@ private final class BoundedRequest: NSObject, URLSessionDataDelegate, @unchecked
         let disposition: URLSession.ResponseDisposition = lock.withLock {
             status = http?.statusCode ?? 0
             etag = http?.value(forHTTPHeaderField: "ETag")
+            retryAfter = http?.value(forHTTPHeaderField: "Retry-After")
             if !wanted.contains(status) {
                 bodySkipped = true
                 return .cancel
@@ -165,8 +176,10 @@ public struct HttpPatchTransport: PatchTransport {
             URLQueryItem(name: "baseBuildId", value: baseBuildId),
         ])
         if let etag { r.setValue(etag, forHTTPHeaderField: "If-None-Match") }
-        let (status, body, tag) = try await BoundedRequest(max: Self.maxChannelBytes, wanted: [200]).run(r, timeout: timeout)
+        let bounded = BoundedRequest(max: Self.maxChannelBytes, wanted: [200, 503])
+        let (status, body, tag) = try await bounded.run(r, timeout: timeout)
         if status == 204 || status == 304 { return nil }
+        if status == 503 { throw Self.unavailable(body, retryAfter: bounded.retryAfter) }
         guard status == 200 else { throw refused(status) }
         guard let j = try JSONSerialization.jsonObject(with: body) as? [String: Any],
             let channel = j["channel"] as? [String: Any],
@@ -178,6 +191,22 @@ public struct HttpPatchTransport: PatchTransport {
             document: document, signature: signature, etag: tag,
             keyringDocument: (keyring?["document"] as? String).flatMap { Data(base64Encoded: $0) },
             keyringSignature: (keyring?["signature"] as? String).flatMap { Data(base64Encoded: $0) })
+    }
+
+    /// A 503 may be `channel_invalidated`: the signed channel is withheld while
+    /// it is republished, but the root-signed keyring still travels with it.
+    /// The body was read under the channel bound; anything unexpected is a
+    /// plain `http_error`, and a malformed keyring is dropped, never trusted.
+    static func unavailable(_ body: Data, retryAfter header: String?) -> PatchHTTPError {
+        let retry = header.flatMap { Int($0) }.flatMap { $0 >= 0 ? TimeInterval(min($0, 86400)) : nil }
+        guard let j = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any], j["reason"] as? String == "channel_invalidated" else {
+            return PatchHTTPError("http_error", status: 503, retryAfter: retry)
+        }
+        let k = j["keyring"] as? [String: Any]
+        let doc = (k?["document"] as? String).flatMap { Data(base64Encoded: $0) }
+        let sig = (k?["signature"] as? String).flatMap { Data(base64Encoded: $0) }
+        let both = doc != nil && sig != nil
+        return PatchHTTPError("channel_invalidated", status: 503, retryAfter: retry, keyringDocument: both ? doc : nil, keyringSignature: both ? sig : nil)
     }
 
     public func fetchArtifact(digest: String) async throws -> Data {

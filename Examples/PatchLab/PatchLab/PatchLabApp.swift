@@ -1,13 +1,15 @@
+import BugCapsule
 import BugCapsulePatch
 import Foundation
 import SwiftUI
+import UIKit
 
-private let baseBuildId = "ios-demo-1"
+/// The base build compiled into this binary. Acceptance runs build a second
+/// binary with another value (`BCPATCH_BASE_BUILD`) to exercise a base upgrade.
+private let baseBuildId = (Bundle.main.object(forInfoDictionaryKey: "BCPatchBaseBuild") as? String)
+    .flatMap { $0.isEmpty || $0.hasPrefix("$(") ? nil : $0 } ?? "ios-demo-1"
 private let trustAnchor = "bcpk.v1.dev-root-1.BA4PNvbk7UmdPR93U56lG_Bpqwq3WgzIrI3zk7IuT-hKhRymUfOY4eQFQGei0tjUkzmpyqaHCZf3MtgxbBxq68U"
 
-struct Line { let sku: String; let qty: Int; let unitCents: Int }
-struct Cart { let lines: [Line]; let couponPercent: Int }
-struct Priced { let subtotal: String; let discount: String; let total: String; let label: String }
 
 private func money(_ cents: Int) -> String {
     let abs = Swift.abs(cents)
@@ -111,9 +113,8 @@ private func run() -> Run {
     // this file the lab uses its file inbox. The base build id stays the binary's.
     let remote = (try? Data(contentsOf: exchange.appendingPathComponent("patch-config.json")))
         .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] }
-    func openPatch() -> BugCapsulePatch {
-        BugCapsulePatch.open(
-        config: PatchConfig(
+    func patchConfig() -> PatchConfig {
+        PatchConfig(
             storeDir: support.appendingPathComponent("bcpatch").path,
             projectId: remote?["projectId"] ?? "demo",
             applicationId: "dev.bugcapsule.patchlab.ios",
@@ -122,10 +123,27 @@ private func run() -> Run {
             baseBuildId: baseBuildId,
             installationId: "device-1",
             trustRoots: [remote?["trustRoot"] ?? trustAnchor]
-        ),
-        modules: [coupon.contract],
-        surfaces: [summarySurface]
-    )
+        )
+    }
+    func openPatch() -> BugCapsulePatch {
+        BugCapsulePatch.open(config: patchConfig(), modules: [coupon.contract], surfaces: [summarySurface])
+    }
+    // Test-only, opt-in: a local acceptance run turns on BugCapsule monitoring so
+    // the SDK's own release-health sessions carry the running patch identity.
+    // The binding then owns the one runtime of this process.
+    let monitoring = (try? Data(contentsOf: exchange.appendingPathComponent("monitoring-config.json")))
+        .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] }
+    var binding: BugCapsulePatchBinding?
+    if let monitoring, let url = monitoring["backendUrl"], let key = monitoring["ingestKey"], !PerformanceHarness.enabled(exchange: exchange) {
+        let b = BugCapsulePatchBinding(config: patchConfig(), modules: [coupon.contract], surfaces: [summarySurface])
+        var options = BugCapsuleMonitoringOptions()
+        options.release = monitoring["release"] ?? "dev.bugcapsule.patchlab.ios@1.0+1"
+        options.environment = "staging"
+        var config = BugCapsuleConfig(mode: .qa, gitSha: "patchlab", autoCaptureOnFailure: false, monitoring: options)
+        config.backend = BugCapsuleBackendConfig(url: url, ingestKey: key)
+        config.patchBinding = b
+        MainActor.assumeIsolated { BugCapsule.start(config) }
+        binding = b
     }
     if PerformanceHarness.enabled(exchange: exchange) {
         try? fm.removeItem(at: exchange.appendingPathComponent("benchmark-result.json"))
@@ -141,13 +159,21 @@ private func run() -> Run {
             return Run(priced: bundledCoupon(sample), source: "benchmark_failed", state: "FAILED", micros: 0, patch: nil)
         }
     }
-    let patch = openPatch()
+    let patch = binding?.patch ?? openPatch()
     let start = DispatchTime.now().uptimeNanoseconds
     let result = patch.call(coupon, sample)
     let micros = Int((DispatchTime.now().uptimeNanoseconds - start) / 1000)
     let before = (try? patch.status()) ?? ["state": "UNAVAILABLE"]
     let inbox = patch.available ? processInbox(patch, exchange) : []
-    if patch.available { _ = try? patch.markHealthy("first_screen") }
+    var health: [String: Any] = ["checked": false]
+    if patch.available && result.source.rawValue == "patched" {
+        if let why = smokeFailure(sample, result.value) {
+            health = ["checked": true, "ok": false, "reason": why]
+        } else {
+            do { health = ["checked": true, "ok": true, "markHealthy": try patch.markHealthy("first_screen")] }
+            catch { health = ["checked": true, "ok": true, "markHealthyError": "\(error)"] }
+        }
+    }
     #if DEBUG
     let mode = "debug"
     #else
@@ -165,6 +191,8 @@ private func run() -> Run {
         "state": before["state"] ?? "?",
         "running": before["running"] ?? NSNull(),
         "inbox": inbox,
+        "health": health,
+        "monitoring": binding == nil ? "off" : "on",
         "status": (try? patch.status()) ?? NSNull(),
     ]
     let results = exchange.appendingPathComponent("results.jsonl")
@@ -176,6 +204,8 @@ private func run() -> Run {
         let timedTransport = TimedPatchTransport(transport)
         let updater = PatchUpdater(patch: patch, transport: timedTransport)
         let measurePerformance = remote["measurePerformance"] == "true"
+        let monitored = binding != nil
+        let crashFlag = exchange.appendingPathComponent("crash-once")
         let snapshot = Sendable_(record)
         Task.detached {
             let updateStart = DispatchTime.now().uptimeNanoseconds
@@ -196,6 +226,27 @@ private func run() -> Run {
             }
             doc["update"] = ["state": "\(r.state)", "artifactDigest": r.artifactDigest as Any? ?? NSNull(), "reason": r.reason as Any? ?? NSNull(), "receiptsSent": sent]
             doc["status"] = (try? patch.status()) ?? NSNull()
+            if monitored {
+                // Telemetry runs end the release-health session in order and send
+                // it before the result is recorded: the harness then terminates
+                // the process, which must not read as an abnormal session. Wait
+                // until the app is active (so no later "resumed" opens another
+                // session), end and send it, then close the SDK so nothing restarts.
+                for _ in 0..<100 {
+                    if await MainActor.run(body: { UIApplication.shared.applicationState == .active }) { break }
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                // Acceptance only, telemetry mode only: a one-shot deliberate crash
+                // while this session is open. The flag is removed first, so the
+                // next launch runs normally and the SDK reports the crash.
+                if FileManager.default.fileExists(atPath: crashFlag.path) {
+                    try? FileManager.default.removeItem(at: crashFlag)
+                    fatalError("PatchLab acceptance: deliberate one-shot crash")
+                }
+                BugCapsule.endSession()
+                doc["sessionFlushed"] = await BugCapsule.flush(timeout: 10)
+                await BugCapsule.close(timeout: 5)
+            }
             append(doc, to: results)
         }
     } else {

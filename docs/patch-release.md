@@ -10,20 +10,22 @@ product forwarding to the root implementation.
 
 `Packages/BugCapsulePatch/runtime-provenance.json` records the actual engine source,
 compiled-input equivalence and SHA256 for every XCFramework file. The binary was
-built from dcc0808 with Rust1.99.1/locked dependencies and reused byte-for-byte from
-the verified private candidate. It was not rebuilt from the later equivalent source;
+built from engine 84e0431 with Rust 1.99.1/locked dependencies (`tools/build-native.sh
+all`) and copied byte-for-byte from the engine's `dist/apple` output; the same bytes
+ran in the simulator pilot. It was not rebuilt from the later equivalent source;
 this is not an independent reproducibility attestation. The manifest records the
-exact later comparison commit. Device arm64 and Simulator arm64/x86_64 are included.
+exact later comparison commit and the Mach-O UUIDs. Device arm64 and Simulator
+arm64/x86_64 are included.
 
 Run `python3 scripts/verify-patch-runtime.py` before packaging. Run
 `sh scripts/package-release.sh` for core build/tests and a complete source archive
-with checksum, then `python3 scripts/test-release-consumer.py dist/bugcapsule-ios-0.4.1-beta.6.tar.gz`.
+with checksum, then `python3 scripts/test-release-consumer.py dist/bugcapsule-ios-0.4.1-beta.7.tar.gz`.
 The consumer test unpacks that archive, creates an isolated bare Git remote and
 builds an external URL-dependent iOS Simulator consumer importing both products.
 It does not install or execute an app. Core macOS tests remain separate.
 
 After review and CI, the release operator may tag the approved commit as
-v0.4.1-beta.6, push that tag to the canonical repository and attach the source
+v0.4.1-beta.7, push that tag to the canonical repository and attach the source
 archive/checksum plus runtime provenance to its GitHub prerelease. These scripts
 never create tags, push, upload or publish. Do not replace an existing release tag
 or archive. Public availability does not qualify a distribution profile, customer

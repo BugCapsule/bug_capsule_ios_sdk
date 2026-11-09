@@ -1,3 +1,4 @@
+#if os(iOS)
 import XCTest
 @testable import BugCapsulePatch
 
@@ -26,3 +27,5 @@ final class SurfaceImagesTests: XCTestCase {
         XCTAssertFalse(surfaceImagesAvailable(["type": "image", "asset": "badge"], available: ["badge"]))
     }
 }
+
+#endif

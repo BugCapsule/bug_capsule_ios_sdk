@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import Network
 import XCTest
@@ -182,6 +183,48 @@ final class HttpTransportTests: XCTestCase {
         }
     }
 
+    // MARK: 503 channel_invalidated (P0-3)
+
+    private func invalidated(_ keyring: String = "null", reason: String = "channel_invalidated") -> Data {
+        Data(#"{"type":"urn:bugcapsule:problem:unavailable","status":503,"code":"unavailable","reason":"\#(reason)","keyring":\#(keyring)}"#.utf8)
+    }
+
+    private func error(_ f: () async throws -> Void) async -> PatchHTTPError? {
+        do { try await f(); return nil } catch let e as PatchHTTPError { return e } catch { return nil }
+    }
+
+    func testInvalidatedChannelCarriesKeyringAndRetryAfterButNoChannel() async {
+        server.enqueue(503, invalidated(#"{"version":3,"document":"Bwg=","signature":"CQ=="}"#), headers: ["Retry-After": "30", "Content-Type": "application/problem+json"])
+        let e = await error { _ = try await self.t.fetchChannel(etag: nil) }
+        XCTAssertEqual(e?.reason, "channel_invalidated")
+        XCTAssertEqual(e?.status, 503)
+        XCTAssertEqual(e?.retryAfter, 30)
+        XCTAssertEqual(e?.keyringDocument, Data([7, 8]))
+        XCTAssertEqual(e?.keyringSignature, Data([9]))
+    }
+
+    func testInvalidatedWithoutOrWithMalformedKeyringCarriesNothing() async {
+        for k in ["null", #""nope""#, #"{"document":1,"signature":"x"}"#, #"{"document":"%%%","signature":"CQ=="}"#] {
+            server.enqueue(503, invalidated(k))
+            let e = await error { _ = try await self.t.fetchChannel(etag: nil) }
+            XCTAssertEqual(e?.reason, "channel_invalidated", k)
+            XCTAssertNil(e?.keyringDocument, k)
+        }
+    }
+
+    func testOther503sStayHttpErrorAndOversizedBodiesAreRefused() async {
+        server.enqueue(503, invalidated(reason: "maintenance"), headers: ["Retry-After": "5"])
+        let e = await error { _ = try await self.t.fetchChannel(etag: nil) }
+        XCTAssertEqual(e?.reason, "http_error")
+        XCTAssertEqual(e?.retryAfter, 5)
+        server.enqueue(503, Data("<html>".utf8))
+        let r = await reason { _ = try await self.t.fetchChannel(etag: nil) }
+        XCTAssertEqual(r, "http_error")
+        server.enqueue(503, Data(), declaredLength: HttpPatchTransport.maxChannelBytes + 1)
+        let big = await reason { _ = try await self.t.fetchChannel(etag: nil) }
+        XCTAssertEqual(big, "response_too_large")
+    }
+
     func testMalformedDigestNeverReachesAPath() async {
         let r = await reason { _ = try await self.t.fetchArtifact(digest: "../secrets") }
         XCTAssertEqual(r, "bad_digest")
@@ -207,3 +250,5 @@ final class HttpTransportTests: XCTestCase {
         XCTAssertThrowsError(try HttpPatchTransport(baseURL: "http://example.com", deliveryToken: "x", applicationId: "a", platform: "p", distributionProfile: "d", baseBuildId: "b", installationId: "i"))
     }
 }
+
+#endif
