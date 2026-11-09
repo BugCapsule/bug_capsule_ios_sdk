@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.1-beta.7 — 2026-11-09
+
+- BugCapsulePatch bundles the runtime built from patch engine `84e0431`: a
+  launch that changes nothing writes nothing, mutations are refused after an
+  uncommitted boot, and a truncated keyring file never blocks launch.
+  `runtime-provenance.json` now records that build (it still described the
+  November 1 candidate, so `scripts/verify-patch-runtime.py` failed).
+- A root-verified keyring delivered with a 503 `channel_invalidated` response
+  is applied, so a channel whose only signing key was revoked recovers once a
+  new key re-signs it.
+- Patch tests for iOS-only APIs are guarded so `swift test` on macOS compiles.
+- PatchLab (internal lab app, not shipped): smoke-checked health, configurable
+  base build for upgrade runs, opt-in local monitoring with the patch binding
+  and an opt-in one-shot crash, used for simulator crash-to-rollback acceptance.
+
 ## 0.4.1-beta.6 — 2026-11-03
 
 - Add Verdict v2 evaluation and positive replay evidence.
