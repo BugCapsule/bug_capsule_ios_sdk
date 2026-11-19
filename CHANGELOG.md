@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 — 2026-11-19
+
+- Stable release of the Ios SDK based on 0.4.1-beta.7.
+
 ## 0.4.1-beta.7 — 2026-11-09
 
 - BugCapsulePatch bundles the runtime built from patch engine `84e0431`: a
