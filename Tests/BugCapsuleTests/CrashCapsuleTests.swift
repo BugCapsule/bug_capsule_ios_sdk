@@ -601,7 +601,12 @@ final class CrashCapsuleTests: XCTestCase {
         await BugCapsule.refreshRemoteConfig()
     }
 
+    /// Waits for the session queue first: the previous run's crash is
+    /// handled there (capsule and event stored, then its journal deleted),
+    /// at utility priority, so on a busy machine the event can be sent
+    /// well before the journal is gone. Then flushes until [cond].
     func flushUntil(_ timeout: TimeInterval = 8, _ cond: @escaping () -> Bool) async {
+        if let session = BugCapsuleSession.current { await waitForQueue(session) }
         let end = Date().addingTimeInterval(timeout)
         repeat {
             await BugCapsule.flush(timeout: 2)
