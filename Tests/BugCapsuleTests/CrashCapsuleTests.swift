@@ -524,11 +524,17 @@ final class CrashCapsuleTests: XCTestCase {
         let full = try XCTUnwrap(
             session.buildCrashCapsule(c, draft: try segvDraft(), crashTime: nil, link: link, capsuleId: "a", maxBytes: 5_000_000))
         XCTAssertEqual(full.0.checkpoint.kind, .launch)
-        let limit = full.1.count - 1
+        // The limit is on the gzip bytes, and two builds of one capsule are
+        // not the same size: `createdAt` differs, which moves the compressed
+        // size by a few bytes either way (1475...1481 measured here). So the
+        // limit sits well under the launch capsule and well over the
+        // periodic one (about 880 bytes), not one byte under the first build.
+        let limit = full.1.count - 200
         let smaller = try XCTUnwrap(
             session.buildCrashCapsule(c, draft: try segvDraft(), crashTime: nil, link: link, capsuleId: "b", maxBytes: limit))
         XCTAssertEqual(smaller.0.checkpoint.kind, .periodic)
         XCTAssertEqual(smaller.0.events.map(\.seq), [41])
+        XCTAssertLessThanOrEqual(smaller.1.count, limit, "what is returned fits the limit")
         XCTAssertNil(
             session.buildCrashCapsule(c, draft: try segvDraft(), crashTime: nil, link: link, capsuleId: "c", maxBytes: 200),
             "still too big: no capsule")
