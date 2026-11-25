@@ -432,7 +432,12 @@ public final class BugCapsuleSession: @unchecked Sendable {
         }
         // After the crash capsules monitoring scheduled on the same queue.
         let claimForMetricKit = monitoring?.metricKitActive ?? false
-        queue.async { journals.cleanup(claimForMetricKit: claimForMetricKit) }
+        queue.async { [weak self] in
+            // Stopped before this ran: the crash capture ahead of it left its
+            // journal for the next launch, which also does this cleanup.
+            if self?.monitoring?.isStopped == true { return }
+            journals.cleanup(claimForMetricKit: claimForMetricKit)
+        }
         for integration in integrations { integration.setUp(self) }
         if isRecording {
             let launch = Checkpoint(kind: .launch, t: now(), wallClockMs: epochMs(), afterSeq: 0, data: snapshot(.launch))
@@ -1337,11 +1342,28 @@ public final class BugCapsuleSession: @unchecked Sendable {
             return (self.remote, self.outbox, _monitoring, j)
         }
         journal?.close()
+        // What this launch queued for the previous run (its crash capsule
+        // and event, then the journal cleanup) finishes first, while
+        // monitoring can still store it. Stopped ahead of that work, the
+        // crash was lost, and the work then ran next to the session of a
+        // later `start`, over the same crash report and journals.
+        await waitForQueuedWork()
         monitoring?.stop()
         await remote?.dispose()
         await outbox?.close()
         await monitoring?.outbox?.close()
         if BugCapsuleSession.current === self { BugCapsuleSession.current = nil }
+    }
+
+    /// Returns once everything already on the session queue has run. The
+    /// caller is waiting: the marker is queued at user-initiated priority
+    /// with `enforceQoS`, which runs the queue's utility-priority work
+    /// ahead of it at that priority too, so a busy launch cannot starve
+    /// it. Suspends, never blocks a thread.
+    func waitForQueuedWork() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            queue.async(qos: .userInitiated, flags: .enforceQoS) { c.resume() }
+        }
     }
 
     // Test helpers

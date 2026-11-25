@@ -123,6 +123,9 @@ final class Monitoring: @unchecked Sendable {
         lock.locked { !stopped && (remote?.enabled ?? true) && (remote?.monitoringEnabled ?? true) }
     }
 
+    /// `stop()` was called (`BugCapsule.close()`): nothing more is stored.
+    var isStopped: Bool { lock.locked { stopped } }
+
     var wantsBreadcrumbs: Bool { isActive }
 
     var errorSampleRate: Double { min(max(lock.locked { remote?.errorSampleRate } ?? options.errorSampleRate, 0), 1) }
@@ -181,11 +184,12 @@ final class Monitoring: @unchecked Sendable {
             if !report.suppressed, let session, let pid = report.pid, let journal = session.crashJournals?.find(pid: pid) {
                 // That process kept a crash journal: its capsule is built off
                 // the main thread (crash-capsules §2). The report stays until
-                // the event is stored.
+                // the event is stored, and for the next launch when the SDK
+                // was stopped before this ran.
                 session.queue.async { [self] in
-                    session.captureCrash(
+                    let handled = session.captureCrash(
                         eventFromReport(report), journal: journal, crashTime: report.preciseTime, monitoring: self)
-                    NativeCrashHandler.discardPendingReport(in: directory)
+                    if handled { NativeCrashHandler.discardPendingReport(in: directory) }
                 }
             } else {
                 if !report.suppressed { _ = capture(eventFromReport(report), synchronous: true) }
