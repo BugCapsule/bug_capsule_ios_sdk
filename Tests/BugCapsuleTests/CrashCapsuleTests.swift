@@ -524,11 +524,17 @@ final class CrashCapsuleTests: XCTestCase {
         let full = try XCTUnwrap(
             session.buildCrashCapsule(c, draft: try segvDraft(), crashTime: nil, link: link, capsuleId: "a", maxBytes: 5_000_000))
         XCTAssertEqual(full.0.checkpoint.kind, .launch)
-        let limit = full.1.count - 1
+        // The limit is on the gzip bytes, and two builds of one capsule are
+        // not the same size: `createdAt` differs, which moves the compressed
+        // size by a few bytes either way (1475...1481 measured here). So the
+        // limit sits well under the launch capsule and well over the
+        // periodic one (about 880 bytes), not one byte under the first build.
+        let limit = full.1.count - 200
         let smaller = try XCTUnwrap(
             session.buildCrashCapsule(c, draft: try segvDraft(), crashTime: nil, link: link, capsuleId: "b", maxBytes: limit))
         XCTAssertEqual(smaller.0.checkpoint.kind, .periodic)
         XCTAssertEqual(smaller.0.events.map(\.seq), [41])
+        XCTAssertLessThanOrEqual(smaller.1.count, limit, "what is returned fits the limit")
         XCTAssertNil(
             session.buildCrashCapsule(c, draft: try segvDraft(), crashTime: nil, link: link, capsuleId: "c", maxBytes: 200),
             "still too big: no capsule")
@@ -601,7 +607,12 @@ final class CrashCapsuleTests: XCTestCase {
         await BugCapsule.refreshRemoteConfig()
     }
 
+    /// Waits for the session queue first: the previous run's crash is
+    /// handled there (capsule and event stored, then its journal deleted),
+    /// at utility priority, so on a busy machine the event can be sent
+    /// well before the journal is gone. Then flushes until [cond].
     func flushUntil(_ timeout: TimeInterval = 8, _ cond: @escaping () -> Bool) async {
+        if let session = BugCapsuleSession.current { await waitForQueue(session) }
         let end = Date().addingTimeInterval(timeout)
         repeat {
             await BugCapsule.flush(timeout: 2)
@@ -646,6 +657,157 @@ final class CrashCapsuleTests: XCTestCase {
         // The crashed process's journal is gone; this process keeps its own.
         let journals = try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("journal").path)
         XCTAssertEqual(journals, ["\(getpid())"])
+    }
+
+    // MARK: 3b. the SDK is stopped while the previous run's crash is still queued
+
+    func crashConfig() -> BugCapsuleConfig {
+        var config = BugCapsuleConfig(
+            appVersion: "1.4.0", appBuild: "52", appId: "com.shop.app", mode: .qa, backend: stubBackend, gitSha: "abc123",
+            gitDirty: false, monitoring: testMonitoringOptions(nativeCrashes: true))
+        config.maxCapsulesPerSession = 0
+        return config
+    }
+
+    func crashOverrides() -> BugCapsuleTestOverrides {
+        BugCapsuleTestOverrides(storageDirectory: dir, transport: stubTransport(), random: { 0.5 }, captureSettleDelay: 0.05)
+    }
+
+    /// A session whose queue is busy for [busy] seconds when it starts, as
+    /// at a loaded app launch: the previous run's crash is still waiting on
+    /// it when the app goes on.
+    func startWithBusyQueue(_ busy: TimeInterval) -> BugCapsuleSession {
+        let session = BugCapsuleSession(config: crashConfig(), integrations: [], overrides: crashOverrides())
+        session.queue.async { Thread.sleep(forTimeInterval: busy) }
+        session.start()
+        return session
+    }
+
+    /// An earlier process crashed after two actions and left its journal
+    /// and crash report. [pid] nil: it had this process's pid (a recycled
+    /// pid); else the journal and the report are renamed to that process.
+    func leaveCrash(pid: Int? = 4242) async throws -> (journal: URL, report: URL) {
+        await start(dir, maxCapsulesPerSession: 0)
+        let first = try XCTUnwrap(BugCapsuleSession.current)
+        first.setAnchorForTesting(first.now())
+        first.refreshJournalHeader()
+        first.record(EventTypes.action, ["id": "add_to_cart"])
+        first.record(EventTypes.action, ["id": "checkout"])
+        var journal = try XCTUnwrap(first.journalForTesting?.directory)
+        let report = NativeCrashHandler.reportFile(in: try XCTUnwrap(first.monitoring?.directory))
+        XCTAssertTrue(NativeCrashHandler.writeTestReport(signal: SIGSEGV))
+        await BugCapsule.resetForTesting()
+        if let pid {
+            let other = journal.deletingLastPathComponent().appendingPathComponent("\(pid)", isDirectory: true)
+            try FileManager.default.moveItem(at: journal, to: other)
+            journal = other
+            let text = String(decoding: try Data(contentsOf: report), as: UTF8.self)
+                .replacingOccurrences(of: "pid \(getpid())\n", with: "pid \(pid)\n")
+            try Data(text.utf8).write(to: report)
+            XCTAssertEqual(NativeCrashHandler.pendingReport(in: report.deletingLastPathComponent())?.pid, pid)
+        }
+        StubBackend.reset()
+        return (journal, report)
+    }
+
+    func fatalEvents() -> [JSONObject] { StubBackend.items("event").filter { $0["level"] == "fatal" } }
+
+    /// The crash arrived once, with its capsule, built from the crashed
+    /// process's own journal.
+    func assertTheCrashArrivedOnceWithItsCapsule(file: StaticString = #filePath, line: UInt = #line) async {
+        await flushUntil(4) { !self.fatalEvents().isEmpty && !self.uploadedCapsules().isEmpty }
+        // Anything sent twice would follow at once.
+        await flushUntil(0.3) { false }
+        let events = fatalEvents()
+        let capsules = uploadedCapsules()
+        XCTAssertEqual(events.count, 1, "one fatal event", file: file, line: line)
+        XCTAssertEqual(capsules.count, 1, "one capsule", file: file, line: line)
+        guard let event = events.first, let capsule = capsules.first else { return }
+        XCTAssertEqual(event["capsuleId"], .string(capsule.manifest.capsuleId), file: file, line: line)
+        XCTAssertEqual(capsule.manifest.monitoring?.eventId, event["eventId"]?.stringValue, file: file, line: line)
+        XCTAssertEqual(
+            capsule.events.compactMap { $0.data["id"]?.stringValue }, ["add_to_cart", "checkout"],
+            "from the crashed process's journal", file: file, line: line)
+    }
+
+    /// `close()` right after `start()`, e.g. a consent check that says no:
+    /// the previous run's crash is not thrown away with the session.
+    func testCloseRightAfterStartKeepsThePreviousRunsCrashForTheNextStart() async throws {
+        let (journal, report) = try await leaveCrash()
+        BugCapsule.start(crashConfig(), overrides: crashOverrides())
+        await BugCapsule.close(timeout: 2)
+        XCTAssertFalse(BugCapsule.isStarted)
+        // Stored before close() returned: nothing of it is left to race a later start.
+        XCTAssertFalse(FileManager.default.fileExists(atPath: report.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+
+        BugCapsule.start(crashConfig(), overrides: crashOverrides())
+        await BugCapsule.refreshRemoteConfig()
+        await assertTheCrashArrivedOnceWithItsCapsule()
+    }
+
+    /// The same at a busy launch, where the crash work has not begun when
+    /// `close()` is called, and with `start()` again at once: the closed
+    /// session's work must not run between the new session finding the
+    /// crashed journal and building the capsule from it.
+    func testCloseThenStartWhileTheCrashWorkIsQueuedGivesOneEventWithItsCapsule() async throws {
+        _ = try await leaveCrash()
+        _ = startWithBusyQueue(0.2)
+        await BugCapsule.close(timeout: 2)
+        _ = startWithBusyQueue(0.6)
+        await BugCapsule.refreshRemoteConfig()
+        await assertTheCrashArrivedOnceWithItsCapsule()
+    }
+
+    /// The crashed process had this process's pid. The closed session's own
+    /// journal carries that pid too: the capsule must not be built from it.
+    func testCloseThenStartWithARecycledPidBuildsTheCapsuleFromTheCrashedRun() async throws {
+        _ = try await leaveCrash(pid: nil)
+        let second = startWithBusyQueue(0.3)
+        second.record(EventTypes.action, ["id": "after_the_crash"])
+        await BugCapsule.close(timeout: 2)
+        BugCapsule.start(crashConfig(), overrides: crashOverrides())
+        await BugCapsule.refreshRemoteConfig()
+        await assertTheCrashArrivedOnceWithItsCapsule()
+    }
+
+    /// Tests end a "process" with `resetForTesting`, and the next start has
+    /// the same pid. The old session's journal cleanup, still queued, must
+    /// not run after the new session has set the crashed journal aside.
+    func testLateJournalCleanupOfTheOldSessionDoesNotTakeTheCrashedJournal() async throws {
+        await start(dir, maxCapsulesPerSession: 0)
+        let first = try XCTUnwrap(BugCapsuleSession.current)
+        first.setAnchorForTesting(first.now())
+        first.refreshJournalHeader()
+        first.record(EventTypes.action, ["id": "add_to_cart"])
+        first.record(EventTypes.action, ["id": "checkout"])
+        XCTAssertTrue(NativeCrashHandler.writeTestReport(signal: SIGSEGV))
+        let journals = try XCTUnwrap(first.crashJournals)
+        first.queue.async {
+            Thread.sleep(forTimeInterval: 0.3)
+            journals.cleanup(claimForMetricKit: false)
+        }
+        await BugCapsule.resetForTesting()
+        StubBackend.reset()
+        _ = startWithBusyQueue(0.6)
+        await BugCapsule.refreshRemoteConfig()
+        await assertTheCrashArrivedOnceWithItsCapsule()
+    }
+
+    /// Monitoring stopped ahead of the queued crash work (whatever the
+    /// order of a shutdown): the work stores nothing, so it deletes nothing.
+    func testCrashWorkThatRunsAfterMonitoringStoppedLeavesTheReportAndTheJournal() async throws {
+        let (journal, report) = try await leaveCrash()
+        let second = startWithBusyQueue(0.2)
+        second.monitoring?.stop()
+        await waitForQueue(second)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: report.path), "nothing was stored: the report stays")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: journal.appendingPathComponent("header.json").path), "and its journal")
+        XCTAssertTrue(StubBackend.items("event").isEmpty)
+
+        await BugCapsule.resetForTesting()
+        await start(dir, maxCapsulesPerSession: 0)
+        await assertTheCrashArrivedOnceWithItsCapsule()
     }
 
     func testCrashWithoutAJournalGivesTheEventOnly() async throws {

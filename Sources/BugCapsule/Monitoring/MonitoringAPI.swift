@@ -180,6 +180,12 @@ extension BugCapsule {
     }
 
     /// Flushes, then stops the SDK (capture and monitoring).
+    ///
+    /// Before it stops, `close` also waits for the work this launch has
+    /// already queued, such as storing the crash of the previous run (its
+    /// event and capsule). What is stored that way is sent at the next
+    /// `start`. [timeout] bounds only the flush, not that wait, so `close`
+    /// can return later than [timeout].
     public static func close(timeout: TimeInterval = 5) async {
         await flush(timeout: timeout)
         await BugCapsuleSession.current?.dispose()

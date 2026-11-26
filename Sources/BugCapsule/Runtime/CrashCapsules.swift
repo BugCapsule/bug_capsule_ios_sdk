@@ -9,15 +9,21 @@ extension BugCapsuleSession {
     /// Sends the fatal event [draft] of an earlier process with a capsule
     /// built from its [journal] when one can be built (then `capsuleId` is
     /// set and `manifest.monitoring` names the event). The journal is
-    /// deleted afterwards. Synchronous: call off the main thread. Returns
-    /// the event id.
+    /// deleted afterwards. Synchronous: call off the main thread.
+    ///
+    /// Returns false, and leaves the journal, when monitoring was stopped
+    /// before this ran (`close()`): nothing can be stored then, so the
+    /// caller keeps what it has of the crash (the crash report) and the
+    /// next launch reports it. True otherwise, also when the event was
+    /// dropped on purpose (`beforeSend`, monitoring switched off remotely).
     @discardableResult
-    func captureCrash(_ draft: EventDraft, journal: URL, crashTime: Date?, monitoring m: Monitoring) -> String? {
+    func captureCrash(_ draft: EventDraft, journal: URL, crashTime: Date?, monitoring m: Monitoring) -> Bool {
+        if m.isStopped { return false }
         defer { FileIO.deleteQuietly(journal) }
         let (store, allowed) = lock.locked { (self.store, self.capsulesAllowedLocked) }
         let contents = allowed ? CrashJournalContents.load(journal) : nil
         let capsuleId = uuidV4()
-        guard var payload = m.prepare(draft, capsuleId: contents == nil ? nil : capsuleId) else { return nil }
+        guard var payload = m.prepare(draft, capsuleId: contents == nil ? nil : capsuleId) else { return true }
         if let contents, let store, payload["capsuleId"] == .string(capsuleId), let eventId = payload["eventId"]?.stringValue {
             let link = CapsuleMonitoringLink(
                 eventId: eventId, release: payload["release"]?.stringValue ?? m.release,
@@ -26,7 +32,8 @@ extension BugCapsuleSession {
                 payload["capsuleId"] = nil
             }
         }
-        return m.send(payload, draft: draft, synchronous: true)
+        m.send(payload, draft: draft, synchronous: true)
+        return true
     }
 
     private var capsulesAllowedLocked: Bool { config.enabled && !remoteDisabled && !killed }
