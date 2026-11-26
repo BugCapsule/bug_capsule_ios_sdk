@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-BugCapsule SDKs are in beta. Security fixes go into the latest published beta release only, so please upgrade before reporting.
+Security fixes go into the latest published release only, so please upgrade before reporting.
 
 ## Reporting a vulnerability
 

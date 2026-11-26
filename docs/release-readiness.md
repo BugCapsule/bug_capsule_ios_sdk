@@ -8,10 +8,10 @@ GitHub release for publication status.
 
 ## Standalone CLI
 
-Install `npm install -g @bugcapsule/cli@0.4.0-beta.6`, then `bugcapsule login`.
+Install `npm install -g @bugcapsule/cli@0.4.0`, then `bugcapsule login`.
 The CLI downloads and checks a native executable; it does not require Dart or
 Flutter. Direct macOS, Linux and Windows executables are attached to the
-Flutter repository's v0.4.1-beta.11 release. Replay needs only its app's toolchain.
+Flutter repository's [v0.4.1 release](https://github.com/BugCapsule/bug_capsule_flutter_sdk/releases/tag/v0.4.1). Replay needs only its app's toolchain.
 
 ## Release checks
 
@@ -26,7 +26,7 @@ Flutter repository's v0.4.1-beta.11 release. Replay needs only its app's toolcha
 - iOS: `sh scripts/package-release.sh`, release-mode replay gate, and an iOS
   simulator build. SwiftPM distribution resolves the version tag.
 - Web: `npm ci`, `npm run build`, `npm run typecheck`, `npm test`, then
-  `npm run pack:all`. Publish the reviewed tarballs with the `beta` dist-tag.
+  `npm run pack:all`. Publish the reviewed tarballs; stable versions use the `latest` dist-tag and prereleases `beta`.
 
 Publish Android and iOS before the Flutter native plugin, which references their
 released versions. Publish the standalone executable assets before the npm CLI.
